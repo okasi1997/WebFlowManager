@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+data/browser_state.*.json
+data/browser_state.json
+data/browser_states/
+data/chrome_profiles/
+data/*.db
+artifacts/
+log/

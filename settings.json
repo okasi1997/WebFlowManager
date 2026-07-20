@@ -1,0 +1,32 @@
+{
+  "actions": [
+    "goto",
+    "click",
+    "fill",
+    "select",
+    "wait",
+    "press",
+    "get_text",
+    "screenshot",
+    "pause",
+    "upload_file",
+    "loop_start",
+    "loop_end",
+    "retry_start",
+    "retry_end",
+    "group_start",
+    "group_end"
+  ],
+  "selector_types": [
+    "none",
+    "role",
+    "label",
+    "placeholder",
+    "text",
+    "css",
+    "xpath"
+  ],
+  "picker": {
+    "start_url": "https://github.com/?locale=ja"
+  }
+}

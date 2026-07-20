@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Web フロー管理 操作手順書</title>
+<style>
+@page { size: A4; margin: 16mm 15mm 17mm; @bottom-right { content: counter(page) " / " counter(pages); color: #6b7280; font-size: 9pt; } }
+* { box-sizing: border-box; }
+body { margin: 0; color: #253044; font-family: "Yu Gothic UI", "Meiryo", sans-serif; font-size: 10pt; line-height: 1.65; }
+h1, h2, h3 { color: #153b5b; break-after: avoid; }
+h1 { margin: 0 0 8mm; font-size: 25pt; line-height: 1.25; }
+h2 { margin: 9mm 0 3mm; padding-bottom: 1.5mm; border-bottom: 2px solid #1683c7; font-size: 17pt; }
+h3 { margin: 5mm 0 2mm; font-size: 12.5pt; }
+p { margin: 1.5mm 0 3mm; }
+ul, ol { margin: 2mm 0 4mm; padding-left: 7mm; }
+li { margin: 1mm 0; }
+code { padding: 0.3mm 1mm; border-radius: 3px; background: #eef3f8; font-family: Consolas, monospace; font-size: 9pt; }
+.cover { min-height: 250mm; display: flex; flex-direction: column; justify-content: center; padding: 15mm 8mm; background: linear-gradient(150deg, #f7fbff, #e8f3fb); }
+.cover .tag { width: fit-content; padding: 2mm 4mm; border-radius: 20px; background: #087dc1; color: white; font-weight: 700; }
+.cover .lead { max-width: 145mm; margin-top: 5mm; color: #526174; font-size: 13pt; }
+.cover .meta { margin-top: 28mm; color: #617184; }
+.page-break { break-before: page; }
+.note, .warning, .tip { margin: 4mm 0; padding: 3mm 4mm; border-left: 4px solid; border-radius: 2px; break-inside: avoid; }
+.note { border-color: #1683c7; background: #edf7fd; }
+.tip { border-color: #2b8a3e; background: #eef9f0; }
+.warning { border-color: #d97706; background: #fff7e8; }
+.label { font-weight: 700; }
+.step { margin: 4mm 0; padding: 3mm 4mm; border: 1px solid #d8e0e8; border-radius: 5px; break-inside: avoid; }
+.step b:first-child { color: #087dc1; }
+.ui-map { display: grid; grid-template-columns: 31% 69%; gap: 3mm; margin: 4mm 0; padding: 3mm; border: 1px solid #b9c6d2; background: #f5f7f9; break-inside: avoid; }
+.panel { padding: 3mm; border: 1px solid #ccd5de; background: white; }
+.toolbar { grid-column: 2; padding: 2mm; border: 1px solid #8fc3e4; background: #eaf6fd; }
+.log { grid-column: 2; padding: 3mm; border: 1px solid #d5dbe2; background: #fbfbfb; }
+.caption { margin-top: 1mm; color: #687789; font-size: 8.5pt; }
+table { width: 100%; margin: 3mm 0 5mm; border-collapse: collapse; break-inside: auto; }
+thead { display: table-header-group; }
+tr { break-inside: avoid; }
+th, td { padding: 2mm 2.5mm; border: 1px solid #cfd8e1; vertical-align: top; }
+th { background: #eaf3f9; color: #153b5b; text-align: left; }
+.checklist { list-style: none; padding-left: 0; }
+.checklist li::before { content: "□"; margin-right: 2mm; color: #087dc1; font-weight: 700; }
+.flow { margin: 3mm 0; padding: 3mm; text-align: center; border-radius: 4px; background: #eef5fa; font-weight: 700; }
+.small { color: #687789; font-size: 8.5pt; }
+</style>
+</head>
+<body>
+
+<section class="cover">
+  <div class="tag">初心者向け</div>
+  <h1>Web フロー管理<br>操作手順書</h1>
+  <p class="lead">Web 画面の操作を「業務フロー」と「イベント」に分けて登録し、PCL データごとに自動実行するための手順書です。</p>
+  <div class="meta">対象プログラム：WebFlowManager<br>既定表示言語：日本語<br>作成日：2026年7月20日</div>
+</section>
+
+<section class="page-break">
+<h2>1. このプログラムでできること</h2>
+<p>ブラウザーで繰り返し行う入力、クリック、選択、ファイルアップロードなどを登録し、順番に自動実行できます。登録した一連の操作を<strong>業務フロー</strong>、一つ一つの操作を<strong>イベント</strong>と呼びます。</p>
+<div class="flow">業務フローを選ぶ → イベントを登録する → PCL データを準備する → 実行する</div>
+
+<h3>最初に覚える4つの言葉</h3>
+<table>
+<thead><tr><th>用語</th><th>意味</th></tr></thead>
+<tbody>
+<tr><td>業務フロー</td><td>「ログイン」「申込基本情報」など、目的ごとにまとめた操作単位です。</td></tr>
+<tr><td>イベント</td><td>ページを開く、クリックする、文字を入力する、などの一操作です。</td></tr>
+<tr><td>PCL データ</td><td>案件名、プラン名、数量など、実行ごとに差し替えるデータです。</td></tr>
+<tr><td>検出方法</td><td>操作対象のボタンや入力欄をブラウザー上で見つける方法です。</td></tr>
+</tbody>
+</table>
+
+<h2>2. 起動と初期設定</h2>
+<div class="step"><b>手順 1</b>　PowerShell でプロジェクトフォルダーへ移動します。<br><code>cd C:\bei\git\WebFlowManager</code></div>
+<div class="step"><b>手順 2</b>　仮想環境を有効化し、プログラムを起動します。<br><code>..\env\Scripts\Activate.ps1</code><br><code>python main.py</code></div>
+<div class="step"><b>手順 3</b>　右上の「設定」を開き、必要に応じて言語、フォント、文字サイズ、Chrome 表示を変更します。</div>
+<div class="note"><span class="label">Chrome 表示：</span>初めてフローを作るときや原因調査中は表示を推奨します。安定動作を確認した後は非表示でも実行できます。</div>
+</section>
+
+<section class="page-break">
+<h2>3. メイン画面の見方</h2>
+<div class="ui-map">
+  <div class="panel"><b>① 業務フロー一覧</b><br>フローの作成、順序変更、有効/無効、PCL 開始位置、実行条件を管理します。</div>
+  <div class="toolbar"><b>③ 実行・共通設定</b><br>順番に実行／共通データ構造／共通 PCL データ／設定</div>
+  <div class="panel"><b>② フロー操作</b><br>新規、名前変更、削除、上へ、下へ、PCL 開始に設定</div>
+  <div class="panel"><b>④ イベント一覧</b><br>選択中フローの操作順、グループ、データリンク、実行条件、有効状態を表示します。</div>
+  <div></div><div class="log"><b>⑤ 実行ログ</b><br>現在実行中の処理、成功、失敗、スクリーンショット保存先を表示します。コピー、クリア、折りたたみが可能です。</div>
+</div>
+<p class="caption">分割線はドラッグして左右の幅を変更できます。分グループ名をクリックすると内容を展開・折りたたみできます。</p>
+
+<h2>4. 最短で1本のフローを作る</h2>
+<ol>
+  <li>左側の「新規」を押し、例として <code>ログイン</code> と入力します。</li>
+  <li>作成したフローを選択し、右側の「イベント追加」を押します。</li>
+  <li>イベント名を <code>ログインページを開く</code>、操作種別を <code>goto</code> にします。</li>
+  <li>「入力値 / URL / キー」にログインページの URL を入力して保存します。</li>
+  <li>次にユーザー名入力、パスワード入力、ログインボタンクリックを追加します。</li>
+  <li>右上の「順番に実行」を押し、ログを確認します。</li>
+</ol>
+<div class="tip"><span class="label">おすすめ：</span>最初は Chrome を表示し、短いフローで動作確認してください。問題が起きたイベントだけ編集すると原因を追いやすくなります。</div>
+</section>
+
+<section class="page-break">
+<h2>5. 業務フローの管理</h2>
+<table>
+<thead><tr><th>操作</th><th>使い方</th></tr></thead>
+<tbody>
+<tr><td>新規</td><td>新しい業務フローを作成します。内容が分かる名前を付けます。</td></tr>
+<tr><td>名前変更</td><td>選択中フローの名称を変更します。</td></tr>
+<tr><td>削除</td><td>フローと内部イベントを削除します。必要なら先に JSON を出力してください。</td></tr>
+<tr><td>上へ／下へ</td><td>実行順序を一つずつ変更します。ドラッグでも並べ替えできます。</td></tr>
+<tr><td>有効/無効</td><td>一時的に実行対象から外します。削除せず残したい場合に使用します。</td></tr>
+<tr><td>PCL開始に設定</td><td>ここより前を前処理、ここ以降を PCL ごとの繰り返し処理に分けます。</td></tr>
+<tr><td>実行条件</td><td>PCL の値により、フロー全体を実行するか判定します。</td></tr>
+</tbody>
+</table>
+
+<h3>ログインを1回だけ実行する構成</h3>
+<ol>
+  <li>「ログイン」フローを一番上へ移動します。</li>
+  <li>次のフローを選択し、「PCL開始に設定」を押します。</li>
+  <li>これでログインは前処理として1回だけ実行され、その後のフローが各 PCL に対して実行されます。</li>
+</ol>
+<div class="note">ログイン後の Cookie と localStorage は <code>data/browser_state.json</code> に保存され、次回実行時にも利用されます。期限切れの場合は再ログインが必要です。</div>
+</section>
+
+<section class="page-break">
+<h2>6. イベントの登録</h2>
+<p>「イベント追加」を押すとイベント編集画面が開きます。無効になっている項目は、選択した操作では入力不要です。</p>
+<table>
+<thead><tr><th>項目</th><th>入力内容</th></tr></thead>
+<tbody>
+<tr><td>イベント名</td><td>操作内容が分かる名前。例：検索ボタンを押す</td></tr>
+<tr><td>有効</td><td>チェックを外すと、このイベントだけ実行しません。</td></tr>
+<tr><td>操作種別</td><td>実行する操作を選びます。下表を参照してください。</td></tr>
+<tr><td>入力値 / URL / キー</td><td>URL、入力文字、キー名、待機時間、変数名、ファイルパスなどを入力します。</td></tr>
+<tr><td>タイムアウト</td><td>要素が見つかるまで待つ最大時間です。単位は ms、10000 は10秒です。</td></tr>
+<tr><td>実行条件</td><td>PCL の値により、このイベントを実行するか判断します。</td></tr>
+<tr><td>失敗時の動作</td><td>停止、次へ進む、ページ更新後に次へ進む、指定 URL へ移動後に次へ進む、から選びます。</td></tr>
+<tr><td>検出方法／検出内容</td><td>対象要素の見つけ方と値です。「現在ページから選択」を使うと入力しやすくなります。</td></tr>
+<tr><td>データリンク</td><td>固定入力ではなく PCL データを使う場合に指定します。</td></tr>
+</tbody>
+</table>
+
+<h3>操作種別</h3>
+<table>
+<thead><tr><th>操作</th><th>用途</th><th>主な入力値</th></tr></thead>
+<tbody>
+<tr><td><code>goto</code></td><td>ページを開く</td><td>URL</td></tr>
+<tr><td><code>click</code></td><td>ボタンやリンクを押す</td><td>通常は不要</td></tr>
+<tr><td><code>fill</code></td><td>入力欄へ文字を入力する</td><td>入力文字</td></tr>
+<tr><td><code>select</code></td><td>選択リストから値を選ぶ</td><td>選択値</td></tr>
+<tr><td><code>wait</code></td><td>要素が現れるまで待つ</td><td>通常は不要</td></tr>
+<tr><td><code>press</code></td><td>Enter、Tab などを押す</td><td>例：Enter</td></tr>
+<tr><td><code>get_text</code></td><td>画面の文字を変数へ保存する</td><td>変数名</td></tr>
+<tr><td><code>screenshot</code></td><td>画面を画像として保存する</td><td>ファイル名</td></tr>
+<tr><td><code>pause</code></td><td>指定時間待機する</td><td>待機時間（ms）</td></tr>
+<tr><td><code>upload_file</code></td><td>file input へファイルを設定する</td><td>ファイルパス</td></tr>
+</tbody>
+</table>
+</section>
+
+<section class="page-break">
+<h2>7. ページから要素を選ぶ・検証する</h2>
+<ol>
+  <li>イベント編集画面で「対象 URL」を確認します。</li>
+  <li>「デバッグページを開く/表示」を押します。</li>
+  <li>目的の画面まで手動で移動します。ログインや前画面の操作も手動で構いません。</li>
+  <li>「現在ページから選択」を押し、Chrome 上の対象要素をクリックします。</li>
+  <li>自動入力された検出方法と検出内容を確認します。</li>
+  <li>「現在ページで検証」を押します。対象が1件なら正常です。</li>
+</ol>
+<div class="tip"><span class="label">途中まで自動で進める：</span>「このイベントまで実行」を押すと、対象イベントの直前までフローを実行します。対象 Web サイトの深い画面へ毎回手動で移動する手間を減らせます。</div>
+<div class="warning"><span class="label">検出数が複数の場合：</span>同じ文字のボタンが複数ある可能性があります。role、label、placeholder を優先し、必要な場合のみ CSS や XPath を使用してください。</div>
+
+<h3>検出方法の目安</h3>
+<table>
+<thead><tr><th>方法</th><th>向いている対象</th></tr></thead>
+<tbody>
+<tr><td>role</td><td>ボタン、リンク、チェックボックス。例：<code>button|保存</code></td></tr>
+<tr><td>label</td><td>項目名が付いた入力欄。</td></tr>
+<tr><td>placeholder</td><td>入力例が表示される入力欄。</td></tr>
+<tr><td>text</td><td>一意な表示文字を持つ要素。</td></tr>
+<tr><td>css</td><td>安定した id や class がある場合。</td></tr>
+<tr><td>xpath</td><td>他の方法で特定できない場合。画面変更の影響を受けやすいため注意します。</td></tr>
+</tbody>
+</table>
+</section>
+
+<section class="page-break">
+<h2>8. イベントグループ</h2>
+<p>複数イベントを一つのグループにすると、一覧が読みやすくなり、ループと失敗時リトライをグループ単位で設定できます。</p>
+<ol>
+  <li>「グループ追加」を押し、分かりやすいグループ名を入力します。</li>
+  <li>ループする場合は「PCL データを繰り返す」を有効にし、対象リストを選びます。</li>
+  <li>失敗時に再試行する場合は「失敗時に再試行する」を有効にし、再試行回数を入力します。</li>
+  <li>グループを保存します。</li>
+  <li>グループを選択して「イベント追加」を押すと、グループ内へ追加できます。</li>
+</ol>
+<p>既存イベントは「上へ」「下へ」で一行ずつ移動できます。グループ境界を越えると、自動的にグループ内へ入る、またはグループ外へ出る動作になります。</p>
+<div class="note">グループ名を1回クリックすると展開・折りたたみ、グループ名をダブルクリックすると編集です。「有効」など別の列を操作しても展開状態は変わりません。</div>
+
+<h2>9. 実行条件（Guard Condition）</h2>
+<p>条件を設定すると、PCL データの値に応じてフロー、グループ、イベントを実行またはスキップできます。</p>
+<div class="step"><b>例：</b> <code>プラン.更新区分</code> が <code>A</code> の場合だけ「プラン追加」グループを実行する。</div>
+<ol>
+  <li>対象のフロー、グループ、またはイベントで「実行条件」を押します。</li>
+  <li>「条件を追加」を押します。</li>
+  <li>PCL データパス、比較方法、比較値を入力して保存します。</li>
+  <li>複数条件では「すべて満たす（AND）」または「いずれかを満たす（OR）」を選びます。</li>
+  <li>条件一覧画面でも「保存」を押し、最後にイベントまたはグループを保存します。</li>
+</ol>
+<p>比較方法には、等しい、等しくない、含む、含まない、大小比較、空、空でない、真、偽があります。</p>
+</section>
+
+<section class="page-break">
+<h2>10. PCL データの準備</h2>
+<h3>共通データ構造</h3>
+<ol>
+  <li>メイン画面右上の「共通データ構造」を押します。</li>
+  <li>案件名、プラン、数量など必要な項目を作成します。</li>
+  <li>繰り返すデータはリストとして作成します。</li>
+  <li>保存します。</li>
+</ol>
+
+<h3>共通 PCL データ</h3>
+<ol>
+  <li>「共通 PCL データ」を押します。</li>
+  <li>「PCL追加」でデータを作成します。</li>
+  <li>右側の「値」列をダブルクリックして値を入力します。</li>
+  <li>「今回実行」をダブルクリックすると、実行／スキップを切り替えられます。</li>
+  <li>実行グループを設定します。同じグループ内は順番に、異なるグループは並列に実行されます。</li>
+  <li>「並列 Session 数」で同時に動かすグループ数を指定します。既定値は2です。</li>
+  <li>「現在の PCL を保存」を押します。</li>
+</ol>
+<div class="warning"><span class="label">並列数：</span>大きくすると速くなる場合がありますが、PC、Chrome、対象サイトへの負荷も増えます。最初は2を推奨します。</div>
+
+<h3>JSON と Excel</h3>
+<ul>
+  <li>JSON 読込／出力：PCL データを JSON でバックアップ、復元します。</li>
+  <li>Excel 読込／出力：Excel で編集できます。読込は追加ではなく、Excel の内容で PCL 全体を完全復元します。</li>
+</ul>
+</section>
+
+<section class="page-break">
+<h2>11. PCL 値・変数をイベントで使う</h2>
+<h3>PCL データリンク</h3>
+<p>イベント編集画面の「構造から選択」でデータパスを選ぶと、実行時に PCL の値が入力値として使用されます。</p>
+<div class="step"><b>例：</b> 検索欄へプラン名を入力するイベントで、データリンクに <code>プラン.プラン名</code> を設定します。</div>
+
+<h3>get_text で取得した値</h3>
+<ol>
+  <li><code>get_text</code> イベントの入力値に半角英数字の変数名を入力します。例：<code>account_id</code></li>
+  <li>後続イベントでは <code>${account_id}</code> と記述します。</li>
+</ol>
+<p>同じ実行セッション内で取得した値を、後続の URL、入力値、検出内容、失敗時の移動先 URL などに利用できます。</p>
+
+<h2>12. 実行する</h2>
+<ol>
+  <li>実行対象のフローと PCL が「有効／実行」になっていることを確認します。</li>
+  <li>PCL 開始位置を確認します。</li>
+  <li>必要に応じて設定から Chrome 表示を有効にします。</li>
+  <li>「順番に実行」を押します。</li>
+  <li>黄色で強調されるフローとイベント、および実行ログを確認します。</li>
+</ol>
+<p>実行順序は次のとおりです。</p>
+<div class="flow">前処理フロー（1回） → PCL 実行グループごとのフロー → 完了</div>
+</section>
+
+<section class="page-break">
+<h2>13. 失敗したとき</h2>
+<h3>イベントごとの失敗時動作</h3>
+<table>
+<thead><tr><th>設定</th><th>動作</th></tr></thead>
+<tbody>
+<tr><td>実行を停止</td><td>エラーを記録し、後続処理を停止します。</td></tr>
+<tr><td>次のイベントへ進む</td><td>エラーを記録し、そのイベントを飛ばして続行します。</td></tr>
+<tr><td>ページを更新</td><td>現在ページを更新してから次へ進みます。</td></tr>
+<tr><td>指定 URL へ移動</td><td>指定ページへ移動してから次へ進みます。</td></tr>
+</tbody>
+</table>
+
+<h3>確認場所</h3>
+<ul>
+  <li>実行ログ：失敗イベント、エラー内容、保存先を確認します。</li>
+  <li><code>artifacts/</code>：失敗時のスクリーンショットを確認します。</li>
+  <li><code>data/browser_state.json</code>：ログイン状態の保存ファイルです。</li>
+</ul>
+
+<h3>よくある問題</h3>
+<table>
+<thead><tr><th>症状</th><th>確認方法</th></tr></thead>
+<tbody>
+<tr><td>要素が見つからない</td><td>Chrome 表示を有効にし、「現在ページで検証」で検出数を確認します。画面表示完了前なら wait やタイムアウト延長を検討します。</td></tr>
+<tr><td>ヘッドレス時だけ失敗する</td><td>表示モードで対象要素の位置と表示状態を確認します。固定 XPath を避け、role、label、placeholder を優先します。</td></tr>
+<tr><td>ログイン画面へ戻る</td><td>セッション期限切れです。Chrome 表示を有効にして再ログインし、状態を保存し直します。</td></tr>
+<tr><td>PCL 値が入らない</td><td>データリンクのパス、対象 PCL、リスト内の現在位置を確認します。</td></tr>
+<tr><td>実行されない</td><td>フロー、グループ、イベント、PCL の有効状態と実行条件を確認します。</td></tr>
+<tr><td>ファイルをアップロードできない</td><td>対象が <code>input type="file"</code> であること、ファイルパスが存在することを確認します。</td></tr>
+</tbody>
+</table>
+</section>
+
+<section class="page-break">
+<h2>14. バックアップと復元</h2>
+<h3>全フロー JSON</h3>
+<ul>
+  <li>「全フロー JSON を出力」で、業務フロー、イベント、グループ、実行条件などを保存します。</li>
+  <li>「全フロー JSON を読み込む」は、現在の全フローをファイル内容で置き換えます。</li>
+</ul>
+<div class="warning">読込は現在の内容を置き換えます。大きな変更前、読込前、削除前には必ず JSON を出力してください。</div>
+
+<h3>主な保存場所</h3>
+<table>
+<thead><tr><th>場所</th><th>内容</th></tr></thead>
+<tbody>
+<tr><td><code>data/flows.db</code></td><td>フロー、イベント、PCL、設定</td></tr>
+<tr><td><code>data/browser_state.json</code></td><td>ブラウザーのログイン状態</td></tr>
+<tr><td><code>artifacts/</code></td><td>実行時の画像とエラー情報</td></tr>
+<tr><td><code>settings.json</code></td><td>操作種別、検出方法、デバッグ開始 URL</td></tr>
+</tbody>
+</table>
+
+<h2>15. 実行前チェックリスト</h2>
+<ul class="checklist">
+  <li>業務フローの順序は正しい</li>
+  <li>PCL 開始位置は正しい</li>
+  <li>対象フロー、イベント、PCL が有効になっている</li>
+  <li>PCL の今回実行と実行グループを確認した</li>
+  <li>並列 Session 数がPC環境に合っている</li>
+  <li>データリンクと実行条件を確認した</li>
+  <li>要素の検証結果が1件になっている</li>
+  <li>必要なアップロードファイルが存在する</li>
+  <li>変更前の JSON バックアップを保存した</li>
+</ul>
+
+<div class="tip"><span class="label">初心者向けの進め方：</span>最初から長いフローを作らず、1～3イベントずつ追加して実行確認してください。失敗箇所が明確になり、修正が簡単です。</div>
+<p class="small">本書は 2026年7月20日時点の WebFlowManager を対象にしています。</p>
+</section>
+</body>
+</html>
