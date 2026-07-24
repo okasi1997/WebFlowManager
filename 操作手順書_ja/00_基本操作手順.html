@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WebFlowManager 基本操作手順</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>WebFlowManager 基本操作手順</h1>
+<p class="sub">フローとイベントを登録し、共通データを準備して実行するまでの基本手順です。初めて操作する方は、①から③まで順番に進めてください。</p>
+
+<div class="note"><b>操作前の確認：</b>対象サイトへのログインが必要な場合は、先にメイン画面の <span class="button">ログイン状態</span> から認証状態を保存してください。初回確認では、設定メニューの「Chrome を表示」を有効にします。</div>
+<div class="flow-summary"><b>このページの流れ</b><span>① フロー・イベント</span><span>② 共通データ</span><span>③ 実行・結果確認</span></div>
+
+<h2>① フローとイベントを登録する</h2>
+<div class="figure">
+  <img src="images/01_main.png" alt="メイン画面">
+  <div class="legend">左側でフローを登録し、右側で選択したフロー内のイベントを登録します。画像内の A〜D は手順番号ではなく、画面上の主な操作箇所です。</div>
+  <div class="callout-key"><span><b>A</b> 全フロー Json 読込</span><span><b>B</b> 選択中のフロー</span><span><b>C</b> 共通データ</span><span><b>D</b> イベント追加</span></div>
+</div>
+
+<h3>フローを登録する</h3>
+<div class="step"><b>手順 1</b>　メイン画面左側の <span class="button">新規</span> を押します。</div>
+<div class="step"><b>手順 2</b>　実施する業務が分かるフロー名を入力し、確定します。例：<code>ログイン</code>、<code>情報入力</code>、<code>結果確認</code></div>
+<div class="step"><b>手順 3</b>　作成したフローを選択し、右側の見出しが選択したフロー名になっていることを確認します。</div>
+<div class="step"><b>手順 4</b>　必要に応じて <span class="button">上へ</span>／<span class="button">下へ</span> でフローの実行順を整えます。</div>
+<div class="success"><b>完了確認：</b>作成したフロー名が左側に表示され、選択すると右側の見出しも同じ名前になれば完了です。</div>
+
+<h3>フロー内にイベントを登録する</h3>
+<div class="figure">
+  <img src="images/02_event_editor.png" alt="イベント編集画面">
+  <div class="legend">イベント名、操作種別、対象、値を設定し、画面右下の「保存」で確定します。A〜E は設定エリアを示します。</div>
+  <div class="callout-key"><span><b>A</b> 操作種別</span><span><b>B</b> 失敗時の動作</span><span><b>C</b> ページ操作</span><span><b>D</b> データ連携</span><span><b>E</b> 保存</span></div>
+</div>
+<div class="step"><b>手順 1</b>　イベントを追加するフローを選択し、右側の <span class="button">イベント追加</span> を押します。</div>
+<div class="step"><b>手順 2</b>　「イベント名」と「操作種別」を入力します。例：ページを開く場合は <code>goto</code>、ボタンを押す場合は <code>click</code>、文字入力は <code>fill</code>、Enter キー送信は <code>press</code> を選び「値」に <code>Enter</code> を入力します。</div>
+<div class="step"><b>手順 3</b>　<code>click</code>、<code>fill</code>、<code>select</code>、<code>wait</code>、<code>press</code> など対象要素が必要な操作では、「対象 URL」を入力して <span class="button">デバッグページを開く/表示</span> を押します。</div>
+<div class="step"><b>手順 4</b>　<span class="button">現在ページから選択</span> を押し、Chrome で F2 キーを押してから対象要素をクリックします。</div>
+<div class="step"><b>手順 5</b>　<span class="button">現在ページで検証</span> を押し、対象が1件だけ検出されることを確認します。</div>
+<div class="step"><b>手順 6</b>　固定値を使う場合は「値」に直接入力します。共通データを使う場合は <span class="button">構造から選択</span> で項目を選びます。</div>
+<div class="step"><b>手順 7</b>　画面右下の <span class="button">保存</span> を押します。メイン画面のイベント一覧に追加されたことを確認します。</div>
+<div class="step"><b>手順 8</b>　必要な操作の数だけイベントを追加し、<span class="button">上へ</span>／<span class="button">下へ</span> またはドラッグで実行順を整えます。</div>
+<div class="success"><b>完了確認：</b>イベント一覧で、イベント名、操作種別、実行順、有効状態を確認します。</div>
+
+<div class="tip"><b>繰り返し・再試行：</b>普通のイベント追加ではなく、メイン画面の <span class="button">イベントグループ追加</span> から設定します。</div>
+<div class="note"><b>保存について：</b>イベント編集画面では必ず <span class="button">保存</span> を押してください。フローの追加、並べ替え、有効／無効など、メイン画面で確定した操作はデータベースへ随時保存されます。</div>
+
+<h2>② 共通データを登録する</h2>
+<div class="figure">
+  <img src="images/04_data.png" alt="共通データ管理画面">
+  <div class="legend">左側で実行1回分のデータを選び、右側で各項目の値を登録します。A〜E は操作エリアを示します。</div>
+  <div class="callout-key"><span><b>A</b> データ一覧</span><span><b>B</b> Json・Excel</span><span><b>C</b> 階層データ</span><span><b>D</b> リスト追加</span><span><b>E</b> 同期・保存</span></div>
+</div>
+<div class="step"><b>手順 1</b>　メイン画面上部の <span class="button">共通データ</span> を押します。</div>
+<div class="step"><b>手順 2</b>　左側の <span class="button">データ追加</span> を押し、データ名を入力します。例：<code>PCL_001</code></div>
+<div class="step"><b>手順 3</b>　追加したデータを左側で選択します。</div>
+<div class="step"><b>手順 4</b>　右側の「値」列で編集する項目をダブルクリックし、値を入力して確定します。</div>
+<div class="step"><b>手順 5</b>　list にデータを追加する場合は対象の list 行を選択し、<span class="button">完全なブランチを追加</span> を押してから、追加された各項目の値を編集します。</div>
+<div class="step"><b>手順 6</b>　入力が完了したら <span class="button">現在のデータを保存</span> を押します。</div>
+<div class="step"><b>手順 7</b>　左側一覧の「今回実行」が「実行」になっていることを確認します。「スキップ」の場合は対象データを選択し、<span class="button">実行/スキップ</span> を押します。</div>
+<div class="step"><b>手順 8</b>　複数データを登録する場合は、データ追加または複製を使用して同じ操作を繰り返します。</div>
+<div class="success"><b>完了確認：</b>必要なデータだけが「実行」、使用しないデータが「スキップ」になっていることを確認します。</div>
+
+<div class="warning"><b>項目が表示されない場合：</b>メイン画面の <span class="button">共通データ構造</span> で項目を先に作成し、共通データ画面の <span class="button">全構造を同期</span> を実行してください。</div>
+<div class="danger"><b>Excel 読込の注意：</b>現在データへの追加ではなく、全データの置き換えです。必要なデータは先に Excel または Json で出力してください。</div>
+
+<h2>③ 登録内容を実行する</h2>
+<div class="step"><b>手順 1</b>　メイン画面で、実行するフローとイベントが「有効」になっていることを確認します。</div>
+<div class="step"><b>手順 2</b>　共通データごとの処理を開始するフローを選び、<span class="button">データ開始に設定</span> を押します。開始位置より前のフローは前処理として1回だけ実行されます。</div>
+<div class="step"><b>手順 3</b>　<span class="button">共通データ</span> を開き、今回使用するデータだけが「実行」、使用しないデータが「スキップ」になっていることを確認します。</div>
+<div class="step"><b>手順 4</b>　ログインが必要な場合は、メイン画面の <span class="button">ログイン状態</span> で使用する状態を選択し、保存します。</div>
+<div class="step"><b>手順 5</b>　初回は設定メニューで「Chrome を表示」を有効にします。</div>
+<div class="step"><b>手順 6</b>　画面上部の <span class="button">▶ 順番に実行</span> を押します。変数入力画面が表示された場合は必要な値を入力して開始します。</div>
+<div class="step"><b>手順 7</b>　「実行状況」タブで、現在実行中のフロー、イベント、共通データと状態を確認します。</div>
+<div class="step"><b>手順 8</b>　完了後、「実行ログ」タブを開き、失敗、スキップ、エラーメッセージがないことを確認します。</div>
+<div class="step"><b>手順 9</b>　失敗した場合は対象イベントを修正し、共通データを1件だけ「実行」にして再確認します。</div>
+<div class="success"><b>完了確認：</b>「実行状況」が完了になり、「実行ログ」に失敗がなければ一連の登録は完了です。</div>
+
+<h2>実行前チェックリスト</h2>
+<table><thead><tr><th>確認項目</th><th>確認内容</th></tr></thead><tbody>
+<tr><td>フロー</td><td>実行順、有効／無効、データ開始位置が正しい。</td></tr>
+<tr><td>イベント</td><td>実行順、有効／無効、検出対象、入力値が正しい。</td></tr>
+<tr><td>共通データ</td><td>値が保存され、対象データだけが「実行」になっている。</td></tr>
+<tr><td>ログイン状態</td><td>対象サイトへログインできる状態が選択されている。</td></tr>
+<tr><td>Chrome</td><td>初回確認では「Chrome を表示」が有効になっている。</td></tr>
+</tbody></table>
+
+<div class="tip"><b>推奨：</b>最初は共通データ1件、並列 Session 数1で実行してください。正常完了を確認してから対象データと並列数を増やします。</div>
+<p class="manual-nav"><a href="index.html">全体操作手順へ</a>　｜　<a href="01_メイン画面_操作手順.html">メイン画面の詳しい手順へ</a></p>
+</body></html>

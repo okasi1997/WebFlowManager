@@ -683,10 +683,6 @@ class HierarchicalDataDialog(tk.Toplevel):
         except (TypeError, ValueError):
             self.session_limit.set(str(self.db.get_pcl_session_limit()))
 
-    def _refresh_execution_statuses(self) -> None:
-        # 実行処理は別スレッドで DB を更新するため、画面側は定期的に状態だけ同期する。
-        return
-
     def _toggle_record_enabled(self) -> None:
         selection = self.records.selection()
         if not selection:

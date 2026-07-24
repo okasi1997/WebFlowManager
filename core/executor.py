@@ -39,34 +39,6 @@ class WorkflowExecutor:
         self.project_dir = project_dir
         self.logger = lambda message: logger(tr(message))
 
-    def run(self, workflow_name: str, events: list[dict[str, Any]], variables: dict[str, str], start_index: int=0, records: list[dict[str, Any]] | None=None, browser_visible: bool=True, storage_state_path: Path | None | bool=False) -> None:
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError as error:
-            raise RuntimeError('Playwright is not installed. Run: pip install -r requirements.txt') from error
-        artifact_dir = self.project_dir / 'artifacts' / datetime.now().strftime('%Y%m%d_%H%M%S')
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        state_path = self.project_dir / 'data' / 'browser_state.json' if storage_state_path is False else storage_state_path
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(channel='chrome', headless=not browser_visible, args=self._browser_args(browser_visible))
-            context_options = self._context_options(browser_visible)
-            if state_path is not None and state_path.exists():
-                context_options['storage_state'] = str(state_path)
-            context = browser.new_context(**context_options)
-            page = context.new_page()
-            try:
-                execution_records = records or [{'name': tr('msg.0175'), 'data': None}]
-                for record_number, record in enumerate(execution_records, 1):
-                    self.logger(f'Data [{record_number}/{len(execution_records)}]: {record['name']}')
-                    self._execute_workflow_on_page(page, events, variables, artifact_dir, record.get('data'), f'pcl_{record_number}', start_index)
-                if state_path is not None:
-                    state_path.parent.mkdir(parents=True, exist_ok=True)
-                    context.storage_state(path=str(state_path))
-                self.logger(f'msg.0176{workflow_name}msg.0177')
-            finally:
-                context.close()
-                browser.close()
-
     def run_batch(self, steps: list[dict[str, Any]], variables: dict[str, str], on_step_start: Callable[[dict[str, Any]], Any] | None=None, on_step_success: Callable[[dict[str, Any], Any], None] | None=None, on_step_failure: Callable[[dict[str, Any], Any, Exception], None] | None=None, on_event_start: Callable[[dict[str, Any], dict[str, Any]], None] | None=None, browser_visible: bool=True, session_name: str='batch', storage_state_path: Path | None | bool=False) -> None:
         """計画済みの全ステップを、一つの browser/context/page で実行する。"""
         try:
@@ -405,15 +377,12 @@ class WorkflowExecutor:
             self._event_locator(page, event, selector, fallback_selector).click()
         elif action == 'fill':
             self._event_locator(page, event, selector, fallback_selector).fill(value)
-            self.logger(f'msg.0207{value}')
         elif action == 'select':
             self._event_locator(page, event, selector, fallback_selector).select_option(value)
-            self.logger(f'msg.0208{value}')
         elif action == 'wait':
             self._event_locator(page, event, selector, fallback_selector)
         elif action == 'press':
             self._event_locator(page, event, selector, fallback_selector).press(value)
-            self.logger(f'msg.0209{value}')
         elif action == 'upload_file':
             file_path = Path(value)
             if not file_path.is_absolute():
@@ -422,7 +391,6 @@ class WorkflowExecutor:
             if not file_path.is_file():
                 raise ValueError(f'msg.0421{file_path}')
             self._file_input_locator(page, event, selector, fallback_selector).set_input_files(str(file_path))
-            self.logger(f'msg.0422{file_path}')
         elif action == 'get_text':
             variable_name = value.strip()
             if variable_name and not re.fullmatch('[A-Za-z_][A-Za-z0-9_]*', variable_name):
@@ -431,7 +399,6 @@ class WorkflowExecutor:
             captured = (locator.text_content() or '').strip()
             if variable_name:
                 variables[variable_name] = captured
-                self.logger(f'msg.0211{variable_name}}}：{captured}')
             return captured
         elif action == 'screenshot':
             filename = value or f'screenshot_{event['id']}.png'

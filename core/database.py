@@ -6,7 +6,6 @@ import threading
 from pathlib import Path
 from typing import Any
 from core.conditions import decode_guard
-from i18n import tr
 
 class Database:
     """画面と実行スレッドから共有される SQLite アクセス層。"""
@@ -592,36 +591,6 @@ class Database:
         with self._lock:
             self.connection.execute('UPDATE runs SET finished_at=CURRENT_TIMESTAMP, status=?, message=? WHERE id=?', (status, message, run_id))
             self.connection.commit()
-
-    def list_input_rows(self, workflow_id: int) -> list[dict[str, Any]]:
-        rows = self.connection.execute('SELECT id, position, name FROM input_rows WHERE workflow_id=? ORDER BY position', (workflow_id,)).fetchall()
-        result: list[dict[str, Any]] = []
-        for row in rows:
-            cells = self.connection.execute('SELECT variable_name, value FROM input_cells WHERE row_id=?', (row['id'],)).fetchall()
-            result.append({'id': row['id'], 'position': row['position'], 'name': row['name'], 'values': {cell['variable_name']: cell['value'] for cell in cells}})
-        return result
-
-    def add_input_row(self, workflow_id: int, name: str | None=None) -> int:
-        position = self.connection.execute('SELECT COALESCE(MAX(position), 0) + 1 FROM input_rows WHERE workflow_id=?', (workflow_id,)).fetchone()[0]
-        cursor = self.connection.execute('INSERT INTO input_rows(workflow_id, position, name) VALUES (?, ?, ?)', (workflow_id, position, name or tr(f'msg.0129{position}')))
-        self.connection.commit()
-        return int(cursor.lastrowid)
-
-    def update_input_cell(self, row_id: int, variable_name: str, value: str) -> None:
-        self.connection.execute('INSERT INTO input_cells(row_id, variable_name, value) VALUES (?, ?, ?)\n               ON CONFLICT(row_id, variable_name) DO UPDATE SET value=excluded.value', (row_id, variable_name, value))
-        self.connection.commit()
-
-    def update_input_row_name(self, row_id: int, name: str) -> None:
-        self.connection.execute('UPDATE input_rows SET name=? WHERE id=?', (name, row_id))
-        self.connection.commit()
-
-    def delete_input_row(self, workflow_id: int, row_id: int) -> None:
-        with self.connection:
-            self.connection.execute('DELETE FROM input_cells WHERE row_id=?', (row_id,))
-            self.connection.execute('DELETE FROM input_rows WHERE id=? AND workflow_id=?', (row_id, workflow_id))
-            rows = self.connection.execute('SELECT id FROM input_rows WHERE workflow_id=? ORDER BY position', (workflow_id,)).fetchall()
-            for position, row in enumerate(rows, 1):
-                self.connection.execute('UPDATE input_rows SET position=? WHERE id=?', (position, row['id']))
 
     def get_data_schema(self, _workflow_id: int=0) -> dict[str, Any]:
         row = self.connection.execute('SELECT schema_json FROM global_data_schema WHERE id=1').fetchone()

@@ -13,46 +13,6 @@ TEST_READY_SCRIPT = 'msg.0168'
 class ElementPicker:
     """F2 で選択モードへ入り、操作可能な要素だけを候補として返す。"""
 
-    def __init__(self, project_dir: Path, start_url: str) -> None:
-        self.project_dir = project_dir
-        self.start_url = start_url
-
-    def pick(self) -> dict[str, str]:
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError as error:
-            raise RuntimeError('msg.0169') from error
-        state_path = self.project_dir / 'data' / 'browser_state.json'
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(channel='chrome', headless=False, args=['--start-maximized'])
-            options: dict[str, Any] = {'no_viewport': True}
-            if state_path.exists():
-                options['storage_state'] = str(state_path)
-            context = browser.new_context(**options)
-            page = context.new_page()
-            try:
-                page.goto(self.start_url, wait_until='domcontentloaded')
-                while True:
-                    page.wait_for_timeout(500)
-                    try:
-                        installed = page.evaluate('() => window.__sfFlowPicked !== undefined')
-                        if not installed:
-                            page.evaluate(tr(PICKER_SCRIPT))
-                        result = page.evaluate('() => window.__sfFlowPicked')
-                        if result:
-                            if result.get('cancelled'):
-                                raise RuntimeError('msg.0170')
-                            context.storage_state(path=str(state_path))
-                            return self._choose_unique_locator(page, result)
-                    except RuntimeError:
-                        raise
-                    except Exception:
-                        if page.is_closed():
-                            raise RuntimeError('msg.0171')
-            finally:
-                context.close()
-                browser.close()
-
     def _choose_unique_locator(self, page: Any, info: dict[str, str]) -> dict[str, str]:
         # 人が理解しやすい locator から順に試し、XPath は予備として保持する。
         action = 'fill' if info.get('role') in ('textbox', 'combobox') else 'click'
@@ -76,40 +36,6 @@ class ElementPicker:
             if len(actionable) == 1:
                 return {'selector_type': selector_type, 'selector': selector, 'fallback_selector_type': 'xpath' if selector_type != 'xpath' and info.get('xpath') else 'none', 'fallback_selector': info.get('xpath', '') if selector_type != 'xpath' else '', 'display': display, 'suggested_action': action, 'match_count': '1'}
         raise RuntimeError('msg.0172')
-
-    def test(self, selector_type: str, selector: str) -> int:
-        from playwright.sync_api import sync_playwright
-        state_path = self.project_dir / 'data' / 'browser_state.json'
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(channel='chrome', headless=False, args=['--start-maximized'])
-            options: dict[str, Any] = {'no_viewport': True}
-            if state_path.exists():
-                options['storage_state'] = str(state_path)
-            context = browser.new_context(**options)
-            page = context.new_page()
-            try:
-                page.goto(self.start_url, wait_until='domcontentloaded')
-                while True:
-                    page.wait_for_timeout(500)
-                    try:
-                        installed = page.evaluate('() => window.__sfFlowTestReady !== undefined')
-                        if not installed:
-                            page.evaluate(tr(TEST_READY_SCRIPT))
-                        if page.evaluate('() => window.__sfFlowTestReady'):
-                            break
-                    except Exception:
-                        if page.is_closed():
-                            raise RuntimeError('msg.0173')
-                locator = self._locator(page, selector_type, selector)
-                actionable = self._actionable_matches(locator)
-                count = len(actionable)
-                if count == 1:
-                    actionable[0].highlight()
-                    page.wait_for_timeout(3000)
-                return count
-            finally:
-                context.close()
-                browser.close()
 
     @staticmethod
     def _locator(page: Any, selector_type: str, selector: str) -> Any:
@@ -236,7 +162,7 @@ class DebugBrowserSession:
         def task() -> dict[str, str]:
             context, page = self._ensure_page(target_url)
             page.bring_to_front()
-            picker = ElementPicker(self.project_dir, target_url or self.start_url)
+            picker = ElementPicker()
             while True:
                 if self._cancel_requested.is_set():
                     raise RuntimeError('msg.0170')
@@ -258,7 +184,7 @@ class DebugBrowserSession:
         def task() -> int:
             _context, page = self._ensure_page(target_url)
             page.bring_to_front()
-            picker = ElementPicker(self.project_dir, target_url or self.start_url)
+            picker = ElementPicker()
             actionable = picker._actionable_matches(picker._locator(page, selector_type, selector))
             if len(actionable) == 1:
                 actionable[0].highlight()

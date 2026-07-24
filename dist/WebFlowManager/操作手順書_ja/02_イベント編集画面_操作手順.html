@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>イベント編集画面 操作手順</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>イベント編集画面 操作手順</h1>
+<p class="sub">ブラウザーで行う一つの操作を登録します。操作種別に応じて、使用できる欄が変わります。</p>
+<div class="figure">
+  <img src="images/02_event_editor.png" alt="イベント編集画面">
+  <div class="legend">画像内の A〜E は手順番号ではなく、設定エリアを示します。</div>
+  <div class="callout-key"><span><b>A</b> 操作種別</span><span><b>B</b> 失敗時の動作</span><span><b>C</b> ページ操作</span><span><b>D</b> データ連携</span><span><b>E</b> 保存</span></div>
+</div>
+<div class="note"><b>操作前の確認：</b>対象ページへログインが必要な場合は、先にメイン画面の「ログイン状態」で認証状態を保存します。要素を選択する操作では、設定メニューの「Chrome を表示」を有効にしてください。</div>
+<h2>主なボタン</h2>
+<table><thead><tr><th>ボタン</th><th>操作内容</th></tr></thead><tbody>
+<tr><td>ファイル選択</td><td>upload_file で使用する固定ファイルを選びます。</td></tr>
+<tr><td>実行条件</td><td>このイベントを実行する条件を設定します。</td></tr>
+<tr><td>デバッグページを開く/表示</td><td>対象 URL をデバッグ用 Chrome で開くか、前面に表示します。</td></tr>
+<tr><td>デバッグページを閉じる</td><td>デバッグ用 Chrome を閉じます。</td></tr>
+<tr><td>現在ページから選択</td><td>ページ上の対象を選び、検出方法と検出内容を自動設定します。</td></tr>
+<tr><td>現在ページで検証</td><td>登録した検出内容で対象が一意に見つかるか確認します。</td></tr>
+<tr><td>このイベントまで実行</td><td>先行イベントを実行し、対象イベントの直前で停止します。</td></tr>
+<tr><td>構造から選択</td><td>入力値または取得値を共通データの項目と結び付けます。</td></tr>
+<tr><td>クリア</td><td>設定中のデータリンクを外します。</td></tr>
+<tr><td>保存／キャンセル</td><td>設定を確定して閉じる／変更を保存せず閉じる操作です。</td></tr>
+</tbody></table>
+<h2>クリックや入力欄を登録する</h2>
+<div class="step"><b>手順 1</b>　「イベント名」を入力し、「操作種別」を選びます。</div>
+<div class="step"><b>手順 2</b>　「対象 URL」に操作するページの URL を入力します。</div>
+<div class="step"><b>手順 3</b>　<span class="button">デバッグページを開く/表示</span> を押し、目的の画面まで移動します。</div>
+<div class="step"><b>手順 4</b>　<span class="button">現在ページから選択</span> を押します。Chrome で F2 を押し、対象をクリックします。</div>
+<div class="step"><b>手順 5</b>　<span class="button">現在ページで検証</span> を押し、Chrome で F2 を押します。「一意の要素を検出」を確認します。</div>
+<div class="step"><b>手順 6</b>　必要な入力値、タイムアウト、実行条件、失敗時の動作を設定します。</div>
+<div class="step"><b>手順 7</b>　共通データを使う場合は <span class="button">構造から選択</span> で項目を選び、最後に <span class="button">保存</span> を押します。</div>
+<div class="success"><b>完了確認：</b>メイン画面のイベント一覧へ戻り、イベント名、操作種別、データリンク、有効状態を確認します。</div>
+<h2>操作種別ごとの登録方法</h2>
+<p>「操作種別」を選ぶと、その操作で必要な入力欄だけが有効になります。対象要素を操作するイベントでは、先にデバッグページを開き、<span class="button">現在ページから選択</span> で対象を設定する方法を推奨します。</p>
+<table><thead><tr><th>操作種別</th><th>設定する項目</th><th>入力例</th><th>動作と登録時の注意</th></tr></thead><tbody>
+<tr><td><code>goto</code></td><td>値、タイムアウト</td><td><code>https://example.com/login</code></td><td>「値」に入力した URL を開きます。対象要素と検出方法は設定しません。</td></tr>
+<tr><td><code>click</code></td><td>検出方法、検出内容、タイムアウト</td><td><code>role</code> ／ <code>button|ログイン</code></td><td>ボタン、リンク、チェックボックスなどをクリックします。検証結果が1件になるように設定します。</td></tr>
+<tr><td><code>fill</code></td><td>検出方法、検出内容、値、タイムアウト</td><td><code>label</code> ／ <code>メールアドレス</code> ／ <code>sample@example.com</code></td><td>入力欄の現在値を消してから「値」を入力します。「構造から選択」で共通データの値を使用できます。</td></tr>
+<tr><td><code>select</code></td><td>検出方法、検出内容、値、タイムアウト</td><td><code>label</code> ／ <code>都道府県</code> ／ <code>13</code></td><td>HTML の選択リストから項目を選びます。「値」には通常、対象 option の <code>value</code> を入力します。共通データとの連携も可能です。</td></tr>
+<tr><td><code>wait</code></td><td>検出方法、検出内容、タイムアウト</td><td><code>text</code> ／ <code>登録が完了しました</code></td><td>指定した対象が一意に操作可能な状態で見つかることを確認します。固定時間の待機には <code>pause</code> を使用します。</td></tr>
+<tr><td><code>press</code></td><td>検出方法、検出内容、値、タイムアウト</td><td><code>Enter</code></td><td>対象要素にキーを送ります。「値」には <code>Enter</code>、<code>Tab</code>、<code>Escape</code>、<code>ArrowDown</code>、<code>Control+A</code> などを入力できます。</td></tr>
+<tr><td><code>get_text</code></td><td>検出方法、検出内容、値、タイムアウト</td><td><code>order_number</code></td><td>対象のテキストを取得します。「値」に英字またはアンダースコアから始まる変数名を入力すると、後続イベントで <code>${order_number}</code> として使用できます。「構造から選択」を使うと共通データの項目へ保存します。</td></tr>
+<tr><td><code>screenshot</code></td><td>値</td><td><code>result.png</code></td><td>ページ全体を実行単位の artifacts フォルダーへ保存します。「値」を空欄にすると自動ファイル名になります。対象要素は設定しません。</td></tr>
+<tr><td><code>pause</code></td><td>値、タイムアウト</td><td><code>1500</code></td><td>指定ミリ秒だけ待機します。例の <code>1500</code> は1.5秒です。「値」が空欄の場合はタイムアウトの値を待機時間として使用します。</td></tr>
+<tr><td><code>upload_file</code></td><td>検出方法、検出内容、値、タイムアウト</td><td><code>files\sample.xlsx</code></td><td><code>input type="file"</code> を指定し、ファイルを設定します。<span class="button">ファイル選択</span> で固定ファイルを選べます。相対パスはプログラムのフォルダーを基準にします。共通データからパスを受け取ることもできます。</td></tr>
+</tbody></table>
+<h2>繰り返し・再試行を登録する</h2>
+<p>繰り返しと再試行は普通のイベント種別ではありません。メイン画面の <span class="button">イベントグループ追加</span> から登録します。</p>
+<div class="step"><b>手順 1</b>　メイン画面で、グループを挿入する位置のイベントを選択します。</div>
+<div class="step"><b>手順 2</b>　<span class="button">イベントグループ追加</span> を押し、グループ名を入力します。</div>
+<div class="step"><b>手順 3</b>　共通データの list ごとに処理する場合は「繰り返し」を有効にし、「構造から選択」で対象 list を選びます。</div>
+<div class="step"><b>手順 4</b>　グループ内で失敗した処理をやり直す場合は「再試行」を有効にし、再試行回数を入力します。<code>3</code> を指定すると、最初の実行に失敗した後、最大3回再試行します。</div>
+<div class="step"><b>手順 5</b>　保存後、グループの内側へ実行したいイベントを追加または移動します。</div>
+<h2>よく使うキー入力の例</h2>
+<table><thead><tr><th>目的</th><th>press の「値」</th></tr></thead><tbody>
+<tr><td>Enter キーで確定・送信</td><td><code>Enter</code></td></tr>
+<tr><td>次の入力欄へ移動</td><td><code>Tab</code></td></tr>
+<tr><td>ダイアログを閉じる</td><td><code>Escape</code></td></tr>
+<tr><td>候補を一つ下へ移動</td><td><code>ArrowDown</code></td></tr>
+<tr><td>入力内容を全選択</td><td><code>Control+A</code></td></tr>
+<tr><td>全選択して削除</td><td><code>Control+A</code> のイベントの後に、別の <code>press</code> イベントで <code>Backspace</code></td></tr>
+</tbody></table>
+<div class="note"><b>変数を使う場合：</b>「値」には <code>${変数名}</code> を入力できます。例：<code>https://example.com/orders/${order_number}</code>。ただし、<code>get_text</code> の「値」は保存先の変数名として扱われます。</div>
+<h2>途中のページにある要素を選ぶ</h2>
+<div class="step"><b>手順 1</b>　対象画面へ到達する直前までのイベントを保存します。</div>
+<div class="step"><b>手順 2</b>　対象イベントで <span class="button">このイベントまで実行</span> を押します。</div>
+<div class="step"><b>手順 3</b>　直前で停止したら <span class="button">現在ページから選択</span> を押し、F2 → 対象クリックの順に操作します。</div>
+<div class="warning"><b>検出数が2件以上の場合：</b>対象を誤る可能性があります。再選択し、検出数が1件になることを確認してください。</div>
+<div class="tip"><b>検出できない場合：</b>対象 URL、ログイン状態、ページの表示完了、iframe の有無を確認し、対象画面を表示した状態でもう一度選択してください。</div>
+<p class="manual-nav"><a href="01_メイン画面_操作手順.html">メイン画面の手順へ</a>　｜　<a href="index.html">全体操作手順へ</a></p>
+</body></html>

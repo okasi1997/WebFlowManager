@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>共通データ構造画面 操作手順</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>共通データ構造画面 操作手順</h1>
+<p class="sub">共通データで使用する項目の設計図を作ります。値は「共通データ管理」で入力します。</p>
+<div class="figure">
+  <img src="images/03_schema.png" alt="共通データ構造画面">
+  <div class="legend">画像内の A〜D は手順番号ではなく、操作エリアを示します。</div>
+  <div class="callout-key"><span><b>A</b> フィールド一覧</span><span><b>B</b> 追加・編集・並べ替え</span><span><b>C</b> Json 入出力</span><span><b>D</b> 保存して閉じる</span></div>
+</div>
+<div class="warning"><b>変更前の確認：</b>既存項目の名前・型・階層を変えると、イベントのデータリンクや保存済みデータに影響します。先に Json 出力でバックアップしてください。</div>
+<h2>ボタンの説明</h2>
+<table><thead><tr><th>ボタン</th><th>操作内容</th><th>注意</th></tr></thead><tbody>
+<tr><td>フィールド追加</td><td>選択位置に新しい項目を追加します。</td><td>object/list を選ぶとその配下に追加されます。</td></tr>
+<tr><td>フィールド編集</td><td>項目名や型を変更します。</td><td>「Data」は編集できません。</td></tr>
+<tr class="danger-row"><td>フィールド削除</td><td>選択項目と配下の項目を削除します。</td><td>イベントで使用していないか確認します。</td></tr>
+<tr><td>上へ／下へ</td><td>同じ階層内で項目の順番を変更します。</td><td>異なる階層へは移動できません。</td></tr>
+<tr><td>Json 出力</td><td>現在のデータ構造をバックアップします。</td><td>大きな変更の前に実行します。</td></tr>
+<tr><td>Json 読込</td><td>Json の構造で現在の構造を置き換えます。</td><td>一致しない既存項目が見えなくなる場合があります。</td></tr>
+<tr><td>保存して閉じる</td><td>構造を保存し、既存データを新しい構造に合わせます。</td><td>追加・編集後に必ず押します。</td></tr>
+</tbody></table>
+<h2>項目を追加する</h2>
+<div class="step"><b>手順 1</b>　追加先を選びます。最上位へ追加する場合は「Data」を選びます。</div>
+<div class="step"><b>手順 2</b>　<span class="button">フィールド追加</span> を押します。</div>
+<div class="step"><b>手順 3</b>　フィールド名とデータ型を設定し、<span class="button">OK</span> を押します。</div>
+<div class="step"><b>手順 4</b>　必要な項目を追加したら、<span class="button">保存して閉じる</span> を押します。</div>
+<div class="success"><b>完了確認：</b>共通データ管理画面を開き、追加した項目が表示され、既存データの値が保持されていることを確認します。</div>
+<h2>型の選び方</h2>
+<table><tbody>
+<tr><td>text</td><td>氏名、コード、URL などの文字。</td></tr>
+<tr><td>number</td><td>数量、金額などの数値。</td></tr>
+<tr><td>boolean</td><td>はい／いいえ、ON／OFF。</td></tr>
+<tr><td>object</td><td>住所など、複数項目をまとめるグループ。</td></tr>
+<tr><td>list</td><td>商品明細など、0件以上繰り返す項目。</td></tr>
+</tbody></table>
+<div class="tip"><b>安全な作業順：</b>Json 出力 → 構造を編集 → 保存して閉じる → 共通データを確認。</div>
+<p class="manual-nav"><a href="04_共通データ管理画面_操作手順.html">共通データ管理の手順へ</a>　｜　<a href="index.html">全体操作手順へ</a></p>
+</body></html>

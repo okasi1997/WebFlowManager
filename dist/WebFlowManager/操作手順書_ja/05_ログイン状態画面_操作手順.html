@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ログイン状態画面 操作手順</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>ログイン状態画面 操作手順</h1>
+<p class="sub">ログイン後の状態を保存し、自動実行時に同じ状態を使用します。</p>
+<div class="figure">
+  <img src="images/05_auth.png" alt="ログイン状態画面">
+  <div class="legend">画像内の A〜D は手順番号ではなく、操作エリアを示します。</div>
+  <div class="callout-key"><span><b>A</b> 状態と URL</span><span><b>B</b> 認証ブラウザーを開く</span><span><b>C</b> 現在の状態を保存</span><span><b>D</b> 選択を確定</span></div>
+</div>
+<div class="note"><b>操作前の確認：</b>認証用 Chrome を開いたまま状態を切り替えないでください。新しい状態を作る場合は、用途が分かる名前を付けます。</div>
+<h2>ボタンの説明</h2>
+<table><thead><tr><th>ボタン</th><th>操作内容</th><th>注意</th></tr></thead><tbody>
+<tr><td>新規</td><td>ログイン状態の保存先を作ります。</td><td>名前は半角英数字、下線、ハイフンのみです。</td></tr>
+<tr class="danger-row"><td>削除</td><td>選択中の保存済み状態を削除します。</td><td>default と none は削除できません。</td></tr>
+<tr><td>認証ブラウザーを開く</td><td>選択状態を使って認証用 Chrome を開きます。</td><td>開いた後、手動でログインします。</td></tr>
+<tr><td>現在の状態を保存</td><td>Chrome の現在のログイン状態を保存します。</td><td>none には保存できません。</td></tr>
+<tr><td>ブラウザー状態を確認</td><td>保存した状態でページを開き、ログイン済みか確認します。</td><td>使用する状態を先に選びます。</td></tr>
+<tr><td>認証ブラウザーを閉じる</td><td>認証作業用 Chrome を閉じます。</td><td>状態を保存した後に押します。</td></tr>
+<tr><td>保存</td><td>選択したログイン状態を実行時の設定として確定します。</td><td>最後に必ず押します。</td></tr>
+<tr><td>キャンセル</td><td>選択変更を確定せず閉じます。</td><td>作成済み状態ファイルは残る場合があります。</td></tr>
+</tbody></table>
+<h2>ログイン状態を保存する</h2>
+<div class="step"><b>手順 1</b>　<span class="button">新規</span> を押し、半角英数字などで名前を入力します。</div>
+<div class="step"><b>手順 2</b>　URL 欄にログインページまたは確認ページの URL を入力します。</div>
+<div class="step"><b>手順 3</b>　<span class="button">認証ブラウザーを開く</span> を押します。</div>
+<div class="step"><b>手順 4</b>　Chrome でログインと二段階認証などを完了します。</div>
+<div class="step"><b>手順 5</b>　画面に戻り、<span class="button">現在の状態を保存</span> を押して完了表示を確認します。</div>
+<div class="step"><b>手順 6</b>　<span class="button">ブラウザー状態を確認</span> を押し、ログイン済みページが開くことを確認します。</div>
+<div class="step"><b>手順 7</b>　<span class="button">認証ブラウザーを閉じる</span> を押し、最後に右下の <span class="button">保存</span> を押します。</div>
+<div class="success"><b>完了確認：</b>もう一度「ブラウザー状態を確認」を実行し、パスワード入力なしで対象ページが開くことを確認します。</div>
+<div class="note"><b>default と none：</b>default は既定の保存済み状態、none は保存状態を使わず新しいセッションを使う設定です。</div>
+<div class="warning"><b>ログインが切れた場合：</b>セッション期限切れや追加認証が原因です。同じ状態を選び、認証ブラウザーで再ログインしてから「現在の状態を保存」をやり直してください。</div>
+<p class="manual-nav"><a href="00_基本操作手順.html">基本操作手順へ</a>　｜　<a href="index.html">全体操作手順へ</a></p>
+</body></html>

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>メイン画面 操作手順</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>メイン画面 操作手順</h1>
+<p class="sub">業務フローとイベントの作成、並べ替え、実行を行う画面です。</p>
+<div class="figure">
+  <img src="images/01_main.png" alt="メイン画面">
+  <div class="legend">画像内の A〜D は手順番号ではなく、画面上の操作エリアを示します。</div>
+  <div class="callout-key"><span><b>A</b> 全フロー Json</span><span><b>B</b> 実行状態・タブ</span><span><b>C</b> 共通データ・設定</span><span><b>D</b> イベント操作</span></div>
+</div>
+<div class="flow-summary"><b>基本の流れ</b><span>1. フロー作成</span><span>2. イベント登録</span><span>3. 共通データ確認</span><span>4. 順番に実行</span></div>
+<h2>業務フロー側のボタン</h2>
+<table><thead><tr><th>ボタン</th><th>操作内容</th><th>確認事項</th></tr></thead><tbody>
+<tr><td>新規</td><td>新しい業務フローを作成します。</td><td>分かりやすい名前を入力します。</td></tr>
+<tr><td>名前変更</td><td>選択中のフロー名を変更します。</td><td>対象行を先に選択します。</td></tr>
+<tr><td>有効/無効</td><td>実行対象と実行対象外を切り替えます。</td><td>無効のフローは順番実行でスキップされます。</td></tr>
+<tr class="danger-row"><td>削除</td><td>フローと配下の全イベントを削除します。</td><td>確認画面のフロー名を確認します。</td></tr>
+<tr><td>上へ／下へ</td><td>フローの実行順を変更します。</td><td>ドラッグでも並べ替えられます。</td></tr>
+<tr><td>データ開始に設定</td><td>このフローから共通データごとの処理を開始します。</td><td>開始位置より前ではデータリンクを使用できません。</td></tr>
+<tr><td>実行条件</td><td>データ値による実行条件を設定します。</td><td>共通データ構造を先に作成します。</td></tr>
+<tr><td>全フロー Json を読み込む</td><td>保存済みの全フローで現在内容を置き換えます。</td><td>必要なら先に出力します。</td></tr>
+<tr><td>全フロー Json を出力</td><td>全フローとイベントをバックアップします。</td><td>保存先を確認します。</td></tr>
+</tbody></table>
+<h2>イベント側のボタンとタブ</h2>
+<table><thead><tr><th>項目</th><th>操作内容</th><th>確認事項</th></tr></thead><tbody>
+<tr><td>イベント追加</td><td>選択中のフローへイベントを追加します。</td><td>追加先のフロー名を先に確認します。</td></tr>
+<tr><td>グループ追加</td><td>繰り返し・再試行に使うイベントグループを追加します。</td><td>挿入位置のイベントを先に選択します。</td></tr>
+<tr><td>編集</td><td>選択中のイベントまたはグループを編集します。</td><td>保存後、一覧の内容を確認します。</td></tr>
+<tr><td>上へ／下へ</td><td>イベントの実行順を変更します。</td><td>グループ境界を越える移動に注意します。</td></tr>
+<tr class="danger-row"><td>削除</td><td>選択中のイベントまたはグループを削除します。</td><td>確認画面の対象名を確認します。</td></tr>
+<tr><td>イベント一覧</td><td>登録内容と実行順を確認します。</td><td>「有効」と実行条件を確認します。</td></tr>
+<tr><td>実行状況／実行ログ</td><td>進行状況／詳細な結果を確認します。</td><td>失敗時は最初のエラーを確認します。</td></tr>
+</tbody></table>
+<h2>フローを作成してイベントを追加する</h2>
+<div class="step"><b>手順 1</b>　左側の <span class="button">新規</span> を押し、業務フロー名を入力します。</div>
+<div class="step"><b>手順 2</b>　作成したフローを選択し、右側の見出しがその名前になったことを確認します。</div>
+<div class="step"><b>手順 3</b>　右側の <span class="button">イベント追加</span> を押します。</div>
+<div class="step"><b>手順 4</b>　イベント編集画面で設定し、<span class="button">保存</span> を押します。</div>
+<div class="step"><b>手順 5</b>　イベントを選択し、<span class="button">上へ</span>／<span class="button">下へ</span> で順番を整えます。</div>
+<div class="success"><b>完了確認：</b>右側の「イベント一覧」に、登録したイベントが実行順どおりに表示されていれば完了です。</div>
+<h2>登録内容を実行する</h2>
+<div class="step"><b>手順 1</b>　実行するフローとイベントが「有効」になっていることを確認します。</div>
+<div class="step"><b>手順 2</b>　データを使う場合は <span class="button">共通データ</span> を開き、「今回実行」を確認します。</div>
+<div class="step"><b>手順 3</b>　画面上部の <span class="button">▶ 順番に実行</span> を押します。</div>
+<div class="step"><b>手順 4</b>　「実行状況」または「実行ログ」で結果を確認します。</div>
+<div class="tip"><b>動作確認：</b>最初は「Chrome を表示」を有効にし、データ1件で実行すると確認しやすくなります。</div>
+<div class="warning"><b>実行できない場合：</b>フローとイベントの「有効」、共通データの「今回実行」、ログイン状態、実行条件の順に確認してください。</div>
+<p class="manual-nav"><a href="00_基本操作手順.html">基本操作手順へ</a>　｜　<a href="index.html">全体操作手順へ</a></p>
+</body></html>

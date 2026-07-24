@@ -2,12 +2,7 @@
 from __future__ import annotations
 
 import queue
-import shutil
-import socket
-import subprocess
 import threading
-import time
-import urllib.request
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, Callable
@@ -31,64 +26,32 @@ class AuthBrowserSession:
                     return
                 future.set_exception(RuntimeError('msg.0169'))
         playwright = sync_playwright().start()
-        browser = context = page = chrome_process = None
+        context = page = None
 
         def close() -> None:
-            nonlocal browser, context, page, chrome_process
+            nonlocal context, page
             try:
-                if browser is not None:
-                    browser.close()
+                if context is not None:
+                    context.close()
             finally:
-                if chrome_process is not None and chrome_process.poll() is None:
-                    chrome_process.terminate()
-                    try:
-                        chrome_process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        chrome_process.kill()
-                browser = context = page = None
-                chrome_process = None
-
-        def chrome_executable() -> str:
-            candidates = [
-                shutil.which('chrome'), shutil.which('chrome.exe'),
-                r'C:\Program Files\Google\Chrome\Application\chrome.exe',
-                r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
-            ]
-            for candidate in candidates:
-                if candidate and Path(candidate).is_file():
-                    return str(candidate)
-            raise RuntimeError('msg.0482')
-
-        def available_port() -> int:
-            with socket.socket() as listener:
-                listener.bind(('127.0.0.1', 0))
-                return int(listener.getsockname()[1])
+                context = page = None
 
         def open_browser(state_path: Path | None, url: str) -> None:
-            nonlocal browser, context, page, chrome_process
+            nonlocal context, page
             close()
             profile_name = state_path.stem if state_path is not None else 'none'
             user_data_dir = state_path.parent / 'chrome_profiles' / profile_name if state_path is not None else Path.cwd() / 'data' / 'chrome_profiles' / profile_name
             user_data_dir.mkdir(parents=True, exist_ok=True)
-            port = available_port()
-            chrome_process = subprocess.Popen([
-                chrome_executable(), f'--remote-debugging-port={port}',
-                f'--user-data-dir={user_data_dir}', '--start-maximized', url,
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            endpoint = f'http://127.0.0.1:{port}'
-            deadline = time.monotonic() + 15
-            while True:
-                try:
-                    with urllib.request.urlopen(f'{endpoint}/json/version', timeout=1):
-                        break
-                except Exception:
-                    if chrome_process.poll() is not None or time.monotonic() >= deadline:
-                        raise RuntimeError('msg.0483')
-                    time.sleep(0.2)
-            browser = playwright.chromium.connect_over_cdp(endpoint)
-            context = browser.contexts[0]
+            context = playwright.chromium.launch_persistent_context(
+                user_data_dir=str(user_data_dir),
+                channel='chrome',
+                headless=False,
+                args=['--start-maximized'],
+                no_viewport=True,
+            )
             pages = context.pages
             page = pages[-1] if pages else context.new_page()
+            page.goto(url, wait_until='domcontentloaded')
             page.bring_to_front()
 
         def save(state_path: Path) -> str:

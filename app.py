@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import os
 import sqlite3
+import sys
 import threading
 import tkinter as tk
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -19,18 +20,9 @@ from core.executor import WorkflowExecutor, find_variables
 from core.settings import SettingsError, load_settings
 from i18n import install_tk_translation, set_language, tr
 from ui.dialogs import EventDialog, EventGroupDialog, GuardConditionDialog, VariablesDialog, guard_operator_labels
-from ui.input_data import InputDataDialog, InputRowSelectDialog
 from ui.auth_state import AuthStateDialog, profile_path
 from ui.structured_data import DataPathDialog, HierarchicalDataDialog, SchemaDesignerDialog
 from ui.ui_helpers import AutoScrollbar
-
-def build_execution_schedule(records: list[dict[str, object]], jobs: list[dict[str, object]]) -> list[tuple[str, int, dict[str, object] | None, dict[str, object]]]:
-    """前処理を一度だけ並べ、その後ろに PCL ごとの処理を展開する。"""
-    preamble = [job for job in jobs if not job.get('per_pcl')]
-    pcl_jobs = [job for job in jobs if job.get('per_pcl')]
-    schedule = [('once', 0, None, job) for job in preamble]
-    schedule.extend((('pcl', pcl_index, record, job) for pcl_index, record in enumerate(records, 1) for job in pcl_jobs))
-    return schedule
 
 class FlowManagerApp:
     """Tk の画面状態と、バックグラウンドで動く実行処理を接続する。"""
@@ -38,22 +30,33 @@ class FlowManagerApp:
     def __init__(self) -> None:
         # 言語は Tk ウィジェットを作る前に確定する必要がある。
         # 作成後に変更すると、一部の ttk 内部文字列だけ旧言語が残るためである。
-        self.project_dir = Path(__file__).resolve().parent
+        frozen = getattr(sys, 'frozen', False)
+        self.project_dir = Path(sys.executable).resolve().parent if frozen else Path(__file__).resolve().parent
+        self.resource_dir = Path(getattr(sys, '_MEIPASS', self.project_dir)).resolve() if frozen else self.project_dir
         self.log_dir = self.project_dir / 'log'
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        (self.project_dir / 'data').mkdir(parents=True, exist_ok=True)
         self._log_file_lock = threading.Lock()
         self.db = Database(self.project_dir / 'data' / 'flows.db')
         set_language(self.db.get_language())
         install_tk_translation()
+        settings_path = self.project_dir / 'settings.json'
+        if not settings_path.is_file():
+            settings_path = self.resource_dir / 'settings.json'
         try:
-            self.settings = load_settings(self.project_dir / 'settings.json')
+            self.settings = load_settings(settings_path)
         except SettingsError as error:
             self.db.close()
             raise RuntimeError(tr(f'msg.0001{error}')) from error
         self.ui_font_family, self.ui_font_size = self.db.get_ui_font()
+        if os.name == 'nt':
+            try:
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('WebFlowManager.Desktop')
+            except (AttributeError, OSError):
+                pass
         self.root = tk.Tk()
         self.root.title('msg.0002')
-        self.app_icon_path = self.project_dir / 'assets' / 'app.ico'
+        self.app_icon_path = self.resource_dir / 'assets' / 'app.ico'
         if self.app_icon_path.is_file():
             try:
                 self.root.iconbitmap(default=str(self.app_icon_path))
@@ -726,15 +729,6 @@ class FlowManagerApp:
             self.root.clipboard_clear()
             self.root.clipboard_append(content)
 
-    def _toggle_log(self) -> None:
-        self.log_expanded = not self.log_expanded
-        if self.log_expanded:
-            self.log_frame.pack(fill='x')
-            self.log_toggle_button.configure(text='msg.0436')
-        else:
-            self.log_frame.pack_forget()
-            self.log_toggle_button.configure(text='msg.0437')
-
     def _refresh_workflows(self, select_id: int | None=None) -> None:
         self.workflow_tree.delete(*self.workflow_tree.get_children())
         for row_index, row in enumerate(self.db.list_workflows()):
@@ -1357,14 +1351,14 @@ class FlowManagerApp:
                     if step['phase'] == 'pcl' and step.get('record'):
                         self.db.set_data_record_status(step['record']['id'], 'running')
                     if step['phase'] == 'once':
-                        self._log(f'msg.0074{step['name']} ==========')
+                        self._log(f'msg.0074{step['name']}')
                     else:
                         group = str(step.get('group', '1'))
                         if step['pcl_index'] != state.get(group, -1):
                             pcl_name = step['record']['name']
-                            self._log(f'msg.0075{group} | Data [{step['pcl_index']}/{len(structured_records)}] {pcl_name} ################')
+                            self._log(f'msg.0075{group} | msg.0446 [{step['pcl_index']}/{len(structured_records)}]: {pcl_name}')
                             state[group] = step['pcl_index']
-                        self._log(f'msg.0076{step['name']} ==========')
+                        self._log(f'msg.0076{step['name']}')
                     return self.db.create_run(step['id'])
 
                 def step_success(_step: dict[str, object], run_id: int) -> None:
@@ -1388,7 +1382,6 @@ class FlowManagerApp:
                     self._show_executing_step(step, event)
                 executor = WorkflowExecutor(self.project_dir, lambda message: self._log(message, 'WorkflowExecutor'))
                 if preamble_steps:
-                    self._log('msg.0077')
                     executor.run_batch(preamble_steps, variables, step_start, step_success, step_failure, event_start, self.browser_visible.get(), 'preamble', execution_state_path)
                 if groups and pcl_jobs:
                     worker_count = min(session_limit, len(groups))
@@ -1415,17 +1408,6 @@ class FlowManagerApp:
                 self.running = False
                 self.root.after(0, self._finish_execution_ui)
         threading.Thread(target=worker, daemon=True).start()
-
-    def _manage_inputs(self) -> None:
-        if self.current_workflow_id is None:
-            messagebox.showinfo('msg.0048', 'msg.0087')
-            return
-        events = [dict(row) for row in self.db.list_events(self.current_workflow_id)]
-        variables = find_variables(events)
-        dialog = self._register_dialog(f'inputs:{self.current_workflow_id}', lambda: InputDataDialog(self.root, self.db, self.current_workflow_id, str(self.title_label.cget('text')), variables))
-        if dialog is None:
-            return
-        self.root.wait_window(dialog)
 
     def _design_schema(self) -> None:
         dialog = self._register_dialog('schema', lambda: SchemaDesignerDialog(self.root, self.db, 0, 'msg.0088'))
@@ -1548,13 +1530,16 @@ class FlowManagerApp:
                 self.root.after(0, lambda: completed(message))
         threading.Thread(target=worker, daemon=True).start()
 
-    def _log(self, message: str, class_name: str='FlowManagerApp') -> None:
+    @staticmethod
+    def _format_file_log(message: str, now: datetime) -> str:
+        timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
+        lines = message.splitlines() or ['']
+        return '\n'.join(f'{timestamp} {line}' for line in lines) + '\n'
+
+    def _log(self, message: str, _source: str='FlowManagerApp') -> None:
         translated = tr(message)
         now = datetime.now()
-        timestamp = now.strftime('%Y-%m-%d %H%M%S')
-        prefix = f'{timestamp} {class_name}: '
-        lines = translated.splitlines() or ['']
-        file_text = '\n'.join(f'{prefix}{line}' for line in lines) + '\n'
+        file_text = self._format_file_log(translated, now)
         log_path = self.log_dir / f'{now:%Y-%m-%d}.log'
         try:
             with self._log_file_lock:
@@ -1578,15 +1563,6 @@ class FlowManagerApp:
         record = step.get('record')
         record_id = record.get('id', step.get('pcl_index', '?')) if isinstance(record, dict) else step.get('pcl_index', '?')
         return f'group:{step.get("group", "1")}:data:{record_id}'
-
-    def _all_event_items(self) -> list[str]:
-        result: list[str] = []
-        pending = list(self.event_tree.get_children())
-        while pending:
-            item = pending.pop()
-            result.append(item)
-            pending.extend(self.event_tree.get_children(item))
-        return result
 
     def _refresh_execution_indicators(self) -> None:
         self.parallel_tree.delete(*self.parallel_tree.get_children())

@@ -1,8 +1,37 @@
-"""settings.json を検証し、実行時に扱いやすい形式へ正規化する。"""
+"""固定機能と settings.json のユーザー設定を実行時形式へまとめる。"""
 from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+
+SUPPORTED_ACTIONS = (
+    'goto',
+    'click',
+    'fill',
+    'select',
+    'wait',
+    'press',
+    'get_text',
+    'screenshot',
+    'pause',
+    'upload_file',
+    'loop_start',
+    'loop_end',
+    'retry_start',
+    'retry_end',
+    'group_start',
+    'group_end',
+)
+
+SUPPORTED_SELECTOR_TYPES = (
+    'none',
+    'role',
+    'label',
+    'placeholder',
+    'text',
+    'css',
+    'xpath',
+)
 
 class SettingsError(ValueError):
     pass
@@ -17,22 +46,14 @@ def load_settings(path: Path) -> dict[str, Any]:
         raise SettingsError(f'msg.0229{error}') from error
     if not isinstance(raw, dict):
         raise SettingsError('msg.0230')
-    result: dict[str, Any] = {}
-    for key in ('actions', 'selector_types'):
-        values = raw.get(key)
-        if not isinstance(values, list) or not values:
-            raise SettingsError(f'{key}msg.0231')
-        if any((not isinstance(value, str) or not value.strip() for value in values)):
-            raise SettingsError(f'{key}msg.0232')
-        normalized = tuple((value.strip() for value in values))
-        if len(set(normalized)) != len(normalized):
-            raise SettingsError(f'{key}msg.0233')
-        result[key] = normalized
     picker = raw.get('picker', {})
     if not isinstance(picker, dict):
         raise SettingsError('msg.0234')
     start_url = picker.get('start_url', 'https://example.com/')
     if not isinstance(start_url, str) or not start_url.startswith(('http://', 'https://')):
         raise SettingsError('msg.0235')
-    result['picker'] = {'start_url': start_url}
-    return result
+    return {
+        'actions': SUPPORTED_ACTIONS,
+        'selector_types': SUPPORTED_SELECTOR_TYPES,
+        'picker': {'start_url': start_url},
+    }
