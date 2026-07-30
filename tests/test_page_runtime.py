@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
-from browser.page_runtime import BROWSER_CERTIFICATE_ARGS, BROWSER_CONTEXT_PERMISSIONS, active_page, locators_in_frames, settle_new_page
+from browser.page_runtime import BROWSER_ARGS, BROWSER_IGNORED_DEFAULT_ARGS, active_page, locators_in_frames, settle_new_page
+from browser.profile_runtime import persistent_profile_dir
 from core.executor import WorkflowExecutor
 
 
@@ -40,17 +42,31 @@ class FakePage:
 
 
 class PageRuntimeTests(unittest.TestCase):
-    def test_all_workflow_browser_modes_include_certificate_bypass_flags(self) -> None:
+    def test_workflow_browser_uses_normal_chrome_arguments(self) -> None:
         for visible in (True, False):
             arguments = WorkflowExecutor._browser_args(visible)
-            for flag in BROWSER_CERTIFICATE_ARGS:
-                self.assertIn(flag, arguments)
+            self.assertNotIn('--ignore-certificate-errors', arguments)
+            self.assertNotIn('--allow-insecure-localhost', arguments)
+        self.assertEqual(WorkflowExecutor._browser_args(True), BROWSER_ARGS)
+        self.assertEqual(BROWSER_IGNORED_DEFAULT_ARGS, ['--no-sandbox'])
 
-    def test_all_workflow_browser_modes_grant_local_network_access(self) -> None:
+    def test_workflow_context_does_not_force_site_permissions(self) -> None:
         for visible in (True, False):
-            permissions = WorkflowExecutor._context_options(visible)['permissions']
-            self.assertIn('local-network-access', permissions)
-            self.assertEqual(permissions, BROWSER_CONTEXT_PERMISSIONS)
+            options = WorkflowExecutor._context_options(visible)
+            self.assertNotIn('permissions', options)
+            self.assertNotIn('ignore_https_errors', options)
+
+    def test_saved_state_maps_to_application_profile_directory(self) -> None:
+        project = Path('C:/work/project')
+        self.assertEqual(
+            persistent_profile_dir(project, project / 'data' / 'browser_state.json'),
+            project / 'data' / 'chrome_profiles' / 'default',
+        )
+        self.assertEqual(
+            persistent_profile_dir(project, project / 'data' / 'browser_states' / 'sales.json'),
+            project / 'data' / 'chrome_profiles' / 'sales',
+        )
+        self.assertIsNone(persistent_profile_dir(project, None))
 
     def test_active_page_follows_newest_open_tab(self) -> None:
         context = FakeContext()

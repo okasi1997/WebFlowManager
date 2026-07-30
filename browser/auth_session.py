@@ -6,11 +6,13 @@ import threading
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, Callable
-from browser.page_runtime import BROWSER_CERTIFICATE_ARGS, BROWSER_CONTEXT_PERMISSIONS, active_page
+from browser.page_runtime import BROWSER_ARGS, BROWSER_IGNORED_DEFAULT_ARGS, active_page
+from browser.profile_runtime import persistent_profile_dir
 
 
 class AuthBrowserSession:
-    def __init__(self, logger: Callable[[str], None]) -> None:
+    def __init__(self, project_dir: Path, logger: Callable[[str], None]) -> None:
+        self.project_dir = project_dir
         self.logger = logger
         self._tasks: queue.Queue[tuple[Callable[[], Any] | None, Future[Any]]] = queue.Queue()
         self._thread = threading.Thread(target=self._worker, name='auth-browser', daemon=True)
@@ -40,17 +42,17 @@ class AuthBrowserSession:
         def open_browser(state_path: Path | None, url: str) -> None:
             nonlocal context, page
             close()
-            profile_name = state_path.stem if state_path is not None else 'none'
-            user_data_dir = state_path.parent / 'chrome_profiles' / profile_name if state_path is not None else Path.cwd() / 'data' / 'chrome_profiles' / profile_name
+            user_data_dir = persistent_profile_dir(self.project_dir, state_path)
+            if user_data_dir is None:
+                raise RuntimeError('保存対象のログイン状態を選択してください。')
             user_data_dir.mkdir(parents=True, exist_ok=True)
             context = playwright.chromium.launch_persistent_context(
                 user_data_dir=str(user_data_dir),
                 channel='chrome',
                 headless=False,
-                args=['--start-maximized', *BROWSER_CERTIFICATE_ARGS],
+                args=BROWSER_ARGS,
+                ignore_default_args=BROWSER_IGNORED_DEFAULT_ARGS,
                 no_viewport=True,
-                ignore_https_errors=True,
-                permissions=BROWSER_CONTEXT_PERMISSIONS,
             )
             pages = context.pages
             page = pages[-1] if pages else context.new_page()

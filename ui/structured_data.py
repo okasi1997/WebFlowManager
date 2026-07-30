@@ -320,9 +320,8 @@ class FieldDialog(tk.Toplevel):
         self.rowconfigure(1, weight=1)
         self.columnconfigure(0, weight=1)
         ttk.Separator(self, style='DialogFooter.TSeparator').grid(row=0, column=0, sticky='ew')
-        # Optical centering: the long controls carry more visual weight than
-        # the labels, so shift the form slightly left while keeping the footer
-        # actions mathematically centered.
+        # 長い入力欄はラベルより視覚的な重みが大きいため、フッター操作は中央のまま
+        # フォームだけを少し左へ寄せて見た目の中心を合わせる。
         main = ttk.Frame(self, padding=(28, 14, 68, 10))
         main.grid(row=1, column=0, sticky='nsew')
         body = ttk.Frame(main)
@@ -437,9 +436,8 @@ class SchemaDesignerDialog(tk.Toplevel):
         self.tree.delete(*self.tree.get_children())
         self.root_tree.delete(*self.root_tree.get_children())
         self.node_by_item.clear()
-        # The first row is the schema container, not an editable business
-        # field.  Keep the persisted schema name for compatibility, while
-        # presenting a neutral UI label.
+        # 先頭行は編集対象の業務フィールドではなくスキーマのコンテナである。
+        # 互換性のため保存済みスキーマ名は維持し、画面には中立的な名称を表示する。
         root = self.root_tree.insert('', 'end', text='Data', values=('list', ''), open=True, tags=('schema_root',))
         self.root_tree.tag_configure('schema_root', background='#E7EEF5', foreground='#4A5560', font=(self.db.get_ui_font()[0], self.db.get_ui_font()[1], 'bold'))
 

@@ -1,11 +1,13 @@
 """Playwright を使用して、登録済みイベントを順番に実行する。"""
 from __future__ import annotations
 import re
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from browser.page_runtime import BROWSER_CERTIFICATE_ARGS, BROWSER_CONTEXT_PERMISSIONS, active_page, locators_in_frames, open_pages, settle_new_page
+from browser.page_runtime import BROWSER_ARGS, BROWSER_IGNORED_DEFAULT_ARGS, active_page, locators_in_frames, open_pages, settle_new_page
+from browser.profile_runtime import persistent_profile_dir
 from core.conditions import decode_guard, evaluate_guard
 from i18n import tr
 VARIABLE_PATTERN = re.compile('\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}')
@@ -55,12 +57,22 @@ class WorkflowExecutor:
         # 各並列組は同じログイン状態を読み込むが、終了時の書き込み先は分離する。
         # 複数スレッドによる browser_state.json の同時上書きを避けるためである。
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(channel='chrome', headless=not browser_visible, args=self._browser_args(browser_visible))
-            options = self._context_options(browser_visible)
-            if state_path is not None and state_path.exists():
-                options['storage_state'] = str(state_path)
-            context = browser.new_context(**options)
-            page = context.new_page()
+            profile_dir = persistent_profile_dir(self.project_dir, state_path)
+            temporary_profile = None
+            if profile_dir is None:
+                temporary_profile = tempfile.TemporaryDirectory(prefix='webflow_chrome_')
+                profile_dir = Path(temporary_profile.name)
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            context = playwright.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir),
+                channel='chrome',
+                headless=not browser_visible,
+                args=self._browser_args(browser_visible),
+                ignore_default_args=BROWSER_IGNORED_DEFAULT_ARGS if browser_visible else None,
+                **self._context_options(browser_visible),
+            )
+            pages = context.pages
+            page = pages[-1] if pages else context.new_page()
             try:
                 for step_number, step in enumerate(steps, 1):
                     token = on_step_start(step) if on_step_start else None
@@ -86,19 +98,20 @@ class WorkflowExecutor:
                         context.storage_state(path=str(output_state_path))
                 finally:
                     context.close()
-                    browser.close()
+                    if temporary_profile is not None:
+                        temporary_profile.cleanup()
 
     @staticmethod
     def _browser_args(browser_visible: bool) -> list[str]:
         if browser_visible:
-            return ['--start-maximized', *BROWSER_CERTIFICATE_ARGS]
-        return [f'--window-size={HEADLESS_WIDTH},{HEADLESS_HEIGHT}', *BROWSER_CERTIFICATE_ARGS]
+            return list(BROWSER_ARGS)
+        return [f'--window-size={HEADLESS_WIDTH},{HEADLESS_HEIGHT}']
 
     @staticmethod
     def _context_options(browser_visible: bool) -> dict[str, Any]:
         if browser_visible:
-            return {'no_viewport': True, 'ignore_https_errors': True, 'permissions': BROWSER_CONTEXT_PERMISSIONS}
-        return {'viewport': {'width': HEADLESS_WIDTH, 'height': HEADLESS_HEIGHT}, 'screen': {'width': HEADLESS_WIDTH, 'height': HEADLESS_HEIGHT}, 'device_scale_factor': 1, 'ignore_https_errors': True, 'permissions': BROWSER_CONTEXT_PERMISSIONS}
+            return {'no_viewport': True}
+        return {'viewport': {'width': HEADLESS_WIDTH, 'height': HEADLESS_HEIGHT}, 'screen': {'width': HEADLESS_WIDTH, 'height': HEADLESS_HEIGHT}, 'device_scale_factor': 1}
 
     def _execute_workflow_on_page(self, page: Any, events: list[dict[str, Any]], variables: dict[str, str], artifact_dir: Path, root_data: dict[str, Any] | None, trace: str, start_index: int=0, log_prefix: str='', on_event_start: Callable[[dict[str, Any]], None] | None=None) -> None:
         enabled = [event for event in events if event.get('enabled', 1)][start_index:]

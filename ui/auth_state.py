@@ -10,6 +10,7 @@ from tkinter import messagebox, simpledialog, ttk
 from typing import Callable
 
 from browser.auth_session import AuthBrowserSession
+from browser.profile_runtime import clear_profile, persistent_profile_dir
 from i18n import tr
 
 DEFAULT_PROFILE = 'default'
@@ -77,7 +78,8 @@ class AuthStateDialog(tk.Toplevel):
 
     def _selection_changed(self) -> None:
         path = profile_path(self.project_dir, self.profile.get())
-        self.path_label.configure(text='msg.0470' if path is None else str(path))
+        profile_dir = persistent_profile_dir(self.project_dir, path)
+        self.path_label.configure(text='msg.0470' if profile_dir is None else str(profile_dir))
 
     def _new_profile(self) -> None:
         name = simpledialog.askstring('msg.0462', 'msg.0471', parent=self)
@@ -103,6 +105,9 @@ class AuthStateDialog(tk.Toplevel):
         if messagebox.askyesno('msg.0046', f'msg.0474{name}?', parent=self):
             if path is not None and path.exists():
                 path.unlink()
+            profile_dir = persistent_profile_dir(self.project_dir, path)
+            if profile_dir is not None:
+                clear_profile(self.project_dir, profile_dir)
             self._refresh_profiles(DEFAULT_PROFILE)
 
     def _background(self, operation: Callable[[], object], success: Callable[[object], str]) -> None:

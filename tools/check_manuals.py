@@ -45,7 +45,7 @@ for page in pages:
         if target is not None:
             assert target.exists(), f"broken reference: {page} -> {reference}"
 
-    # Each procedure block restarts at 1 after the next heading.
+            # 各操作手順ブロックは次の見出し以降で1から数え直す。
     for block in re.split(r"<h[123][^>]*>", text, flags=re.I)[1:]:
         block = re.split(r"</h[123]>", block, maxsplit=1, flags=re.I)[-1]
         numbers = [int(value) for value in re.findall(r"<b>手順\s+(\d+)</b>", block)]

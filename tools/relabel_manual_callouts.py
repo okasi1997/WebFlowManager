@@ -3,7 +3,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 
-# Letters identify persistent screen areas without being confused with steps.
+# 手順番号と混同しないよう、固定された画面領域は英字で識別する。
 CALLOUTS_BY_FILE = {
     "01_main.png": (
         ((175, 655), "A"),

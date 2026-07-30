@@ -10,7 +10,7 @@ from ui.ui_helpers import AutoScrollbar
 
 
 class RoundedCard(tk.Canvas):
-    """Canvas-backed card with a real rounded outline and a ttk content frame."""
+    """実線の角丸枠と ttk 内容フレームを持つ Canvas ベースのカード。"""
 
     def __init__(self, parent: tk.Misc, radius: int=10, padding: tuple[int, int]=(12, 9)) -> None:
         super().__init__(parent, height=1, bg='#F3F3F3', highlightthickness=0, bd=0)

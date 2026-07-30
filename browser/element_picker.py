@@ -1,12 +1,14 @@
 """ブラウザー上で要素を選択し、一意な locator 候補を生成する。"""
 from __future__ import annotations
 import queue
+import tempfile
 import threading
 from concurrent.futures import Future
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from browser.page_runtime import BROWSER_CERTIFICATE_ARGS, BROWSER_CONTEXT_PERMISSIONS, active_page, locators_in_frames, page_frames
+from browser.page_runtime import BROWSER_ARGS, BROWSER_IGNORED_DEFAULT_ARGS, active_page, locators_in_frames, page_frames
+from browser.profile_runtime import persistent_profile_dir
 from i18n import tr
 PICKER_SCRIPT = 'msg.0167'
 TEST_READY_SCRIPT = 'msg.0168'
@@ -106,35 +108,42 @@ class DebugBrowserSession:
                     return
                 future.set_exception(RuntimeError('msg.0169'))
         playwright = sync_playwright().start()
-        browser = context = page = None
+        context = page = None
+        temporary_profile: tempfile.TemporaryDirectory[str] | None = None
 
         def dispose() -> None:
-            nonlocal browser, context, page
+            nonlocal context, page, temporary_profile
             try:
                 if context is not None:
                     context.close()
             finally:
-                if browser is not None:
-                    browser.close()
-                browser = context = page = None
+                context = page = None
+                if temporary_profile is not None:
+                    temporary_profile.cleanup()
+                    temporary_profile = None
 
         def ensure_page(target_url: str='') -> tuple[Any, Any]:
-            nonlocal browser, context, page
+            nonlocal context, page, temporary_profile
             if context is not None and page is not None:
                 page = active_page(page)
                 if not page.is_closed():
                     return context, page
             state_path = self.storage_state_getter()
-            browser = playwright.chromium.launch(channel='chrome', headless=False, args=['--start-maximized', *BROWSER_CERTIFICATE_ARGS])
-            options: dict[str, Any] = {
-                'no_viewport': True,
-                'ignore_https_errors': True,
-                'permissions': BROWSER_CONTEXT_PERMISSIONS,
-            }
-            if state_path is not None and state_path.exists():
-                options['storage_state'] = str(state_path)
-            context = browser.new_context(**options)
-            page = context.new_page()
+            user_data_dir = persistent_profile_dir(self.project_dir, state_path)
+            if user_data_dir is None:
+                temporary_profile = tempfile.TemporaryDirectory(prefix='webflow_chrome_')
+                user_data_dir = Path(temporary_profile.name)
+            user_data_dir.mkdir(parents=True, exist_ok=True)
+            context = playwright.chromium.launch_persistent_context(
+                user_data_dir=str(user_data_dir),
+                channel='chrome',
+                headless=False,
+                args=BROWSER_ARGS,
+                ignore_default_args=BROWSER_IGNORED_DEFAULT_ARGS,
+                no_viewport=True,
+            )
+            pages = context.pages
+            page = pages[-1] if pages else context.new_page()
             page.goto(target_url or self.start_url, wait_until='domcontentloaded')
             return context, page
 
@@ -189,10 +198,6 @@ class DebugBrowserSession:
                     if result:
                         if result.get('cancelled'):
                             raise RuntimeError('msg.0170')
-                        state_path = self.storage_state_getter()
-                        if state_path is not None:
-                            state_path.parent.mkdir(parents=True, exist_ok=True)
-                            context.storage_state(path=str(state_path))
                         return picker._choose_unique_locator(page, result)
         return self._submit(task)
 

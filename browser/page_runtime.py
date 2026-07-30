@@ -1,19 +1,11 @@
-"""Shared Playwright helpers for tabs, popup pages, and iframe-aware lookup."""
+"""タブ、ポップアップ、iframe 対応検索で共有する Playwright 補助処理。"""
 from __future__ import annotations
 
 from typing import Any, Callable
 
 
-BROWSER_CERTIFICATE_ARGS = [
-    '--ignore-certificate-errors',
-    '--allow-insecure-localhost',
-]
-
-# Chrome requires this permission when a public site (for example Salesforce)
-# opens or embeds a private-network address such as https://10.x.x.x.
-BROWSER_CONTEXT_PERMISSIONS = [
-    'local-network-access',
-]
+BROWSER_ARGS = ['--start-maximized']
+BROWSER_IGNORED_DEFAULT_ARGS = ['--no-sandbox']
 
 
 def open_pages(context: Any) -> list[Any]:
@@ -21,18 +13,18 @@ def open_pages(context: Any) -> list[Any]:
 
 
 def active_page(reference_page: Any) -> Any:
-    """Return the newest open page in the same context.
+    """同じコンテキスト内で最後に開かれたページを返す。
 
-    Playwright appends popup/new-tab pages to ``context.pages``. Workflows keep
-    their original Page only as a context anchor and resolve the current page
-    before every operation.
+    Playwright はポップアップや新規タブを ``context.pages`` の末尾へ追加する。
+    ワークフローは元ページをコンテキストの基準として保持し、各操作の直前に
+    現在のページを解決する。
     """
     pages = open_pages(reference_page.context)
     return pages[-1] if pages else reference_page
 
 
 def page_frames(page: Any) -> list[Any]:
-    """Return all currently attached frames, main frame first."""
+    """現在接続されている全フレームをメインフレームから順に返す。"""
     return list(page.frames)
 
 
@@ -42,21 +34,21 @@ def locators_in_frames(page: Any, factory: Callable[[Any], Any]) -> list[Any]:
         try:
             locators.append(factory(frame))
         except Exception:
-            # A frame can detach while a dynamic page is being inspected.
+            # 動的ページの検査中にフレームが切り離される場合がある。
             continue
     return locators
 
 
 def settle_new_page(page: Any, previous_pages: set[Any], timeout: int) -> Any:
-    """Wait for a synchronously opened popup/tab to start navigation."""
+    """同期的に開かれたポップアップまたはタブの遷移開始を待つ。"""
     current = active_page(page)
     if current in previous_pages:
         return current
     try:
         current.wait_for_url(lambda url: url != 'about:blank', timeout=timeout)
     except Exception:
-        # Some legitimate popup documents intentionally remain about:blank and
-        # populate their contents with script, so the page must still be usable.
+        # 正常なポップアップでも about:blank のままスクリプトで内容を構築する
+        # 場合があるため、そのページは操作対象として残す。
         pass
     try:
         current.wait_for_load_state('domcontentloaded', timeout=timeout)

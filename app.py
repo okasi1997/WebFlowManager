@@ -14,6 +14,7 @@ from tkinter import font as tkfont
 from typing import Callable
 from browser.element_picker import DebugBrowserSession
 from browser.auth_session import AuthBrowserSession
+from browser.profile_runtime import clear_profile, persistent_profile_dir, profile_has_state
 from core.database import Database
 from core.conditions import decode_guard, summarize_guard
 from core.executor import WorkflowExecutor, find_variables
@@ -22,7 +23,7 @@ from i18n import install_tk_translation, set_language, tr
 from ui.dialogs import EventDialog, EventGroupDialog, GuardConditionDialog, VariablesDialog, guard_operator_labels
 from ui.auth_state import AuthStateDialog, profile_path
 from ui.structured_data import DataPathDialog, HierarchicalDataDialog, SchemaDesignerDialog
-from ui.ui_helpers import AutoScrollbar
+from ui.ui_helpers import AutoScrollbar, ask_yes_no
 
 class FlowManagerApp:
     """Tk の画面状態と、バックグラウンドで動く実行処理を接続する。"""
@@ -79,7 +80,7 @@ class FlowManagerApp:
         self.debug_browser = DebugBrowserSession(
             self.project_dir, self.settings['picker']['start_url'], self._log,
             lambda: profile_path(self.project_dir, self.db.get_auth_profile()))
-        self.auth_browser = AuthBrowserSession(lambda message: self._log(message, 'AuthBrowserSession'))
+        self.auth_browser = AuthBrowserSession(self.project_dir, lambda message: self._log(message, 'AuthBrowserSession'))
         self.drag_source: dict[str, str | None] = {'workflow': None, 'event': None}
         self._build_ui()
         self._apply_font_configuration()
@@ -91,7 +92,7 @@ class FlowManagerApp:
         self.root.mainloop()
 
     def _clear_combobox_text_selection(self, event: tk.Event) -> None:
-        """Keep a chosen value without leaving its field text highlighted."""
+        """選択値を維持したままフィールド文字列の選択表示を解除する。"""
         widget = event.widget
 
         def clear_selection() -> None:
@@ -107,7 +108,7 @@ class FlowManagerApp:
 
     @staticmethod
     def _install_deferred_toplevel_display() -> None:
-        """Keep every Toplevel hidden until its subclass has finished building it."""
+        """サブクラスによる構築が完了するまで各 Toplevel を非表示に保つ。"""
         if not hasattr(simpledialog, '_flow_original_place_window'):
             original_place_window = simpledialog._place_window
             simpledialog._flow_original_place_window = original_place_window
@@ -117,10 +118,9 @@ class FlowManagerApp:
                 if callback is None:
                     original_place_window(window, parent)
                 else:
-                    # simpledialog calls wait_visibility() immediately after
-                    # this function.  Do not consume the first visibility
-                    # event here; position the withdrawn window, then map it
-                    # from an idle callback so wait_visibility can observe it.
+                # simpledialog はこの関数の直後に wait_visibility() を呼び出す。
+                # 最初の表示イベントをここで消費せず、非表示のまま位置を決めてから
+                # idle コールバックで表示し、wait_visibility が検出できるようにする。
                     window.configure(bg='#F3F3F3')
                     window.update_idletasks()
                     width = max(window.winfo_reqwidth(), window.winfo_width())
@@ -201,9 +201,8 @@ class FlowManagerApp:
             width = window.winfo_reqwidth()
         if height <= 1:
             height = window.winfo_reqheight()
-        # Every application dialog is centered on the main window.  Using the
-        # immediate master here makes nested dialogs drift toward their parent
-        # dialog, which is especially noticeable across two monitors.
+        # 全ダイアログをメイン画面の中央へ配置する。直近の master を基準にすると
+        # 入れ子のダイアログが親側へずれ、特に複数モニター環境で目立つためである。
         anchor = self.root
         if anchor.winfo_exists() and anchor.winfo_ismapped():
             anchor.update_idletasks()
@@ -214,9 +213,9 @@ class FlowManagerApp:
             y = (window.winfo_screenheight() - height) // 2
         geometry = f'{x:+d}{y:+d}'
         window.geometry(geometry)
-        # Windows may replace the first position of an owned/transient window.
-        # Map it invisibly, re-apply the exact coordinates, then reveal it so
-        # neither the system default position nor a top-left ghost is visible.
+        # Windows は owned/transient ウィンドウの初回位置を置き換える場合がある。
+        # 不可視状態で表示して正確な座標を再設定してから可視化し、既定位置や
+        # 左上に一瞬表示される残像を防ぐ。
         try:
             window.attributes('-alpha', 0.0)
         except tk.TclError:
@@ -314,9 +313,8 @@ class FlowManagerApp:
         style.map('Treeview', background=[('selected', '#CFE8FF')], foreground=[('selected', '#3D3D3D')])
         style.configure('Status.Treeview', background='#FFFFFF', fieldbackground='#FFFFFF', foreground='#3D3D3D', rowheight=28, font=font, borderwidth=0, relief='flat')
         style.map('Status.Treeview', background=[('selected', '#CFE8FF')], foreground=[('selected', '#3D3D3D')])
-        # The clam theme draws Treeview.field with its own top/left bevel even
-        # when borderwidth is zero.  Remove that element so the surrounding
-        # one-pixel frame is the only visible border on every side.
+        # clam テーマは borderwidth がゼロでも Treeview.field の上側と左側に
+        # 独自の立体枠を描くため、その要素を除去して外周の1ピクセル枠だけを表示する。
         style.layout('Status.Treeview', [
             ('Treeview.padding', {'sticky': 'nswe', 'children': [
                 ('Treeview.treearea', {'sticky': 'nswe'})
@@ -676,8 +674,8 @@ class FlowManagerApp:
             self.main_pane.sashpos(0, int(self.main_pane.winfo_width() * 0.31))
 
     def _resize_event_columns(self, event: tk.Event) -> None:
-        # Use the Treeview's real client width.  Reserving a fixed scrollbar
-        # gutter leaves an empty strip whenever AutoScrollbar hides itself.
+        # Treeview の実クライアント幅を使用する。スクロールバー領域を固定確保すると、
+        # AutoScrollbar が非表示になった際に空白が残るためである。
         available = max(620, event.width - 3)
         fixed = {'position': 52, 'action': 82, 'enabled': 62}
         flexible = available - sum(fixed.values())
@@ -932,8 +930,8 @@ class FlowManagerApp:
 
     def _event_double_click(self, event: tk.Event) -> str | None:
         if self.event_tree.identify_region(event.x, event.y) == 'heading':
-            # Suppress row editing/toggling only. Heading click commands (such
-            # as sorting) have already run and remain available.
+        # 行の編集と切替だけを抑止する。並べ替えなどの見出しクリック処理は
+        # 既に実行済みであり、そのまま利用できる。
             return 'break'
         item = self.event_tree.identify_row(event.y)
         if not item:
@@ -1314,6 +1312,14 @@ class FlowManagerApp:
         if pcl_jobs and (not all_structured_records):
             messagebox.showerror('msg.0065', 'msg.0066')
             return
+        # 永続 Chrome プロファイルは一つのブラウザープロセスだけが使用できる。
+        # 実行処理へ渡す前に対話操作用セッションを閉じる。
+        try:
+            self.debug_browser.close_browser()
+            self.auth_browser.close_browser()
+        except Exception as error:
+            messagebox.showerror('msg.0065', str(error))
+            return
         self.running = True
         self.run_button.config(state='disabled')
         self.executing_tasks.clear()
@@ -1384,7 +1390,7 @@ class FlowManagerApp:
                 if preamble_steps:
                     executor.run_batch(preamble_steps, variables, step_start, step_success, step_failure, event_start, self.browser_visible.get(), 'preamble', execution_state_path)
                 if groups and pcl_jobs:
-                    worker_count = min(session_limit, len(groups))
+                    worker_count = 1
                     self._log(f'msg.0078{len(groups)}msg.0079{worker_count}msg.0080')
                     failures: list[str] = []
                     with ThreadPoolExecutor(max_workers=worker_count) as pool:
@@ -1416,6 +1422,10 @@ class FlowManagerApp:
         self.root.wait_window(dialog)
 
     def _manage_auth_state(self) -> None:
+        try:
+            self.debug_browser.close_browser()
+        except Exception:
+            pass
         dialog = self._register_dialog('auth_state', lambda: AuthStateDialog(
             self.root, self.project_dir, self.auth_browser, self.db.get_auth_profile(),
             self._set_auth_profile, self.settings['picker']['start_url']))
@@ -1449,6 +1459,7 @@ class FlowManagerApp:
 
         def worker() -> None:
             try:
+                self.auth_browser.close_browser()
                 result = self.debug_browser.pick(target_url)
                 self.root.after(0, lambda: completed(result, None))
             except Exception as error:
@@ -1460,6 +1471,7 @@ class FlowManagerApp:
 
         def worker() -> None:
             try:
+                self.auth_browser.close_browser()
                 count = self.debug_browser.test(selector_type, selector, target_url)
                 self.root.after(0, lambda: completed(count, None))
             except Exception as error:
@@ -1471,6 +1483,7 @@ class FlowManagerApp:
 
         def worker() -> None:
             try:
+                self.auth_browser.close_browser()
                 self.debug_browser.open(target_url)
                 self.root.after(0, lambda: completed(None))
             except Exception as error:
@@ -1523,6 +1536,7 @@ class FlowManagerApp:
 
         def worker() -> None:
             try:
+                self.auth_browser.close_browser()
                 self.debug_browser.execute_until(jobs, event_id, variables, target_url)
                 self.root.after(0, lambda: completed(None))
             except Exception as error:
@@ -1546,7 +1560,7 @@ class FlowManagerApp:
                 with log_path.open('a', encoding='utf-8', newline='') as log_file:
                     log_file.write(file_text)
         except OSError:
-            # File logging must never interrupt workflow execution or UI logs.
+            # ファイルログの失敗でワークフロー実行や画面ログを中断させない。
             pass
 
         def append() -> None:
@@ -1621,5 +1635,13 @@ class FlowManagerApp:
             return
         self.debug_browser.shutdown()
         self.auth_browser.shutdown()
+        state_path = profile_path(self.project_dir, self.db.get_auth_profile())
+        profile_dir = persistent_profile_dir(self.project_dir, state_path)
+        if profile_has_state(profile_dir) and ask_yes_no(self.root, 'msg.0485', 'msg.0486'):
+            try:
+                assert profile_dir is not None
+                clear_profile(self.project_dir, profile_dir)
+            except OSError as error:
+                messagebox.showerror('msg.0057', str(error))
         self.db.close()
         self.root.destroy()
