@@ -3,6 +3,7 @@ from __future__ import annotations
 import queue
 import tempfile
 import threading
+import uuid
 from concurrent.futures import Future
 from datetime import datetime
 from pathlib import Path
@@ -124,16 +125,27 @@ class DebugBrowserSession:
                 if not page.is_closed():
                     return context, page
             state_path = self.storage_state_getter()
-            user_data_dir = persistent_profile_dir(self.project_dir, state_path)
-            if user_data_dir is None:
-                temporary_profile = tempfile.TemporaryDirectory(prefix='webflow_chrome_')
-                user_data_dir = Path(temporary_profile.name)
-            context = launch_persistent_chrome(playwright, user_data_dir, visible=True)
-            restore_storage_state(context, state_path)
-            pages = context.pages
-            page = pages[-1] if pages else context.new_page()
-            page.goto(target_url or self.start_url, wait_until='domcontentloaded')
-            return context, page
+            last_error: Exception | None = None
+            for attempt in range(2):
+                try:
+                    user_data_dir = persistent_profile_dir(self.project_dir, state_path)
+                    if user_data_dir is None:
+                        temporary_profile = tempfile.TemporaryDirectory(prefix='webflow_chrome_')
+                        user_data_dir = Path(temporary_profile.name)
+                    context = launch_persistent_chrome(playwright, user_data_dir, visible=True)
+                    restore_storage_state(context, state_path)
+                    pages = context.pages
+                    page = pages[-1] if pages else context.new_page()
+                    page.goto(target_url or self.start_url, wait_until='domcontentloaded')
+                    return context, page
+                except Exception as error:
+                    last_error = error
+                    # 起動途中の context を残すと次回呼出しで再利用されるため必ず破棄する。
+                    dispose()
+                    if attempt == 0:
+                        continue
+            assert last_error is not None
+            raise last_error
 
         self._ensure_page = ensure_page
         self._dispose = dispose
@@ -181,8 +193,8 @@ class DebugBrowserSession:
             _context, page = self._ensure_page(target_url)
             bring_page_to_front(page)
             picker = ElementPicker()
-            initialized_frames: set[Any] = set()
-            script = picker_script(tr('msg.0490'), tr('msg.0491'))
+            run_id = uuid.uuid4().hex
+            script = picker_script(run_id, tr('msg.0490'), tr('msg.0491'))
             while True:
                 if self._cancel_requested.is_set():
                     raise RuntimeError('msg.0170')
@@ -190,12 +202,13 @@ class DebugBrowserSession:
                 page.wait_for_timeout(100)
                 for frame in page_frames(page):
                     try:
-                        if frame not in initialized_frames:
+                        installed_run_id = frame.evaluate(
+                            '() => window.__webFlowPickerRunId || ""'
+                        )
+                        if installed_run_id != run_id:
                             frame.evaluate(script)
-                            initialized_frames.add(frame)
                         result = frame.evaluate('() => window.__sfFlowPicked')
                     except Exception:
-                        initialized_frames.discard(frame)
                         continue
                     if result:
                         if result.get('cancelled'):

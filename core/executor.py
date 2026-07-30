@@ -57,18 +57,19 @@ class WorkflowExecutor:
         with sync_playwright() as playwright:
             profile_dir = persistent_profile_dir(self.project_dir, state_path)
             temporary_profile = None
+            context = None
             if profile_dir is None:
                 temporary_profile = tempfile.TemporaryDirectory(prefix='webflow_chrome_')
                 profile_dir = Path(temporary_profile.name)
-            context = launch_persistent_chrome(
-                playwright,
-                profile_dir,
-                visible=browser_visible,
-            )
-            restore_storage_state(context, state_path)
-            pages = context.pages
-            page = pages[-1] if pages else context.new_page()
             try:
+                context = launch_persistent_chrome(
+                    playwright,
+                    profile_dir,
+                    visible=browser_visible,
+                )
+                restore_storage_state(context, state_path)
+                pages = context.pages
+                page = pages[-1] if pages else context.new_page()
                 for step_number, step in enumerate(steps, 1):
                     token = on_step_start(step) if on_step_start else None
                     try:
@@ -86,13 +87,14 @@ class WorkflowExecutor:
                     if on_step_success:
                         on_step_success(step, token)
             finally:
-                if output_state_path is not None:
+                if context is not None and output_state_path is not None:
                     output_state_path.parent.mkdir(parents=True, exist_ok=True)
                 try:
-                    if output_state_path is not None:
+                    if context is not None and output_state_path is not None:
                         context.storage_state(path=str(output_state_path))
                 finally:
-                    context.close()
+                    if context is not None:
+                        context.close()
                     if temporary_profile is not None:
                         temporary_profile.cleanup()
 

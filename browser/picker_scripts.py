@@ -9,6 +9,7 @@ _PICKER_SCRIPT = r"""
   if (typeof window.__webFlowPickerCleanup === 'function') {
     window.__webFlowPickerCleanup();
   }
+  window.__webFlowPickerRunId = __RUN_ID__;
   window.__sfFlowPicked = null;
   document.getElementById('__sf-flow-picker-style')?.remove();
   document.getElementById('__sf-flow-banner')?.remove();
@@ -169,10 +170,11 @@ _PICKER_SCRIPT = r"""
 """
 
 
-def picker_script(waiting_text: str, active_text: str) -> str:
+def picker_script(run_id: str, waiting_text: str, active_text: str) -> str:
     """表示言語の案内文を安全に埋め込んだ選択スクリプトを返す。"""
     return (
         _PICKER_SCRIPT
+        .replace('__RUN_ID__', json.dumps(run_id))
         .replace('__WAITING_TEXT__', json.dumps(waiting_text, ensure_ascii=False))
         .replace('__ACTIVE_TEXT__', json.dumps(active_text, ensure_ascii=False))
     )

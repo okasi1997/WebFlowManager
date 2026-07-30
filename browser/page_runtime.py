@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -51,7 +52,17 @@ def launch_persistent_chrome(
     }
     if visible:
         options['ignore_default_args'] = BROWSER_IGNORED_DEFAULT_ARGS
-    return playwright.chromium.launch_persistent_context(**options)
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            return playwright.chromium.launch_persistent_context(**options)
+        except Exception as error:
+            last_error = error
+            if attempt < 2:
+                # 前回終了直後は Chrome がプロファイルロックを解放するまで少し待つ。
+                time.sleep(0.25 * (attempt + 1))
+    assert last_error is not None
+    raise last_error
 
 
 def restore_storage_state(context: Any, state_path: Any) -> None:
@@ -133,7 +144,10 @@ def bring_page_to_front(page: Any) -> None:
 
         user32.EnumWindows(collect, 0)
         if matches:
-            user32.ShowWindow(matches[0], 9)
+            # 最大化中のウィンドウを SW_RESTORE すると通常サイズへ戻るため、
+            # 最小化されている場合だけ復元する。
+            if user32.IsIconic(matches[0]):
+                user32.ShowWindow(matches[0], 9)
             user32.SetForegroundWindow(matches[0])
     except Exception:
         # OS の前面制御が拒否された場合も Playwright のタブ切替結果は維持する。
@@ -172,8 +186,10 @@ def is_topmost(locator: Any) -> bool:
         '        [(left + right) / 2, top + Math.min(3, (bottom - top) / 2)],\n'
         '        [(left + right) / 2, bottom - Math.min(3, (bottom - top) / 2)]\n'
         '    ];\n'
+        '    const root = element.getRootNode();\n'
         '    return points.some(([x, y]) => {\n'
-        '        const hit = document.elementFromPoint(x, y);\n'
+        '        const hit = typeof root.elementFromPoint === "function" ?\n'
+        '            root.elementFromPoint(x, y) : document.elementFromPoint(x, y);\n'
         '        return hit && (hit === element || element.contains(hit));\n'
         '    });\n'
         '}'))

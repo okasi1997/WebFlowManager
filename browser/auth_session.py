@@ -45,12 +45,16 @@ class AuthBrowserSession:
             user_data_dir = persistent_profile_dir(self.project_dir, state_path)
             if user_data_dir is None:
                 raise RuntimeError('保存対象のログイン状態を選択してください。')
-            context = launch_persistent_chrome(playwright, user_data_dir, visible=True)
-            restore_storage_state(context, state_path)
-            pages = context.pages
-            page = pages[-1] if pages else context.new_page()
-            page.goto(url, wait_until='domcontentloaded')
-            page.bring_to_front()
+            try:
+                context = launch_persistent_chrome(playwright, user_data_dir, visible=True)
+                restore_storage_state(context, state_path)
+                pages = context.pages
+                page = pages[-1] if pages else context.new_page()
+                page.goto(url, wait_until='domcontentloaded')
+                page.bring_to_front()
+            except Exception:
+                close()
+                raise
 
         def save(state_path: Path) -> str:
             nonlocal page

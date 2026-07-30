@@ -4,7 +4,7 @@ import unittest
 import tempfile
 from pathlib import Path
 
-from browser.page_runtime import BROWSER_ARGS, BROWSER_IGNORED_DEFAULT_ARGS, active_page, launch_persistent_chrome, locators_in_frames, restore_storage_state, settle_new_page
+from browser.page_runtime import BROWSER_ARGS, BROWSER_IGNORED_DEFAULT_ARGS, active_page, is_topmost, launch_persistent_chrome, locators_in_frames, restore_storage_state, settle_new_page
 from browser.picker_scripts import picker_script
 from browser.profile_runtime import persistent_profile_dir
 from core.executor import WorkflowExecutor
@@ -52,27 +52,48 @@ class FakePage:
 
 
 class FakeChromium:
-    def __init__(self) -> None:
+    def __init__(self, failures: int=0) -> None:
         self.options = None
+        self.failures = failures
+        self.calls = 0
 
     def launch_persistent_context(self, **options):
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise RuntimeError('profile is temporarily locked')
         self.options = options
         return options
 
 
 class FakePlaywright:
+    def __init__(self, failures: int=0) -> None:
+        self.chromium = FakeChromium(failures)
+
+
+class FakeLocator:
     def __init__(self) -> None:
-        self.chromium = FakeChromium()
+        self.script = ''
+
+    def evaluate(self, script: str) -> bool:
+        self.script = script
+        return True
 
 
 class PageRuntimeTests(unittest.TestCase):
     def test_picker_script_can_be_reinstalled_and_uses_shadow_event_path(self) -> None:
-        script = picker_script('待機', '選択中')
+        script = picker_script('run-123', '待機', '選択中')
         self.assertIn('__webFlowPickerCleanup', script)
+        self.assertIn('"run-123"', script)
         self.assertIn('event.composedPath()', script)
         self.assertIn('actionableSelector', script)
         self.assertIn('"待機"', script)
         self.assertIn('"選択中"', script)
+
+    def test_topmost_check_uses_the_elements_shadow_root(self) -> None:
+        locator = FakeLocator()
+        self.assertTrue(is_topmost(locator))
+        self.assertIn('element.getRootNode()', locator.script)
+        self.assertIn('root.elementFromPoint', locator.script)
 
     def test_workflow_browser_uses_normal_chrome_arguments(self) -> None:
         for visible in (True, False):
@@ -102,6 +123,17 @@ class PageRuntimeTests(unittest.TestCase):
             self.assertFalse(options['headless'])
             self.assertTrue(options['no_viewport'])
             self.assertEqual(options['ignore_default_args'], BROWSER_IGNORED_DEFAULT_ARGS)
+
+    def test_persistent_launch_retries_a_temporarily_locked_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            playwright = FakePlaywright(failures=1)
+            options = launch_persistent_chrome(
+                playwright,
+                Path(folder) / 'profile',
+                visible=True,
+            )
+            self.assertEqual(playwright.chromium.calls, 2)
+            self.assertFalse(options['headless'])
 
     def test_saved_state_maps_to_application_profile_directory(self) -> None:
         project = Path('C:/work/project')
