@@ -56,8 +56,8 @@ def summarize_guard(guard: dict[str, Any] | None, operator_labels: dict[str, str
     parts = []
     for rule in normalized['rules']:
         operator = labels.get(rule['operator'], rule['operator'])
-        suffix = '' if rule['operator'] in {'empty', 'not_empty', 'true', 'false'} else f' {rule['value']}'
-        parts.append(f'{rule['path']} {operator}{suffix}')
+        suffix = '' if rule['operator'] in {'empty', 'not_empty', 'true', 'false'} else f" {rule['value']}"
+        parts.append(f"{rule['path']} {operator}{suffix}")
     return joiner.join(parts)
 
 

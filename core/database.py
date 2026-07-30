@@ -491,9 +491,9 @@ class Database:
                 if not isinstance(event, dict) or any((not isinstance(event.get(key), str) for key in required)):
                     raise ValueError(f'msg.0119{name}msg.0121{event_index}msg.0122')
                 if event['action'] not in allowed_actions:
-                    raise ValueError(f'msg.0119{name}msg.0123{event['action']}')
+                    raise ValueError(f"msg.0119{name}msg.0123{event['action']}")
                 if event['selector_type'] not in allowed_selector_types:
-                    raise ValueError(f'msg.0119{name}msg.0124{event['selector_type']}')
+                    raise ValueError(f"msg.0119{name}msg.0124{event['selector_type']}")
                 try:
                     timeout = int(event.get('timeout_ms', 10000))
                 except (TypeError, ValueError) as error:

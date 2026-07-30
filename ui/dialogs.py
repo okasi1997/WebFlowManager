@@ -629,7 +629,7 @@ class EventDialog(tk.Toplevel):
                     self._update_action_fields()
                 if not self.values['name'].get().strip():
                     self.values['name'].set(result['display'])
-                self.pick_status.config(text=f'msg.0147{result['display']}msg.0148')
+                self.pick_status.config(text=f"msg.0147{result['display']}msg.0148")
         self.pick_element(self.values['target_url'].get().strip(), completed)
 
     def _open_debug(self) -> None:

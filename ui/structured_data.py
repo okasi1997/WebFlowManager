@@ -9,14 +9,14 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Any
 from core.database import Database
 from i18n import SUPPORTED_LANGUAGES, tr, tr_language
-from ui.ui_helpers import scrollable_tree
+from ui.ui_helpers import AutoScrollbar, scrollable_tree
 TYPES = ('text', 'number', 'boolean', 'object', 'list')
 
 def validate_schema(node: Any, location: str='Data') -> None:
     if not isinstance(node, dict) or not isinstance(node.get('name'), str) or (not node['name'].strip()):
         raise ValueError(f'{location}msg.0236')
     if node.get('type') not in TYPES:
-        raise ValueError(f'{location}msg.0237{node.get('type')}')
+        raise ValueError(f"{location}msg.0237{node.get('type')}")
     children = node.get('children', [])
     if node['type'] in ('object', 'list'):
         if not isinstance(children, list):
@@ -47,7 +47,7 @@ def _flatten_record_with_groups(schema: dict[str, Any], data: dict[str, Any]) ->
     def walk_fields(nodes: list[dict[str, Any]], value: dict[str, Any], prefix: str) -> list[tuple[dict[str, Any], dict[str, int]]]:
         rows: list[tuple[dict[str, Any], dict[str, int]]] = [({}, {})]
         for node in nodes:
-            path = f'{prefix}.{node['name']}' if prefix else node['name']
+            path = f"{prefix}.{node['name']}" if prefix else node['name']
             current = value.get(node['name'])
             if node['type'] == 'list':
                 items = current if isinstance(current, list) else []
@@ -70,7 +70,7 @@ def scalar_list_owners(schema: dict[str, Any]) -> dict[str, tuple[str, ...]]:
 
     def walk(node: dict[str, Any], prefix: str, list_ancestors: tuple[str, ...]) -> None:
         for child in node.get('children', []):
-            path = f'{prefix}.{child['name']}' if prefix else child['name']
+            path = f"{prefix}.{child['name']}" if prefix else child['name']
             ancestors = (*list_ancestors, path) if child['type'] == 'list' else list_ancestors
             if child['type'] in ('object', 'list'):
                 walk(child, path, ancestors)
@@ -82,7 +82,7 @@ def scalar_list_owners(schema: dict[str, Any]) -> dict[str, tuple[str, ...]]:
 def _descendant_scalar_paths(node: dict[str, Any], prefix: str) -> list[str]:
     result: list[str] = []
     for child in node.get('children', []):
-        path = f'{prefix}.{child['name']}'
+        path = f"{prefix}.{child['name']}"
         if child['type'] in ('object', 'list'):
             result.extend(_descendant_scalar_paths(child, path))
         else:
@@ -92,7 +92,7 @@ def _descendant_scalar_paths(node: dict[str, Any], prefix: str) -> list[str]:
 def write_records_excel(path: str | Path, schema: dict[str, Any], records: list[dict[str, Any]]) -> int:
     """PCL と実行設定を、再読込可能な Excel ブックへ保存する。"""
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill
+    from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
     columns = scalar_paths(schema)
     owners = scalar_list_owners(schema)
@@ -132,11 +132,12 @@ def write_records_excel(path: str | Path, schema: dict[str, Any], records: list[
                     sheet.cell(output_row, column_index, values.get(column, ''))
                     seen_scopes.add(scope)
             output_row += 1
-    for row in sheet.iter_rows(min_row=1, max_row=max_depth):
+    header_level_colors = ('2F5597', '4472C4', '5B9BD5', '6F9FD5', '7EA6D8')
+    for level, row in enumerate(sheet.iter_rows(min_row=1, max_row=max_depth)):
+        color = header_level_colors[min(level, len(header_level_colors) - 1)]
         for cell in row:
             cell.font = Font(bold=True, color='FFFFFF')
-            cell.fill = PatternFill('solid', fgColor='4472C4')
-            cell.alignment = cell.alignment.copy(horizontal='center', vertical='center')
+            cell.fill = PatternFill('solid', fgColor=color)
     sheet.freeze_panes = f'A{max_depth + 1}'
     headers = [tr('msg.0242'), *columns]
     for index, header in enumerate(headers, 1):
@@ -146,6 +147,11 @@ def write_records_excel(path: str | Path, schema: dict[str, Any], records: list[
     settings_sheet.append([tr('msg.0242'), tr('msg.0244'), tr('msg.0245')])
     for record in records:
         settings_sheet.append([record['name'], bool(record.get('enabled', True)), str(record.get('execution_group', '1'))])
+    for current_sheet in workbook.worksheets:
+        for row in current_sheet.iter_rows():
+            for cell in row:
+                if cell.value is not None:
+                    cell.alignment = Alignment(horizontal='left', vertical='center')
     workbook.save(path)
     return sheet.max_row - max_depth
 
@@ -294,7 +300,7 @@ def schema_paths(schema: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
 
     def walk(node: dict[str, Any], prefix: str) -> None:
         for child in node.get('children', []):
-            path = f'{prefix}.{child['name']}' if prefix else child['name']
+            path = f"{prefix}.{child['name']}" if prefix else child['name']
             result.append((path, child))
             if child['type'] in ('object', 'list'):
                 walk(child, path)
@@ -361,64 +367,131 @@ class SchemaDesignerDialog(tk.Toplevel):
         self.title(f'msg.0255{workflow_name}')
         self.geometry('720x560')
         ttk.Label(self, text='msg.0256', style='Section.TLabel').pack(anchor='w', padx=10, pady=10)
-        tree_frame, self.tree = scrollable_tree(self, columns=('type', 'path'), show='tree headings')
-        self.tree.heading('#0', text='msg.0250')
-        self.tree.heading('type', text='msg.0257')
-        self.tree.heading('path', text='msg.0258')
-        self.tree.column('#0', width=180)
-        self.tree.column('type', width=90)
-        self.tree.column('path', width=260)
+        tree_frame = ttk.Frame(self)
+        self.root_tree = ttk.Treeview(tree_frame, columns=('type', 'path'), show='tree headings', height=1)
+        self.tree = ttk.Treeview(tree_frame, columns=('type', 'path'), show='tree')
+        for tree in (self.root_tree, self.tree):
+            tree.column('#0', width=180)
+            tree.column('type', width=90)
+            tree.column('path', width=260)
+        self.root_tree.heading('#0', text='msg.0250')
+        self.root_tree.heading('type', text='msg.0257')
+        self.root_tree.heading('path', text='msg.0258')
+        yscroll = AutoScrollbar(tree_frame, orient='vertical', command=self.tree.yview)
+        xscroll = AutoScrollbar(tree_frame, orient='horizontal', command=self._scroll_schema_x)
+        self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=lambda first, last: self._sync_schema_x(first, last, xscroll))
+        self.root_tree.configure(xscrollcommand=lambda _first, _last: None)
+        self.root_tree.grid(row=0, column=0, sticky='ew')
+        self.tree.grid(row=1, column=0, sticky='nsew')
+        yscroll.grid(row=1, column=1, sticky='ns')
+        xscroll.grid(row=2, column=0, sticky='ew')
+        tree_frame.rowconfigure(1, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
         tree_frame.pack(fill='both', expand=True, padx=10)
         buttons = ttk.Frame(self)
         buttons.pack(fill='x', padx=10, pady=10)
-        button_specs = (('msg.0259', self._add, 'Action.TButton'), ('msg.0260', self._edit, 'TButton'), ('msg.0261', self._delete, 'Danger.TButton'), ('msg.0011', lambda: self._move(-1), 'TButton'), ('msg.0012', lambda: self._move(1), 'TButton'), ('msg.0262', self._export_json, 'TButton'), ('msg.0263', self._import_json, 'TButton'), ('msg.0264', self._save, 'Primary.TButton'))
+        button_specs = (
+            ('msg.0259', self._add, 'Action.TButton', 0, 0, 1),
+            ('msg.0484', self._add_child, 'Action.TButton', 0, 1, 1),
+            ('msg.0260', self._edit, 'TButton', 0, 2, 1),
+            ('msg.0261', self._delete, 'Danger.TButton', 0, 3, 1),
+            ('msg.0011', lambda: self._move(-1), 'TButton', 1, 0, 1),
+            ('msg.0012', lambda: self._move(1), 'TButton', 1, 1, 1),
+            ('msg.0262', self._export_json, 'TButton', 1, 2, 1),
+            ('msg.0263', self._import_json, 'TButton', 1, 3, 1),
+            ('msg.0264', self._save, 'Primary.TButton', 2, 3, 1),
+        )
         action_buttons: list[ttk.Button] = []
-        for index, (text, command, button_style) in enumerate(button_specs):
+        for text, command, button_style, row, column, columnspan in button_specs:
             button = ttk.Button(buttons, text=text, command=command, style=button_style)
-            button.grid(row=index // 4, column=index % 4, padx=3, pady=3, sticky='ew')
+            button.grid(row=row, column=column, columnspan=columnspan, padx=3, pady=3, sticky='ew')
             action_buttons.append(button)
-        self.root_locked_buttons = tuple(action_buttons[index] for index in (1, 2, 3, 4))
+        self.child_add_button = action_buttons[1]
+        self.root_locked_buttons = tuple(action_buttons[index] for index in (2, 3, 4, 5))
+        self.drag_source_item = ''
         for column in range(4):
             buttons.columnconfigure(column, weight=1)
-        self.tree.tag_configure('schema_root', background='#F3F3F3', foreground='#737373', font=(self.db.get_ui_font()[0], self.db.get_ui_font()[1], 'bold'))
+        self.tree.tag_configure('schema_root', background='#E7EEF5', foreground='#4A5560', font=(self.db.get_ui_font()[0], self.db.get_ui_font()[1], 'bold'))
         self.tree.bind('<<TreeviewSelect>>', self._update_action_buttons)
+        self.root_tree.bind('<<TreeviewSelect>>', self._select_schema_root)
+        self.tree.bind('<ButtonPress-1>', self._drag_start, add='+')
+        self.tree.bind('<B1-Motion>', self._drag_motion, add='+')
+        self.tree.bind('<ButtonRelease-1>', self._drag_end, add='+')
         self._refresh()
         self.transient(parent)
 
-    def _refresh(self) -> None:
+    def _scroll_schema_x(self, *args: Any) -> None:
+        self.tree.xview(*args)
+        self.root_tree.xview(*args)
+
+    def _sync_schema_x(self, first: str, last: str, scrollbar: ttk.Scrollbar) -> None:
+        scrollbar.set(first, last)
+        self.root_tree.xview_moveto(first)
+
+    def _select_schema_root(self, _event: object=None) -> None:
+        if self.root_tree.selection():
+            self.tree.selection_remove(self.tree.selection())
+        self._update_action_buttons()
+
+    def _refresh(self, selected_node: dict[str, Any] | None=None) -> None:
         self.tree.delete(*self.tree.get_children())
+        self.root_tree.delete(*self.root_tree.get_children())
         self.node_by_item.clear()
         # The first row is the schema container, not an editable business
         # field.  Keep the persisted schema name for compatibility, while
         # presenting a neutral UI label.
-        root = self.tree.insert('', 'end', text='Data', values=('list', ''), open=True, tags=('schema_root',))
-        self.node_by_item[root] = (self.schema, None)
+        root = self.root_tree.insert('', 'end', text='Data', values=('list', ''), open=True, tags=('schema_root',))
+        self.root_tree.tag_configure('schema_root', background='#E7EEF5', foreground='#4A5560', font=(self.db.get_ui_font()[0], self.db.get_ui_font()[1], 'bold'))
 
         def add(parent_item: str, parent_node: dict[str, Any], prefix: str) -> None:
             for node in parent_node.get('children', []):
-                path = f'{prefix}.{node['name']}' if prefix else node['name']
+                path = f"{prefix}.{node['name']}" if prefix else node['name']
                 item = self.tree.insert(parent_item, 'end', text=node['name'], values=(node['type'], path), open=True)
                 self.node_by_item[item] = (node, parent_node)
+                if node is selected_node:
+                    self.tree.selection_set(item)
+                    self.tree.focus(item)
+                    self.tree.see(item)
                 add(item, node, path)
-        add(root, self.schema, '')
+        add('', self.schema, '')
+        if selected_node is self.schema:
+            self.root_tree.selection_set(root)
+            self.root_tree.focus(root)
         self._update_action_buttons()
 
     def _update_action_buttons(self, _event: object=None) -> None:
+        if self.tree.selection():
+            self.root_tree.selection_remove(self.root_tree.selection())
         selected = self._selected()
         editable = selected is not None and selected[1] is not None
         state = 'normal' if editable else 'disabled'
         for button in self.root_locked_buttons:
             button.configure(state=state)
+        can_add_child = selected is not None and selected[0]['type'] in ('object', 'list')
+        self.child_add_button.configure(state='normal' if can_add_child else 'disabled')
 
     def _selected(self) -> tuple[dict[str, Any], dict[str, Any] | None] | None:
+        if self.root_tree.selection():
+            return self.schema, None
         selected = self.tree.selection()
         return self.node_by_item.get(selected[0]) if selected else None
 
     def _add(self) -> None:
         selected = self._selected()
-        parent = selected[0] if selected and selected[0]['type'] in ('object', 'list') else selected[1] if selected else self.schema
+        parent = selected[1] if selected and selected[1] is not None else self.schema
         if parent is None:
             return
+        children = parent.setdefault('children', [])
+        insert_at = children.index(selected[0]) if selected and selected[1] is parent else len(children)
+        self._add_to(parent, insert_at)
+
+    def _add_child(self) -> None:
+        selected = self._selected()
+        if not selected or selected[0]['type'] not in ('object', 'list'):
+            return
+        self._add_to(selected[0], len(selected[0].setdefault('children', [])))
+
+    def _add_to(self, parent: dict[str, Any], insert_at: int) -> None:
         dialog = FieldDialog(self)
         self.wait_window(dialog)
         if not dialog.result:
@@ -426,8 +499,9 @@ class SchemaDesignerDialog(tk.Toplevel):
         if any((child['name'] == dialog.result['name'] for child in parent.get('children', []))):
             messagebox.showerror('msg.0265', 'msg.0266', parent=self)
             return
-        parent.setdefault('children', []).append(dialog.result)
-        self._refresh()
+        children = parent.setdefault('children', [])
+        children.insert(insert_at, dialog.result)
+        self._refresh(dialog.result)
 
     def _edit(self) -> None:
         selected = self._selected()
@@ -446,7 +520,7 @@ class SchemaDesignerDialog(tk.Toplevel):
         node.update(dialog.result)
         if children is not None:
             node['children'] = children
-        self._refresh()
+        self._refresh(node)
 
     def _delete(self) -> None:
         selected = self._selected()
@@ -463,7 +537,106 @@ class SchemaDesignerDialog(tk.Toplevel):
         target = index + direction
         if 0 <= target < len(children):
             children[index], children[target] = (children[target], children[index])
-            self._refresh()
+            self._refresh(selected[0])
+
+    @staticmethod
+    def _reorder(children: list[dict[str, Any]], node: dict[str, Any], target: dict[str, Any], after: bool) -> bool:
+        if node is target or node not in children or target not in children:
+            return False
+        old_index = children.index(node)
+        insert_at = children.index(target) + (1 if after else 0)
+        children.pop(old_index)
+        if old_index < insert_at:
+            insert_at -= 1
+        children.insert(insert_at, node)
+        return old_index != children.index(node)
+
+    @staticmethod
+    def _contains_node(container: dict[str, Any], candidate: dict[str, Any]) -> bool:
+        return any(
+            child is candidate or SchemaDesignerDialog._contains_node(child, candidate)
+            for child in container.get('children', [])
+        )
+
+    @classmethod
+    def _drop_node(cls, source_parent: dict[str, Any], node: dict[str, Any],
+                   target_parent: dict[str, Any] | None, target: dict[str, Any], mode: str) -> bool:
+        if target is node or cls._contains_node(node, target):
+            return False
+        if mode == 'inside':
+            if target['type'] not in ('object', 'list'):
+                return False
+            destination_parent = target
+            insert_at = len(target.setdefault('children', []))
+        else:
+            if target_parent is None or target is node:
+                return False
+            destination_parent = target_parent
+            insert_at = destination_parent['children'].index(target) + (1 if mode == 'after' else 0)
+        destination = destination_parent.setdefault('children', [])
+        if any(child is not node and child['name'] == node['name'] for child in destination):
+            return False
+        source = source_parent['children']
+        old_index = source.index(node)
+        source.pop(old_index)
+        if source is destination and old_index < insert_at:
+            insert_at -= 1
+        destination.insert(insert_at, node)
+        return source is not destination or old_index != destination.index(node)
+
+    def _drop_mode(self, target_item: str, y: int) -> str:
+        target = self.node_by_item.get(target_item)
+        bounds = self.tree.bbox(target_item)
+        if not target or not bounds:
+            return ''
+        relative_y = y - bounds[1]
+        if target[0]['type'] in ('object', 'list') and bounds[3] / 3 <= relative_y <= bounds[3] * 2 / 3:
+            return 'inside'
+        return 'before' if relative_y < bounds[3] / 2 else 'after'
+
+    def _valid_drop(self, source: tuple[dict[str, Any], dict[str, Any] | None] | None,
+                    target: tuple[dict[str, Any], dict[str, Any] | None] | None, mode: str) -> bool:
+        if not source or source[1] is None or not target or not mode:
+            return False
+        if target[0] is source[0] or self._contains_node(source[0], target[0]):
+            return False
+        if mode == 'inside':
+            destination = target[0].get('children', [])
+            return (
+                target[0]['type'] in ('object', 'list')
+                and not any(child['name'] == source[0]['name'] for child in destination)
+            )
+        if target[1] is None:
+            return False
+        return not any(child is not source[0] and child['name'] == source[0]['name'] for child in target[1].get('children', []))
+
+    def _drag_start(self, event: tk.Event) -> None:
+        item = self.tree.identify_row(event.y)
+        selected = self.node_by_item.get(item)
+        self.drag_source_item = item if selected and selected[1] is not None else ''
+
+    def _drag_target(self, event: tk.Event) -> tuple[tuple[dict[str, Any], dict[str, Any] | None] | None, str]:
+        target_item = self.tree.identify_row(event.y)
+        if not target_item and event.y < 0:
+            return (self.schema, None), 'inside'
+        return self.node_by_item.get(target_item), self._drop_mode(target_item, event.y)
+
+    def _drag_motion(self, event: tk.Event) -> None:
+        source = self.node_by_item.get(self.drag_source_item)
+        target, mode = self._drag_target(event)
+        allowed = self._valid_drop(source, target, mode)
+        self.tree.configure(cursor='fleur' if allowed else '')
+
+    def _drag_end(self, event: tk.Event) -> None:
+        source_item = self.drag_source_item
+        self.drag_source_item = ''
+        self.tree.configure(cursor='')
+        source = self.node_by_item.get(source_item)
+        target, mode = self._drag_target(event)
+        if not self._valid_drop(source, target, mode):
+            return
+        if self._drop_node(source[1], source[0], target[1], target[0], mode):
+            self._refresh(source[0])
 
     def _save(self) -> None:
         try:
@@ -765,8 +938,8 @@ class HierarchicalDataDialog(tk.Toplevel):
             self.view_identity[item] = identity
             if kind == 'object':
                 for child in node.get('children', []):
-                    child_path = f'{path}.{child['name']}' if path else child['name']
-                    show(item, child, value.get(child['name'], default_value(child)), value, child['name'], child_path, f'{identity}/{child['name']}')
+                    child_path = f"{path}.{child['name']}" if path else child['name']
+                    show(item, child, value.get(child['name'], default_value(child)), value, child['name'], child_path, f"{identity}/{child['name']}")
             elif kind == 'list':
                 for index, child_value in enumerate(value):
                     wrapper = {'name': f'[{index + 1}]', 'type': 'object', 'children': node.get('children', [])}
@@ -778,8 +951,8 @@ class HierarchicalDataDialog(tk.Toplevel):
 
                     def show_expected(parent: str, children: list[dict[str, Any]], expected_prefix: str, parent_identity: str) -> None:
                         for child in children:
-                            child_path = f'{expected_prefix}.{child['name']}'
-                            child_identity = f'{parent_identity}/{child['name']}'
+                            child_path = f"{expected_prefix}.{child['name']}"
+                            child_identity = f"{parent_identity}/{child['name']}"
                             expected = self.tree.insert(parent, 'end', text=child['name'], values=(child['type'], 'msg.0318', child_path), open=open_state(child_identity, True))
                             self.view_identity[expected] = child_identity
                             if child['type'] in ('object', 'list'):
@@ -886,8 +1059,8 @@ class HierarchicalDataDialog(tk.Toplevel):
             messagebox.showinfo('msg.0281', 'msg.0326', parent=self)
             return
         new_index = len(meta['value'])
-        self.force_open_identities.update({meta['identity'], f'{meta['identity']}[{new_index}]'})
-        self.force_select_identity = f'{meta['identity']}[{new_index}]'
+        self.force_open_identities.update({meta['identity'], f"{meta['identity']}[{new_index}]"})
+        self.force_select_identity = f"{meta['identity']}[{new_index}]"
         item = new_list_item(meta['node'], populate_nested_lists=complete)
         meta['value'].append(item)
         self._render()

@@ -6,6 +6,7 @@ from concurrent.futures import Future
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
+from browser.page_runtime import active_page, locators_in_frames, page_frames
 from i18n import tr
 PICKER_SCRIPT = 'msg.0167'
 TEST_READY_SCRIPT = 'msg.0168'
@@ -21,7 +22,7 @@ class ElementPicker:
         if info.get('label'):
             candidates.append(('label', info['label']))
         if info.get('role') and info.get('name'):
-            candidates.append(('role', f'{info['role']}|{info['name']}'))
+            candidates.append(('role', f"{info['role']}|{info['name']}"))
         if info.get('placeholder'):
             candidates.append(('placeholder', info['placeholder']))
         if info.get('text'):
@@ -31,8 +32,7 @@ class ElementPicker:
         if info.get('xpath'):
             candidates.append(('xpath', info['xpath']))
         for selector_type, selector in candidates:
-            locator = self._locator(page, selector_type, selector)
-            actionable = self._actionable_matches(locator)
+            actionable = self._actionable_matches_in_page(page, selector_type, selector)
             if len(actionable) == 1:
                 return {'selector_type': selector_type, 'selector': selector, 'fallback_selector_type': 'xpath' if selector_type != 'xpath' and info.get('xpath') else 'none', 'fallback_selector': info.get('xpath', '') if selector_type != 'xpath' else '', 'display': display, 'suggested_action': action, 'match_count': '1'}
         raise RuntimeError('msg.0172')
@@ -53,6 +53,11 @@ class ElementPicker:
         if selector_type == 'xpath':
             return page.locator(f'xpath={selector}')
         raise ValueError('msg.0174')
+
+    @classmethod
+    def _actionable_matches_in_page(cls, page: Any, selector_type: str, selector: str) -> list[Any]:
+        locators = locators_in_frames(page, lambda frame: cls._locator(frame, selector_type, selector))
+        return [item for locator in locators for item in cls._actionable_matches(locator)]
 
     @staticmethod
     def _visible_matches(locator: Any) -> list[Any]:
@@ -115,11 +120,13 @@ class DebugBrowserSession:
 
         def ensure_page(target_url: str='') -> tuple[Any, Any]:
             nonlocal browser, context, page
-            if page is not None and not page.is_closed():
-                return context, page
+            if context is not None and page is not None:
+                page = active_page(page)
+                if not page.is_closed():
+                    return context, page
             state_path = self.storage_state_getter()
             browser = playwright.chromium.launch(channel='chrome', headless=False, args=['--start-maximized'])
-            options: dict[str, Any] = {'no_viewport': True}
+            options: dict[str, Any] = {'no_viewport': True, 'ignore_https_errors': True}
             if state_path is not None and state_path.exists():
                 options['storage_state'] = str(state_path)
             context = browser.new_context(**options)
@@ -166,26 +173,32 @@ class DebugBrowserSession:
             while True:
                 if self._cancel_requested.is_set():
                     raise RuntimeError('msg.0170')
+                page = active_page(page)
                 page.wait_for_timeout(500)
-                if not page.evaluate('() => window.__sfFlowPicked !== undefined'):
-                    page.evaluate(tr(PICKER_SCRIPT))
-                result = page.evaluate('() => window.__sfFlowPicked')
-                if result:
-                    if result.get('cancelled'):
-                        raise RuntimeError('msg.0170')
-                    state_path = self.storage_state_getter()
-                    if state_path is not None:
-                        state_path.parent.mkdir(parents=True, exist_ok=True)
-                        context.storage_state(path=str(state_path))
-                    return picker._choose_unique_locator(page, result)
+                for frame in page_frames(page):
+                    try:
+                        if not frame.evaluate('() => window.__sfFlowPicked !== undefined'):
+                            frame.evaluate(tr(PICKER_SCRIPT))
+                        result = frame.evaluate('() => window.__sfFlowPicked')
+                    except Exception:
+                        continue
+                    if result:
+                        if result.get('cancelled'):
+                            raise RuntimeError('msg.0170')
+                        state_path = self.storage_state_getter()
+                        if state_path is not None:
+                            state_path.parent.mkdir(parents=True, exist_ok=True)
+                            context.storage_state(path=str(state_path))
+                        return picker._choose_unique_locator(page, result)
         return self._submit(task)
 
     def test(self, selector_type: str, selector: str, target_url: str='') -> int:
         def task() -> int:
             _context, page = self._ensure_page(target_url)
+            page = active_page(page)
             page.bring_to_front()
             picker = ElementPicker()
-            actionable = picker._actionable_matches(picker._locator(page, selector_type, selector))
+            actionable = picker._actionable_matches_in_page(page, selector_type, selector)
             if len(actionable) == 1:
                 actionable[0].highlight()
             return len(actionable)
@@ -196,6 +209,7 @@ class DebugBrowserSession:
             from core.conditions import evaluate_guard
             from core.executor import WorkflowExecutor
             _context, page = self._ensure_page(target_url)
+            page = active_page(page)
             page.goto(target_url or self.start_url, wait_until='domcontentloaded')
             artifact_dir = self.project_dir / 'artifacts' / (datetime.now().strftime('%Y%m%d_%H%M%S_%f') + '_debug')
             artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -211,6 +225,7 @@ class DebugBrowserSession:
                     if evaluate_guard(job.get('guard'), lambda path: executor._resolve_guard_data(root_data, path, {})):
                         executor._execute_workflow_on_page(page, job['events'], variables, artifact_dir, root_data, f'debug_{index}', on_event_start=pause_at_target)
             except _DebugPause:
+                page = active_page(page)
                 page.bring_to_front()
                 return
             raise RuntimeError('msg.0359')

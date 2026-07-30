@@ -6,6 +6,7 @@ import threading
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, Callable
+from browser.page_runtime import active_page
 
 
 class AuthBrowserSession:
@@ -48,6 +49,7 @@ class AuthBrowserSession:
                 headless=False,
                 args=['--start-maximized'],
                 no_viewport=True,
+                ignore_https_errors=True,
             )
             pages = context.pages
             page = pages[-1] if pages else context.new_page()
@@ -55,14 +57,22 @@ class AuthBrowserSession:
             page.bring_to_front()
 
         def save(state_path: Path) -> str:
-            if context is None or page is None or page.is_closed():
+            nonlocal page
+            if context is None or page is None:
+                raise RuntimeError('msg.0468')
+            page = active_page(page)
+            if page.is_closed():
                 raise RuntimeError('msg.0468')
             state_path.parent.mkdir(parents=True, exist_ok=True)
             context.storage_state(path=str(state_path))
             return page.url
 
         def status() -> tuple[str, str, int]:
-            if context is None or page is None or page.is_closed():
+            nonlocal page
+            if context is None or page is None:
+                raise RuntimeError('msg.0468')
+            page = active_page(page)
+            if page.is_closed():
                 raise RuntimeError('msg.0468')
             return page.url, page.title(), len(context.cookies())
 

@@ -1286,7 +1286,7 @@ class FlowManagerApp:
             if events:
                 jobs.append({'id': workflow['id'], 'name': workflow['name'], 'position': workflow['position'], 'events': events, 'guard': decode_guard(workflow['guard_json']), 'per_pcl': marker_position is not None and workflow['position'] >= marker_position})
             else:
-                self._log(f'msg.0061{workflow['name']}')
+                self._log(f"msg.0061{workflow['name']}")
         if not jobs:
             messagebox.showinfo('msg.0048', 'msg.0062')
             return
@@ -1351,14 +1351,14 @@ class FlowManagerApp:
                     if step['phase'] == 'pcl' and step.get('record'):
                         self.db.set_data_record_status(step['record']['id'], 'running')
                     if step['phase'] == 'once':
-                        self._log(f'msg.0074{step['name']}')
+                        self._log(f"msg.0074{step['name']}")
                     else:
                         group = str(step.get('group', '1'))
                         if step['pcl_index'] != state.get(group, -1):
                             pcl_name = step['record']['name']
-                            self._log(f'msg.0075{group} | msg.0446 [{step['pcl_index']}/{len(structured_records)}]: {pcl_name}')
+                            self._log(f"msg.0075{group} | msg.0446 [{step['pcl_index']}/{len(structured_records)}]: {pcl_name}")
                             state[group] = step['pcl_index']
-                        self._log(f'msg.0076{step['name']}')
+                        self._log(f"msg.0076{step['name']}")
                     return self.db.create_run(step['id'])
 
                 def step_success(_step: dict[str, object], run_id: int) -> None:

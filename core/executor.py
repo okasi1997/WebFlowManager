@@ -1,9 +1,11 @@
 """Playwright を使用して、登録済みイベントを順番に実行する。"""
 from __future__ import annotations
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
+from browser.page_runtime import active_page, locators_in_frames, open_pages, settle_new_page
 from core.conditions import decode_guard, evaluate_guard
 from i18n import tr
 VARIABLE_PATTERN = re.compile('\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}')
@@ -95,8 +97,8 @@ class WorkflowExecutor:
     @staticmethod
     def _context_options(browser_visible: bool) -> dict[str, Any]:
         if browser_visible:
-            return {'no_viewport': True}
-        return {'viewport': {'width': HEADLESS_WIDTH, 'height': HEADLESS_HEIGHT}, 'screen': {'width': HEADLESS_WIDTH, 'height': HEADLESS_HEIGHT}, 'device_scale_factor': 1}
+            return {'no_viewport': True, 'ignore_https_errors': True}
+        return {'viewport': {'width': HEADLESS_WIDTH, 'height': HEADLESS_HEIGHT}, 'screen': {'width': HEADLESS_WIDTH, 'height': HEADLESS_HEIGHT}, 'device_scale_factor': 1, 'ignore_https_errors': True}
 
     def _execute_workflow_on_page(self, page: Any, events: list[dict[str, Any]], variables: dict[str, str], artifact_dir: Path, root_data: dict[str, Any] | None, trace: str, start_index: int=0, log_prefix: str='', on_event_start: Callable[[dict[str, Any]], None] | None=None) -> None:
         enabled = [event for event in events if event.get('enabled', 1)][start_index:]
@@ -107,6 +109,7 @@ class WorkflowExecutor:
         loop_progress = loop_progress or []
         index = 0
         while index < len(events):
+            page = active_page(page)
             event = events[index]
             action = event['action']
             if action in {'loop_start', 'loop_end', 'retry_start', 'retry_end', 'group_start', 'group_end'} and on_event_start:
@@ -157,7 +160,7 @@ class WorkflowExecutor:
                     continue
                 path = str(event.get('data_path', ''))
                 if not path:
-                    raise ValueError(f'msg.0178{event['name']}msg.0179')
+                    raise ValueError(f"msg.0178{event['name']}msg.0179")
                 items = self._resolve_data(root_data, path, loop_context)
                 if not isinstance(items, list):
                     raise ValueError(f'msg.0180{path}msg.0181')
@@ -214,14 +217,15 @@ class WorkflowExecutor:
             if data_path and event.get('action') != 'get_text':
                 effective['value'] = str(self._resolve_data(root_data, data_path, loop_context))
             prefix = self._event_log_prefix(log_prefix, event, loop_progress)
-            self.logger(f'{prefix}msg.0191{event['name']}' + (f' ← {data_path}' if data_path else ''))
+            self.logger(f"{prefix}msg.0191{event['name']}" + (f' ← {data_path}' if data_path else ''))
             try:
                 captured = self._execute_event(page, effective, variables, artifact_dir)
                 if action == 'get_text' and data_path:
                     self._assign_data(root_data, data_path, loop_context, captured)
             except Exception as error:
+                page = active_page(page)
                 safe_trace = re.sub('[^A-Za-z0-9_-]', '_', trace)
-                screenshot = artifact_dir / f'error_{safe_trace}_{event['id']}.png'
+                screenshot = artifact_dir / f"error_{safe_trace}_{event['id']}.png"
                 page.screenshot(path=str(screenshot), full_page=True)
                 self.logger(f'msg.0192{error}')
                 self.logger(f'msg.0193{screenshot}')
@@ -239,16 +243,16 @@ class WorkflowExecutor:
 
     @staticmethod
     def _step_log_prefix(step: dict[str, Any]) -> str:
-        workflow = f'msg.0194{step.get('position', '?')}]'
+        workflow = f"msg.0194{step.get('position', '?')}]"
         if step.get('phase') == 'once':
             return workflow
-        group = f'msg.0195{step.get('group', '1')}]'
-        return f'{group}[Data {step.get('pcl_index', '?')}/{step.get('pcl_total', '?')}]{workflow}'
+        group = f"msg.0195{step.get('group', '1')}]"
+        return f"{group}[Data {step.get('pcl_index', '?')}/{step.get('pcl_total', '?')}]{workflow}"
 
     @staticmethod
     def _event_log_prefix(log_prefix: str, event: dict[str, Any], loop_progress: list[str]) -> str:
         loops = ''.join((f'msg.0196{progress}]' for progress in loop_progress))
-        return f'{log_prefix}msg.0197{event.get('position', '?')}]{loops}'
+        return f"{log_prefix}msg.0197{event.get('position', '?')}]{loops}"
 
     @staticmethod
     def _matching_loop_end(events: list[dict[str, Any]], start: int) -> int:
@@ -260,7 +264,7 @@ class WorkflowExecutor:
                 if depth == 0:
                     return index
                 depth -= 1
-        raise ValueError(f'msg.0178{events[start]['name']}msg.0198')
+        raise ValueError(f"msg.0178{events[start]['name']}msg.0198")
 
     @staticmethod
     def _matching_retry_end(events: list[dict[str, Any]], start: int) -> int:
@@ -351,13 +355,24 @@ class WorkflowExecutor:
             return page.get_by_role(role.strip(), name=name.strip() if separator else None)
         raise ValueError(f'Action requires a selector: {selector_type}')
 
-    def _unique_locator(self, page: Any, selector_type: str, selector: str) -> Any:
-        locator = self._locator(page, selector_type, selector)
-        locator.first.wait_for(state='attached')
-        visible = [locator.nth(index) for index in range(locator.count()) if locator.nth(index).is_visible()]
+    def _locators(self, page: Any, selector_type: str, selector: str) -> list[Any]:
+        return locators_in_frames(page, lambda frame: self._locator(frame, selector_type, selector))
+
+    def _unique_locator(self, page: Any, selector_type: str, selector: str, timeout: int=10000) -> Any:
+        page = active_page(page)
+        deadline = time.monotonic() + timeout / 1000
+        all_matches: list[Any] = []
+        while time.monotonic() < deadline:
+            page = active_page(page)
+            locators = self._locators(page, selector_type, selector)
+            all_matches = [locator.nth(index) for locator in locators for index in range(locator.count())]
+            if all_matches:
+                break
+            page.wait_for_timeout(100)
+        visible = [item for item in all_matches if item.is_visible()]
         actionable = [item for item in visible if self._is_topmost(item)]
         if len(actionable) != 1:
-            raise RuntimeError(f'msg.0204{locator.count()}msg.0205{len(visible)}msg.0206{len(actionable)}msg.0073')
+            raise RuntimeError(f'msg.0204{len(all_matches)}msg.0205{len(visible)}msg.0206{len(actionable)}msg.0073')
         return actionable[0]
 
     @staticmethod
@@ -365,6 +380,7 @@ class WorkflowExecutor:
         return bool(locator.evaluate('element => {\n            const rect = element.getBoundingClientRect();\n            if (rect.width <= 0 || rect.height <= 0 ||\n                rect.right <= 0 || rect.bottom <= 0 ||\n                rect.left >= window.innerWidth || rect.top >= window.innerHeight) return false;\n            const left = Math.max(0, rect.left), right = Math.min(window.innerWidth, rect.right);\n            const top = Math.max(0, rect.top), bottom = Math.min(window.innerHeight, rect.bottom);\n            const points = [\n                [(left + right) / 2, (top + bottom) / 2],\n                [left + Math.min(3, (right - left) / 2), (top + bottom) / 2],\n                [right - Math.min(3, (right - left) / 2), (top + bottom) / 2],\n                [(left + right) / 2, top + Math.min(3, (bottom - top) / 2)],\n                [(left + right) / 2, bottom - Math.min(3, (bottom - top) / 2)]\n            ];\n            return points.some(([x, y]) => {\n                const hit = document.elementFromPoint(x, y);\n                return hit && (hit === element || element.contains(hit));\n            });\n        }'))
 
     def _execute_event(self, page: Any, event: dict[str, Any], variables: dict[str, str], artifact_dir: Path) -> Any:
+        page = active_page(page)
         action = event['action']
         selector = substitute(str(event.get('selector', '')), variables)
         fallback_selector = substitute(str(event.get('fallback_selector', '')), variables)
@@ -374,15 +390,17 @@ class WorkflowExecutor:
         if action == 'goto':
             page.goto(value, wait_until='domcontentloaded')
         elif action == 'click':
-            self._event_locator(page, event, selector, fallback_selector).click()
+            previous_pages = set(open_pages(page.context))
+            self._event_locator(page, event, selector, fallback_selector, timeout).click()
+            settle_new_page(page, previous_pages, timeout)
         elif action == 'fill':
-            self._event_locator(page, event, selector, fallback_selector).fill(value)
+            self._event_locator(page, event, selector, fallback_selector, timeout).fill(value)
         elif action == 'select':
-            self._event_locator(page, event, selector, fallback_selector).select_option(value)
+            self._event_locator(page, event, selector, fallback_selector, timeout).select_option(value)
         elif action == 'wait':
-            self._event_locator(page, event, selector, fallback_selector)
+            self._event_locator(page, event, selector, fallback_selector, timeout)
         elif action == 'press':
-            self._event_locator(page, event, selector, fallback_selector).press(value)
+            self._event_locator(page, event, selector, fallback_selector, timeout).press(value)
         elif action == 'upload_file':
             file_path = Path(value)
             if not file_path.is_absolute():
@@ -390,45 +408,54 @@ class WorkflowExecutor:
             file_path = file_path.resolve()
             if not file_path.is_file():
                 raise ValueError(f'msg.0421{file_path}')
-            self._file_input_locator(page, event, selector, fallback_selector).set_input_files(str(file_path))
+            self._file_input_locator(page, event, selector, fallback_selector, timeout).set_input_files(str(file_path))
         elif action == 'get_text':
             variable_name = value.strip()
             if variable_name and not re.fullmatch('[A-Za-z_][A-Za-z0-9_]*', variable_name):
                 raise ValueError('msg.0210')
-            locator = self._event_locator(page, event, selector, fallback_selector)
+            locator = self._event_locator(page, event, selector, fallback_selector, timeout)
             captured = (locator.text_content() or '').strip()
             if variable_name:
                 variables[variable_name] = captured
             return captured
         elif action == 'screenshot':
-            filename = value or f'screenshot_{event['id']}.png'
+            filename = value or f"screenshot_{event['id']}.png"
             page.screenshot(path=str(artifact_dir / filename), full_page=True)
         elif action == 'pause':
             page.wait_for_timeout(int(value or timeout))
         else:
             raise ValueError(f'Unsupported action: {action}')
 
-    def _event_locator(self, page: Any, event: dict[str, Any], selector: str, fallback_selector: str) -> Any:
+    def _event_locator(self, page: Any, event: dict[str, Any], selector: str, fallback_selector: str, timeout: int=10000) -> Any:
         try:
-            return self._unique_locator(page, event['selector_type'], selector)
+            return self._unique_locator(page, event['selector_type'], selector, timeout)
         except RuntimeError as primary_error:
             fallback_type = str(event.get('fallback_selector_type', 'none'))
             if fallback_type == 'none' or not fallback_selector:
                 raise
             self.logger(f'msg.0212{fallback_type}')
             try:
-                return self._unique_locator(page, fallback_type, fallback_selector)
+                return self._unique_locator(page, fallback_type, fallback_selector, timeout)
             except Exception as fallback_error:
                 raise RuntimeError(f'msg.0213{primary_error}msg.0214{fallback_error}') from fallback_error
 
-    def _file_input_locator(self, page: Any, event: dict[str, Any], selector: str, fallback_selector: str) -> Any:
+    def _file_input_locator(self, page: Any, event: dict[str, Any], selector: str, fallback_selector: str, timeout: int=10000) -> Any:
         """非表示の場合もある file input を可視性判定なしで一意に取得する。"""
-        locator = self._locator(page, event['selector_type'], selector)
-        if locator.count() == 1:
-            return locator
+        deadline = time.monotonic() + timeout / 1000
+        matches: list[Any] = []
+        while time.monotonic() < deadline:
+            page = active_page(page)
+            locators = self._locators(page, event['selector_type'], selector)
+            matches = [locator.nth(index) for locator in locators for index in range(locator.count())]
+            if matches:
+                break
+            page.wait_for_timeout(100)
+        if len(matches) == 1:
+            return matches[0]
         fallback_type = str(event.get('fallback_selector_type', 'none'))
         if fallback_type != 'none' and fallback_selector:
-            fallback = self._locator(page, fallback_type, fallback_selector)
-            if fallback.count() == 1:
-                return fallback
-        raise RuntimeError(f'msg.0423{locator.count()}')
+            fallbacks = self._locators(page, fallback_type, fallback_selector)
+            fallback_matches = [locator.nth(index) for locator in fallbacks for index in range(locator.count())]
+            if len(fallback_matches) == 1:
+                return fallback_matches[0]
+        raise RuntimeError(f'msg.0423{len(matches)}')
