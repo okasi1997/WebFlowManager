@@ -4,6 +4,18 @@ from __future__ import annotations
 from typing import Any, Callable
 
 
+BROWSER_CERTIFICATE_ARGS = [
+    '--ignore-certificate-errors',
+    '--allow-insecure-localhost',
+]
+
+# Chrome requires this permission when a public site (for example Salesforce)
+# opens or embeds a private-network address such as https://10.x.x.x.
+BROWSER_CONTEXT_PERMISSIONS = [
+    'local-network-access',
+]
+
+
 def open_pages(context: Any) -> list[Any]:
     return [page for page in context.pages if not page.is_closed()]
 

@@ -6,7 +6,7 @@ from concurrent.futures import Future
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from browser.page_runtime import active_page, locators_in_frames, page_frames
+from browser.page_runtime import BROWSER_CERTIFICATE_ARGS, BROWSER_CONTEXT_PERMISSIONS, active_page, locators_in_frames, page_frames
 from i18n import tr
 PICKER_SCRIPT = 'msg.0167'
 TEST_READY_SCRIPT = 'msg.0168'
@@ -125,8 +125,12 @@ class DebugBrowserSession:
                 if not page.is_closed():
                     return context, page
             state_path = self.storage_state_getter()
-            browser = playwright.chromium.launch(channel='chrome', headless=False, args=['--start-maximized'])
-            options: dict[str, Any] = {'no_viewport': True, 'ignore_https_errors': True}
+            browser = playwright.chromium.launch(channel='chrome', headless=False, args=['--start-maximized', *BROWSER_CERTIFICATE_ARGS])
+            options: dict[str, Any] = {
+                'no_viewport': True,
+                'ignore_https_errors': True,
+                'permissions': BROWSER_CONTEXT_PERMISSIONS,
+            }
             if state_path is not None and state_path.exists():
                 options['storage_state'] = str(state_path)
             context = browser.new_context(**options)

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from browser.page_runtime import active_page, locators_in_frames, settle_new_page
+from browser.page_runtime import BROWSER_CERTIFICATE_ARGS, BROWSER_CONTEXT_PERMISSIONS, active_page, locators_in_frames, settle_new_page
+from core.executor import WorkflowExecutor
 
 
 class FakeFrame:
@@ -39,6 +40,18 @@ class FakePage:
 
 
 class PageRuntimeTests(unittest.TestCase):
+    def test_all_workflow_browser_modes_include_certificate_bypass_flags(self) -> None:
+        for visible in (True, False):
+            arguments = WorkflowExecutor._browser_args(visible)
+            for flag in BROWSER_CERTIFICATE_ARGS:
+                self.assertIn(flag, arguments)
+
+    def test_all_workflow_browser_modes_grant_local_network_access(self) -> None:
+        for visible in (True, False):
+            permissions = WorkflowExecutor._context_options(visible)['permissions']
+            self.assertIn('local-network-access', permissions)
+            self.assertEqual(permissions, BROWSER_CONTEXT_PERMISSIONS)
+
     def test_active_page_follows_newest_open_tab(self) -> None:
         context = FakeContext()
         original = FakePage(context, 'https://example.test/one')

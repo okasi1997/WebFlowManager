@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from browser.page_runtime import active_page, locators_in_frames, open_pages, settle_new_page
+from browser.page_runtime import BROWSER_CERTIFICATE_ARGS, BROWSER_CONTEXT_PERMISSIONS, active_page, locators_in_frames, open_pages, settle_new_page
 from core.conditions import decode_guard, evaluate_guard
 from i18n import tr
 VARIABLE_PATTERN = re.compile('\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}')
@@ -91,14 +91,14 @@ class WorkflowExecutor:
     @staticmethod
     def _browser_args(browser_visible: bool) -> list[str]:
         if browser_visible:
-            return ['--start-maximized']
-        return [f'--window-size={HEADLESS_WIDTH},{HEADLESS_HEIGHT}']
+            return ['--start-maximized', *BROWSER_CERTIFICATE_ARGS]
+        return [f'--window-size={HEADLESS_WIDTH},{HEADLESS_HEIGHT}', *BROWSER_CERTIFICATE_ARGS]
 
     @staticmethod
     def _context_options(browser_visible: bool) -> dict[str, Any]:
         if browser_visible:
-            return {'no_viewport': True, 'ignore_https_errors': True}
-        return {'viewport': {'width': HEADLESS_WIDTH, 'height': HEADLESS_HEIGHT}, 'screen': {'width': HEADLESS_WIDTH, 'height': HEADLESS_HEIGHT}, 'device_scale_factor': 1, 'ignore_https_errors': True}
+            return {'no_viewport': True, 'ignore_https_errors': True, 'permissions': BROWSER_CONTEXT_PERMISSIONS}
+        return {'viewport': {'width': HEADLESS_WIDTH, 'height': HEADLESS_HEIGHT}, 'screen': {'width': HEADLESS_WIDTH, 'height': HEADLESS_HEIGHT}, 'device_scale_factor': 1, 'ignore_https_errors': True, 'permissions': BROWSER_CONTEXT_PERMISSIONS}
 
     def _execute_workflow_on_page(self, page: Any, events: list[dict[str, Any]], variables: dict[str, str], artifact_dir: Path, root_data: dict[str, Any] | None, trace: str, start_index: int=0, log_prefix: str='', on_event_start: Callable[[dict[str, Any]], None] | None=None) -> None:
         enabled = [event for event in events if event.get('enabled', 1)][start_index:]

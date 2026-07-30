@@ -6,7 +6,7 @@ import threading
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, Callable
-from browser.page_runtime import active_page
+from browser.page_runtime import BROWSER_CERTIFICATE_ARGS, BROWSER_CONTEXT_PERMISSIONS, active_page
 
 
 class AuthBrowserSession:
@@ -47,9 +47,10 @@ class AuthBrowserSession:
                 user_data_dir=str(user_data_dir),
                 channel='chrome',
                 headless=False,
-                args=['--start-maximized'],
+                args=['--start-maximized', *BROWSER_CERTIFICATE_ARGS],
                 no_viewport=True,
                 ignore_https_errors=True,
+                permissions=BROWSER_CONTEXT_PERMISSIONS,
             )
             pages = context.pages
             page = pages[-1] if pages else context.new_page()
