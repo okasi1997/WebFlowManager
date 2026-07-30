@@ -114,10 +114,12 @@ class AuthBrowserSession:
         return str(self._submit(lambda: self._save(state_path)))
 
     def status(self) -> tuple[str, str, int]:
-        return self._submit(self._status)
+        # ワーカースレッドの初期化完了後にメソッドを解決し、起動直後の競合を避ける。
+        return self._submit(lambda: self._status())
 
     def close_browser(self) -> None:
-        self._submit(self._close_browser)
+        # アプリ起動直後でも未生成の属性を呼出し側スレッドで参照しない。
+        self._submit(lambda: self._close_browser())
 
     def shutdown(self) -> None:
         future: Future[Any] = Future()

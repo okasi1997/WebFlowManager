@@ -957,7 +957,7 @@ class FlowManagerApp:
         existing_rows = [dict(row) for row in self.db.list_events(self.current_workflow_id)]
         insert_before_id = self._event_insert_before_id(existing_rows, self._selected_event())
         actions = tuple(action for action in self.settings['actions'] if action not in {'loop_start', 'loop_end', 'retry_start', 'retry_end', 'group_start', 'group_end'})
-        dialog = self._register_dialog('event_editor', lambda: EventDialog(self.root, actions, self.settings['selector_types'], self._pick_element, self._test_element, self._open_debug_browser, self._close_debug_browser, None, self._choose_data_path, self.settings['picker']['start_url']))
+        dialog = self._register_dialog('event_editor', lambda: EventDialog(self.root, actions, self.settings['selector_types'], self._pick_element, self._test_element, self._verify_event, self._close_debug_browser, None, self._choose_data_path, self.settings['picker']['start_url']))
         if dialog is None:
             return
         self.root.wait_window(dialog)
@@ -1011,7 +1011,7 @@ class FlowManagerApp:
         else:
             execute_to_event = lambda target_url, completed: self._execute_to_event(self.current_workflow_id, event_id, target_url, completed)
             actions = tuple(action for action in self.settings['actions'] if action not in {'loop_start', 'loop_end', 'retry_start', 'retry_end', 'group_start', 'group_end'})
-            dialog = self._register_dialog('event_editor', lambda: EventDialog(self.root, actions, self.settings['selector_types'], self._pick_element, self._test_element, self._open_debug_browser, self._close_debug_browser, execute_to_event, self._choose_data_path, self.settings['picker']['start_url'], event))
+            dialog = self._register_dialog('event_editor', lambda: EventDialog(self.root, actions, self.settings['selector_types'], self._pick_element, self._test_element, self._verify_event, self._close_debug_browser, execute_to_event, self._choose_data_path, self.settings['picker']['start_url'], event))
         if dialog is None:
             return
         self.root.wait_window(dialog)
@@ -1243,6 +1243,7 @@ class FlowManagerApp:
         # 実行中に画面側で編集されても、今回の実行計画は変化させない。
         if self.running:
             return
+        self._select_execution_tab('status')
         all_workflows = self.db.list_workflows()
         enabled_workflows = [row for row in all_workflows if row['enabled']]
         if not enabled_workflows:
@@ -1451,12 +1452,12 @@ class FlowManagerApp:
                 self.root.after(0, lambda: completed(None, message))
         threading.Thread(target=worker, daemon=True).start()
 
-    def _open_debug_browser(self, target_url: str, completed: object) -> None:
+    def _verify_event(self, target_url: str, event: dict[str, object], completed: object) -> None:
 
         def worker() -> None:
             try:
                 self.auth_browser.close_browser()
-                self.debug_browser.open(target_url)
+                self.debug_browser.execute_event(event, target_url)
                 self.root.after(0, lambda: completed(None))
             except Exception as error:
                 message = str(error)

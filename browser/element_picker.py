@@ -228,6 +228,24 @@ class DebugBrowserSession:
             return len(actionable)
         return self._submit(task)
 
+    def execute_event(self, event: dict[str, Any], target_url: str='') -> None:
+        """現在のページで編集中のイベントを一度だけ実行する。"""
+        def task() -> None:
+            from core.executor import WorkflowExecutor
+            _context, page = self._ensure_page(target_url)
+            page = active_page(page)
+            bring_page_to_front(page)
+            artifact_dir = self.project_dir / 'artifacts' / (
+                datetime.now().strftime('%Y%m%d_%H%M%S_%f') + '_verify'
+            )
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            executor = WorkflowExecutor(
+                self.project_dir,
+                lambda message: self._log_sink(message, 'WorkflowExecutor'),
+            )
+            executor._execute_event(page, event, {}, artifact_dir)
+        self._submit(task)
+
     def execute_until(self, jobs: list[dict[str, Any]], target_event_id: int, variables: dict[str, str], target_url: str='') -> None:
         def task() -> None:
             from core.conditions import evaluate_guard
@@ -257,7 +275,8 @@ class DebugBrowserSession:
 
     def close_browser(self) -> None:
         self._cancel_requested.set()
-        self._submit(self._dispose)
+        # ワーカー初期化前に _dispose を参照すると競合するため実行時に解決する。
+        self._submit(lambda: self._dispose())
 
     def shutdown(self) -> None:
         self._cancel_requested.set()

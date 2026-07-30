@@ -4,6 +4,8 @@ import unittest
 import tempfile
 from pathlib import Path
 
+from browser.auth_session import AuthBrowserSession
+from browser.element_picker import DebugBrowserSession
 from browser.page_runtime import BROWSER_ARGS, BROWSER_IGNORED_DEFAULT_ARGS, active_page, is_topmost, launch_persistent_chrome, locators_in_frames, restore_storage_state, settle_new_page
 from browser.picker_scripts import picker_script
 from browser.profile_runtime import persistent_profile_dir
@@ -80,6 +82,34 @@ class FakeLocator:
 
 
 class PageRuntimeTests(unittest.TestCase):
+    def test_browser_close_methods_resolve_worker_callbacks_lazily(self) -> None:
+        auth = AuthBrowserSession.__new__(AuthBrowserSession)
+        auth_closed = []
+
+        def auth_submit(task):
+            auth._close_browser = lambda: auth_closed.append(True)
+            return task()
+
+        auth._submit = auth_submit
+        auth.close_browser()
+        self.assertEqual(auth_closed, [True])
+
+        debug = DebugBrowserSession.__new__(DebugBrowserSession)
+        debug._cancel_requested = type(
+            'CancelFlag',
+            (),
+            {'set': lambda self: None},
+        )()
+        debug_closed = []
+
+        def debug_submit(task):
+            debug._dispose = lambda: debug_closed.append(True)
+            return task()
+
+        debug._submit = debug_submit
+        debug.close_browser()
+        self.assertEqual(debug_closed, [True])
+
     def test_picker_script_can_be_reinstalled_and_uses_shadow_event_path(self) -> None:
         script = picker_script('run-123', '待機', '選択中')
         self.assertIn('__webFlowPickerCleanup', script)

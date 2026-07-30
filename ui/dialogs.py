@@ -226,7 +226,10 @@ class _GuardEditorMixin:
             self.focus_force()
         if dialog.result is not None:
             self.guard = dialog.result
-            self.guard_summary.configure(text=self._guard_summary())
+            if hasattr(self, 'guard_summary_var'):
+                self.guard_summary_var.set(self._guard_summary())
+            else:
+                self.guard_summary.configure(text=self._guard_summary())
 
 
 class EventGroupDialog(_GuardEditorMixin, tk.Toplevel):
@@ -350,16 +353,16 @@ class EventGroupDialog(_GuardEditorMixin, tk.Toplevel):
 class EventDialog(_GuardEditorMixin, tk.Toplevel):
     """操作種別に応じて入力可能な項目を切り替えるイベント編集画面。"""
 
-    def __init__(self, parent: tk.Misc, actions: tuple[str, ...], selector_types: tuple[str, ...], pick_element: Callable[..., None], test_element: Callable[..., None], open_debug: Callable[..., None], close_debug: Callable[..., None], execute_to_event: Callable[..., None] | None, choose_data_path: Callable[[str], str | None], default_url: str, event: dict[str, Any] | None=None) -> None:
+    def __init__(self, parent: tk.Misc, actions: tuple[str, ...], selector_types: tuple[str, ...], pick_element: Callable[..., None], test_element: Callable[..., None], verify_event: Callable[..., None], close_debug: Callable[..., None], execute_to_event: Callable[..., None] | None, choose_data_path: Callable[[str], str | None], default_url: str, event: dict[str, Any] | None=None) -> None:
         super().__init__(parent)
         self.title('msg.0131' if event else 'msg.0034')
         self.geometry('1000x660')
         self.minsize(900, 620)
-        self.resizable(True, True)
+        self.resizable(False, False)
         self.result: dict[str, Any] | None = None
         self.pick_element = pick_element
         self.test_element = test_element
-        self.open_debug = open_debug
+        self.verify_event = verify_event
         self.close_debug = close_debug
         self.execute_to_event = execute_to_event
         self.choose_data_path = choose_data_path
@@ -388,7 +391,7 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         canvas.configure(yscrollcommand=content_scrollbar.set)
         canvas.grid(row=0, column=0, sticky='nsew')
         content_scrollbar.grid(row=0, column=0, sticky='ns')
-        content = ttk.Frame(canvas, padding=(16, 16))
+        content = ttk.Frame(canvas, padding=(14, 12))
         content_window = canvas.create_window((0, 0), window=content, anchor='nw')
         content.bind('<Configure>', lambda _event: canvas.configure(scrollregion=canvas.bbox('all')))
         canvas.bind('<Configure>', lambda event: canvas.itemconfigure(content_window, width=event.width, height=event.height))
@@ -403,8 +406,8 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
 
         columns = ttk.Frame(content)
         columns.pack(fill='both', expand=True)
-        columns.columnconfigure(0, weight=5, uniform='event_dialog_column')
-        columns.columnconfigure(1, weight=3, uniform='event_dialog_column')
+        columns.columnconfigure(0, weight=8, uniform='event_dialog_column')
+        columns.columnconfigure(1, weight=5, uniform='event_dialog_column')
         columns.rowconfigure(0, weight=1)
         left_column = ttk.Frame(columns)
         left_column.grid(row=0, column=0, padx=(0, 4), sticky='nsew')
@@ -413,68 +416,108 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
 
         def add_section(parent: ttk.Frame, title: str) -> ttk.Frame:
             # メイン画面と同じ平面背景、見出し、細い区切り線で情報のまとまりを示す。
-            card = RoundedCard(parent)
-            card.pack(fill='x', pady=(0, 10))
+            card = RoundedCard(parent, padding=(12, 4))
+            card.pack(fill='x', pady=(0, 4))
             section = card.content
             ttk.Label(section, text=title, style='DialogCardSection.TLabel').pack(anchor='w')
-            ttk.Separator(section, style='DialogCard.TSeparator').pack(fill='x', pady=(0, 6))
+            ttk.Separator(section, style='DialogCard.TSeparator').pack(fill='x', pady=(0, 3))
             body = ttk.Frame(section, style='DialogCardBody.TFrame')
             body.pack(fill='x')
             body.rounded_card = card
             return body
 
         def add_field(section: ttk.Frame, row: int, label: str, key: str, choices: tuple[str, ...] | None=None, columnspan: int=1) -> None:
-            field_label = ttk.Label(section, text=label, style='DialogCard.TLabel')
-            field_label.grid(row=row, column=0, padx=(10, 8), pady=7, sticky='e')
+            field_label = ttk.Label(
+                section, text=label, width=18, anchor='w',
+                style='DialogCard.TLabel',
+            )
+            field_label.grid(row=row, column=0, padx=(10, 8), pady=5, sticky='w')
             self.field_labels[key] = field_label
             if choices is not None:
                 widget = ttk.Combobox(section, textvariable=self.values[key], values=choices, state='readonly', style='Dialog.TCombobox')
             else:
                 widget = ttk.Entry(section, textvariable=self.values[key], width=48, style='Dialog.TEntry')
-            widget.grid(row=row, column=1, columnspan=columnspan, padx=(0, 10), pady=7, sticky='ew')
+            widget.grid(row=row, column=1, columnspan=columnspan, padx=(0, 10), pady=5, sticky='ew')
             self.field_widgets[key] = widget
             section.columnconfigure(1, weight=1)
 
-        basic = add_section(left_column, 'msg.0366')
+        basic = add_section(left_column, 'msg.0500')
         basic.columnconfigure(1, weight=1)
         basic.columnconfigure(3, weight=0, minsize=120)
         add_field(basic, 0, 'msg.0028', 'name', columnspan=2)
         self.enabled_check = ttk.Checkbutton(basic, text='msg.0006', variable=self.values['enabled'], style='DialogCard.TCheckbutton')
-        self.enabled_check.grid(row=0, column=3, padx=(8, 10), pady=7, sticky='w')
+        self.enabled_check.grid(row=0, column=3, padx=(8, 10), pady=5, sticky='w')
         add_field(basic, 1, 'msg.0132', 'action', actions, columnspan=2)
-        add_field(basic, 2, 'msg.0133', 'value', columnspan=2)
-        self.file_choose_button = ttk.Button(basic, text='msg.0419', command=self._choose_upload_file, style='DialogInline.TButton')
-        self.file_choose_button.grid(row=2, column=3, padx=(8, 10), pady=7, sticky='ew')
-        add_field(basic, 3, 'msg.0134', 'timeout_ms', columnspan=2)
-        ttk.Label(basic, text='msg.0405', style='DialogCard.TLabel').grid(row=4, column=0, padx=(10, 8), pady=7, sticky='e')
-        self.guard_button = ttk.Button(basic, text='msg.0403', command=self._edit_guard, style='DialogInline.TButton')
-        self.guard_button.grid(row=4, column=3, padx=(8, 10), pady=7, sticky='ew')
-        self.guard_summary = ttk.Label(basic, text=self._guard_summary(), style='DialogCardSubtle.TLabel', anchor='w')
-        self.guard_summary.grid(row=4, column=1, columnspan=2, padx=(0, 10), pady=7, sticky='ew')
-        ttk.Label(basic, text='msg.0427', style='DialogCard.TLabel').grid(row=5, column=0, padx=(10, 8), pady=7, sticky='e')
-        self.failure_action_box = ttk.Combobox(basic, textvariable=self.values['failure_action'], values=tuple(self.failure_action_labels.values()), state='readonly', width=18, style='Dialog.TCombobox')
-        self.failure_action_box.grid(row=5, column=1, columnspan=2, padx=(0, 10), pady=7, sticky='ew')
-        self.failure_target_label = ttk.Label(basic, text='msg.0428', style='DialogCard.TLabel')
-        self.failure_target_label.grid(row=6, column=0, padx=(10, 8), pady=7, sticky='e')
-        self.failure_target_entry = ttk.Entry(basic, textvariable=self.values['failure_target'], style='Dialog.TEntry')
-        self.failure_target_entry.grid(row=6, column=1, columnspan=2, padx=(0, 10), pady=7, sticky='ew')
-        self.failure_action_box.bind('<<ComboboxSelected>>', self._update_failure_fields)
+
+        operation = basic
+        operation.columnconfigure(1, weight=1)
+        operation.columnconfigure(3, weight=0, minsize=120)
+        add_field(operation, 2, 'msg.0133', 'value', columnspan=2)
+        self.file_choose_button = ttk.Button(operation, text='msg.0419', command=self._choose_upload_file, style='DialogInline.TButton')
+        self.file_choose_button.grid(row=2, column=3, padx=(8, 10), pady=5, sticky='ew')
+        ttk.Label(operation, text='msg.0033', width=18, anchor='w', style='DialogCard.TLabel').grid(row=3, column=0, padx=(10, 8), pady=5, sticky='w')
+        self.data_path_entry = ttk.Entry(operation, textvariable=self.values['data_path'], width=24, state='readonly', style='Dialog.TEntry')
+        self.data_path_entry.grid(row=3, column=1, columnspan=3, padx=(0, 10), pady=5, sticky='ew')
+        self.data_path_label = ttk.Label(operation, text='msg.0033', style='DialogPlaceholder.TLabel')
+
+        def update_data_placeholder(*_args: object) -> None:
+            if self.values['data_path'].get():
+                self.data_path_label.place_forget()
+            else:
+                self.data_path_label.place(in_=self.data_path_entry, x=8, rely=0.5, anchor='w')
+
+        self.values['data_path'].trace_add('write', update_data_placeholder)
+        self.after_idle(update_data_placeholder)
+        data_actions = ttk.Frame(operation, style='DialogCardBody.TFrame')
+        data_actions.grid(row=4, column=1, columnspan=3, padx=(0, 10), pady=(1, 3), sticky='ew')
+        self.data_choose_button = ttk.Button(data_actions, text='msg.0140', command=self._choose_data, style='DialogInline.TButton')
+        self.data_choose_button.grid(row=0, column=0, padx=(0, 4), sticky='ew')
+        self.data_clear_button = ttk.Button(data_actions, text='msg.0141', command=lambda: self.values['data_path'].set(''), style='DialogInline.TButton')
+        self.data_clear_button.grid(row=0, column=1, padx=(4, 0), sticky='ew')
+        data_actions.columnconfigure(0, weight=1, uniform='data_action')
+        data_actions.columnconfigure(1, weight=1, uniform='data_action')
 
         locator = add_section(left_column, 'msg.0367')
         locator.columnconfigure(1, weight=1)
         locator.columnconfigure(3, weight=0, minsize=120)
-        add_field(locator, 0, 'msg.0030', 'selector_type', selector_types, columnspan=2)
-        add_field(locator, 1, 'msg.0031', 'selector', columnspan=2)
-        locator.rounded_card.set_stretch(True)
-        locator.rounded_card.pack_configure(fill='both', expand=True)
-        locator.pack_configure(fill='both', expand=True)
+        add_field(locator, 0, 'msg.0030', 'selector_type', selector_types, columnspan=3)
+        add_field(locator, 1, 'msg.0031', 'selector', columnspan=3)
+        execution = add_section(left_column, 'msg.0502')
+        execution.columnconfigure(1, weight=1)
+        execution.columnconfigure(3, weight=0, minsize=120)
+        add_field(execution, 0, 'msg.0134', 'timeout_ms', columnspan=2)
+        ttk.Label(execution, text='msg.0405', width=18, anchor='w', style='DialogCard.TLabel').grid(row=1, column=0, padx=(10, 8), pady=5, sticky='w')
+        self.guard_button = ttk.Button(execution, text='msg.0403', command=self._edit_guard, style='DialogInline.TButton')
+        self.guard_button.grid(row=1, column=3, padx=(8, 10), pady=5, sticky='ew')
+        self.guard_summary_var = tk.StringVar(value=self._guard_summary())
+        self.guard_summary = ttk.Entry(
+            execution, textvariable=self.guard_summary_var,
+            state='disabled', style='Dialog.TEntry',
+        )
+        self.guard_summary.grid(row=1, column=1, columnspan=2, padx=(0, 10), pady=5, sticky='ew')
+        ttk.Label(execution, text='msg.0427', width=18, anchor='w', style='DialogCard.TLabel').grid(row=2, column=0, padx=(10, 8), pady=5, sticky='w')
+        self.failure_action_box = ttk.Combobox(execution, textvariable=self.values['failure_action'], values=tuple(self.failure_action_labels.values()), state='readonly', width=18, style='Dialog.TCombobox')
+        self.failure_action_box.grid(row=2, column=1, columnspan=2, padx=(0, 10), pady=5, sticky='ew')
+        self.failure_target_label = ttk.Label(execution, text='msg.0428', width=18, anchor='w', style='DialogCard.TLabel')
+        self.failure_target_label.grid(row=3, column=0, padx=(10, 8), pady=5, sticky='w')
+        self.failure_target_entry = ttk.Entry(execution, textvariable=self.values['failure_target'], style='Dialog.TEntry')
+        self.failure_target_entry.grid(row=3, column=1, columnspan=2, padx=(0, 10), pady=5, sticky='ew')
+        self.failure_action_box.bind('<<ComboboxSelected>>', self._update_failure_fields)
+        execution.rounded_card.set_stretch(True)
+        execution.rounded_card.pack_configure(fill='both', expand=True)
+        execution.pack_configure(fill='both', expand=True)
 
-        debug = add_section(right_column, 'msg.0368')
-        self.target_url_label = ttk.Label(debug, text='msg.0135', style='DialogCard.TLabel')
-        self.target_url_label.grid(row=0, column=0, padx=(10, 8), pady=7, sticky='e')
-        self.target_url_entry = ttk.Entry(debug, textvariable=self.values['target_url'], width=24, style='Dialog.TEntry')
-        self.target_url_entry.grid(row=0, column=1, padx=(0, 10), pady=7, sticky='ew')
-        debug.columnconfigure(1, weight=1)
+        page_actions = add_section(right_column, 'msg.0439')
+        url_row = ttk.Frame(page_actions, style='DialogCardBody.TFrame')
+        url_row.grid(row=0, column=0, columnspan=2, sticky='ew')
+        self.target_url_label = ttk.Label(
+            url_row, text='msg.0135', width=12, anchor='w',
+            style='DialogCard.TLabel',
+        )
+        self.target_url_label.grid(row=0, column=0, padx=(10, 8), pady=5, sticky='w')
+        self.target_url_entry = ttk.Entry(url_row, textvariable=self.values['target_url'], width=24, style='Dialog.TEntry')
+        self.target_url_entry.grid(row=0, column=1, padx=(0, 10), pady=5, sticky='ew')
+        url_row.columnconfigure(1, weight=1)
 
         def make_icon(pattern: tuple[str, ...]) -> tk.PhotoImage:
             image = tk.PhotoImage(width=16, height=16)
@@ -485,55 +528,56 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
             return image
 
         icon_patterns = {
-            'open': ('.........##...', '.##########...', '.#.......##...', '.#.....##.#...', '.#...##...#...', '.#..#.....#...', '.#........#...', '.#........#...', '.##########...'),
             'close': ('............', '..#......#..', '...#....#...', '....#..#....', '.....##.....', '.....##.....', '....#..#....', '...#....#...', '..#......#..'),
             'pick': ('....####....', '..##....##..', '.#...##...#.', '.#..####..#.', '#..######..#', '#..######..#', '.#..####..#.', '.#...##...#.', '..##....##..', '....####....'),
             'test': ('....####....', '..##....##..', '.#........#.', '.#..#.....#.', '.#...#....#.', '.#....#...#.', '.#..#..#..#.', '.#...##...#.', '..##....##..', '....####....'),
             'play': ('...#........', '...###......', '...#####....', '...#######..', '...########.', '...#######..', '...#####....', '...###......', '...#........'),
-            'tree': ('.....##.....', '.....##.....', '..########..', '..#..##..#..', '..#..##..#..', '.###.##.###.', '.###....###.'),
-            'clear': ('...######...', '....####....', '..########..', '..#.#..#.#..', '..#.#..#.#..', '..#.#..#.#..', '..#.#..#.#..', '..#......#..', '...######...'),
         }
-        self._event_button_icons = {name: make_icon(pattern) for name, pattern in icon_patterns.items()}
+        self._event_button_icons = {
+            name: make_icon(pattern) for name, pattern in icon_patterns.items()
+        }
 
-        page_actions = add_section(right_column, 'msg.0439')
-        self.open_debug_button = ttk.Button(page_actions, text='msg.0352', image=self._event_button_icons['open'], compound='left', command=self._open_debug, style='DialogAction.TButton')
-        self.open_debug_button.grid(row=0, column=0, padx=(0, 4), pady=(2, 5), sticky='ew')
+        self.pick_button = ttk.Button(page_actions, text='msg.0492', image=self._event_button_icons['pick'], compound='left', command=self._pick, style='DialogAction.TButton')
+        self.pick_button.grid(row=1, column=0, padx=(0, 4), pady=(5, 5), sticky='ew')
         self.close_debug_button = ttk.Button(page_actions, text='msg.0356', image=self._event_button_icons['close'], compound='left', command=self._close_debug, style='DialogAction.TButton')
-        self.close_debug_button.grid(row=0, column=1, padx=(4, 0), pady=(2, 5), sticky='ew')
-        self.pick_button = ttk.Button(page_actions, text='msg.0353', image=self._event_button_icons['pick'], compound='left', command=self._pick, style='DialogAction.TButton')
-        self.pick_button.grid(row=1, column=0, padx=(0, 4), pady=5, sticky='ew')
+        self.close_debug_button.grid(row=1, column=1, padx=(4, 0), pady=(5, 5), sticky='ew')
         self.test_button = ttk.Button(page_actions, text='msg.0354', image=self._event_button_icons['test'], compound='left', command=self._test, style='DialogAction.TButton')
-        self.test_button.grid(row=1, column=1, padx=(4, 0), pady=5, sticky='ew')
+        self.test_button.grid(row=2, column=0, columnspan=2, pady=5, sticky='ew')
+        self.verify_event_button = ttk.Button(page_actions, text='msg.0493', image=self._event_button_icons['play'], compound='left', command=self._verify_event, style='DialogAction.TButton')
+        self.verify_event_button.grid(row=3, column=0, columnspan=2, pady=5, sticky='ew')
         self.execute_to_event_button = ttk.Button(page_actions, text='msg.0355', image=self._event_button_icons['play'], compound='left', command=self._execute_to_event, style='DialogAction.TButton')
-        self.execute_to_event_button.grid(row=2, column=0, columnspan=2, pady=5, sticky='ew')
+        self.execute_to_event_button.grid(row=4, column=0, columnspan=2, pady=5, sticky='ew')
         self.execute_to_event_button.configure(state='normal' if execute_to_event else 'disabled')
         page_actions.columnconfigure(0, weight=1, uniform='debug_page_action')
         page_actions.columnconfigure(1, weight=1, uniform='debug_page_action')
-        self.pick_status = ttk.Label(page_actions, text='msg.0138', style='DialogCardSubtle.TLabel')
-        self.pick_status.grid(row=3, column=0, columnspan=2, pady=(10, 8), sticky='w')
+        ttk.Label(page_actions, text='msg.0138', style='DialogCardSubtle.TLabel').grid(
+            row=5, column=0, columnspan=2, pady=(10, 8), sticky='w'
+        )
 
-        data_frame = add_section(right_column, 'msg.0369')
-        self.data_path_entry = ttk.Entry(data_frame, textvariable=self.values['data_path'], width=24, state='readonly', style='Dialog.TEntry')
-        self.data_path_entry.grid(row=0, column=0, columnspan=2, pady=(2, 10), sticky='ew')
-        self.data_path_label = ttk.Label(data_frame, text='msg.0033', style='DialogPlaceholder.TLabel')
-
-        def update_data_placeholder(*_args: object) -> None:
-            if self.values['data_path'].get():
-                self.data_path_label.place_forget()
-            else:
-                self.data_path_label.place(in_=self.data_path_entry, x=8, rely=0.5, anchor='w')
-
-        self.values['data_path'].trace_add('write', update_data_placeholder)
-        self.after_idle(update_data_placeholder)
-        self.data_choose_button = ttk.Button(data_frame, text='msg.0140', image=self._event_button_icons['tree'], compound='left', command=self._choose_data, style='DialogAction.TButton')
-        self.data_choose_button.grid(row=1, column=0, padx=(0, 4), sticky='ew')
-        self.data_clear_button = ttk.Button(data_frame, text='msg.0141', image=self._event_button_icons['clear'], compound='left', command=lambda: self.values['data_path'].set(''), style='DialogAction.TButton')
-        self.data_clear_button.grid(row=1, column=1, padx=(4, 0), sticky='ew')
-        data_frame.columnconfigure(0, weight=1, uniform='data_action')
-        data_frame.columnconfigure(1, weight=1, uniform='data_action')
-        data_frame.rounded_card.set_stretch(True)
-        data_frame.rounded_card.pack_configure(fill='both', expand=True)
-        data_frame.pack_configure(fill='both', expand=True)
+        error_frame = add_section(right_column, 'msg.0496')
+        self.pick_status = ttk.Label(error_frame, text='msg.0499', style='DialogCardSubtle.TLabel')
+        self.pick_status.pack(fill='x', pady=(2, 6))
+        error_container = tk.Frame(error_frame, bg='#D4D4D4', bd=0, highlightthickness=0)
+        error_container.pack(fill='both', expand=True, pady=(2, 0))
+        error_inner = tk.Frame(error_container, bg='#FFFFFF', bd=0, highlightthickness=0)
+        error_inner.grid(row=0, column=0, sticky='nsew', padx=1, pady=1)
+        self.error_text = tk.Text(
+            error_inner, height=8, state='disabled', wrap='word',
+            bg='#FFFFFF', fg='#C42B1C', insertbackground='#1F1F1F',
+            selectbackground='#ADD6FF', relief='flat', bd=0,
+            padx=8, pady=6,
+        )
+        error_scrollbar = AutoScrollbar(error_inner, orient='vertical', command=self.error_text.yview)
+        self.error_text.configure(yscrollcommand=error_scrollbar.set)
+        self.error_text.grid(row=0, column=0, sticky='nsew')
+        error_scrollbar.grid(row=0, column=1, sticky='ns')
+        error_inner.columnconfigure(0, weight=1)
+        error_inner.rowconfigure(0, weight=1)
+        error_container.columnconfigure(0, weight=1)
+        error_container.rowconfigure(0, weight=1)
+        error_frame.rounded_card.set_stretch(True)
+        error_frame.rounded_card.pack_configure(fill='both', expand=True)
+        error_frame.pack_configure(fill='both', expand=True)
 
         ttk.Separator(self, style='DialogFooter.TSeparator').grid(row=1, column=0, sticky='ew')
         buttons = ttk.Frame(self, style='DialogFooter.TFrame', padding=(14, 14))
@@ -571,7 +615,7 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         self._set_field_enabled('selector', can_locate)
         self._set_field_enabled('value', action in value_actions)
         self._set_field_enabled('timeout_ms', action in timeout_actions)
-        for widget in (self.target_url_entry, self.open_debug_button, self.pick_button, self.test_button):
+        for widget in (self.target_url_entry, self.pick_button, self.test_button, self.verify_event_button):
             widget.configure(state='normal' if can_locate else 'disabled')
         self.target_url_label.state(['!disabled'] if can_locate else ['disabled'])
         self.pick_status.state(['!disabled'] if can_locate else ['disabled'])
@@ -606,15 +650,17 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
             self.values['value'].set(path)
 
     def _pick(self) -> None:
+        self._clear_error()
         self.pick_button.config(state='disabled')
         self.pick_status.config(text='msg.0146')
 
         def completed(result: dict[str, str] | None, error: str | None) -> None:
             if not self.winfo_exists():
                 return
+            self._restore_focus()
             self.pick_button.config(state='normal')
             if error:
-                self.pick_status.config(text=f'  {error}')
+                self._show_error(error)
                 return
             if result:
                 self.values['selector_type'].set(result['selector_type'])
@@ -629,35 +675,54 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
                 self.pick_status.config(text=f"msg.0147{result['display']}msg.0148")
         self.pick_element(self.values['target_url'].get().strip(), completed)
 
-    def _open_debug(self) -> None:
-        self.open_debug_button.configure(state='disabled')
-        self.pick_status.configure(text='msg.0357')
+    def _restore_focus(self) -> None:
+        """ブラウザー操作後にイベント編集画面を前面へ戻す。"""
+        self.deiconify()
+        self.lift()
+        self.attributes('-topmost', True)
+        self.focus_force()
+        self.after(120, lambda: self.winfo_exists() and self.attributes('-topmost', False))
 
-        def completed(error: str | None) -> None:
-            if self.winfo_exists():
-                self.open_debug_button.configure(state='normal')
-                self.pick_status.configure(text=f'msg.0358{error}' if error else 'msg.0360')
-        self.open_debug(self.values['target_url'].get().strip(), completed)
+    def _clear_error(self) -> None:
+        self.error_text.configure(state='normal')
+        self.error_text.delete('1.0', 'end')
+        self.error_text.configure(state='disabled')
+
+    def _show_error(self, error: str) -> None:
+        self.error_text.configure(state='normal')
+        self.error_text.delete('1.0', 'end')
+        self.error_text.insert('1.0', tr(f'msg.0358{error}'))
+        self.error_text.configure(state='disabled')
+        self.error_text.see('1.0')
+        self.pick_status.configure(text='msg.0497')
 
     def _close_debug(self) -> None:
+        self._clear_error()
         self.close_debug_button.configure(state='disabled')
 
         def completed(error: str | None) -> None:
             if self.winfo_exists():
                 self.close_debug_button.configure(state='normal')
-                self.pick_status.configure(text=f'msg.0358{error}' if error else 'msg.0361')
+                if error:
+                    self._show_error(error)
+                else:
+                    self.pick_status.configure(text='msg.0361')
         self.close_debug(completed)
 
     def _execute_to_event(self) -> None:
         if self.execute_to_event is None:
             return
+        self._clear_error()
         self.execute_to_event_button.configure(state='disabled')
         self.pick_status.configure(text='msg.0362')
 
         def completed(error: str | None) -> None:
             if self.winfo_exists():
                 self.execute_to_event_button.configure(state='normal')
-                self.pick_status.configure(text=f'msg.0358{error}' if error else 'msg.0363')
+                if error:
+                    self._show_error(error)
+                else:
+                    self.pick_status.configure(text='msg.0363')
         self.execute_to_event(self.values['target_url'].get().strip(), completed)
 
     def _choose_data(self) -> None:
@@ -675,6 +740,7 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         if selector_type == 'none' or not selector:
             messagebox.showinfo('msg.0151', 'msg.0152', parent=self)
             return
+        self._clear_error()
         self.test_button.config(state='disabled')
         self.pick_status.config(text='msg.0153')
 
@@ -683,7 +749,7 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
                 return
             self.test_button.config(state='normal')
             if error:
-                self.pick_status.config(text=f'msg.0154{error}')
+                self._show_error(error)
             elif count == 1:
                 self.pick_status.config(text='msg.0155')
             elif count == 0:
@@ -691,6 +757,33 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
             else:
                 self.pick_status.config(text=f'msg.0157{count}msg.0158')
         self.test_element(self.values['target_url'].get().strip(), selector_type, selector, completed)
+
+    def _verify_event(self) -> None:
+        self._clear_error()
+        self.verify_event_button.configure(state='disabled')
+        self.pick_status.configure(text='msg.0494')
+        event = {
+            'id': 0,
+            'action': self.values['action'].get(),
+            'selector_type': self.values['selector_type'].get(),
+            'selector': self.values['selector'].get().strip(),
+            'fallback_selector_type': self.values['fallback_selector_type'].get(),
+            'fallback_selector': self.values['fallback_selector'].get().strip(),
+            'value': self.values['value'].get(),
+            'timeout_ms': self.values['timeout_ms'].get(),
+        }
+
+        def completed(error: str | None) -> None:
+            if not self.winfo_exists():
+                return
+            self._restore_focus()
+            self.verify_event_button.configure(state='normal')
+            if error:
+                self._show_error(error)
+            else:
+                self.pick_status.configure(text='msg.0495')
+
+        self.verify_event(self.values['target_url'].get().strip(), event, completed)
 
     def _save(self) -> None:
         # 画面を閉じる前に操作固有の値を検証し、不要な項目は初期化する。
