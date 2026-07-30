@@ -1,6 +1,7 @@
 """タブ、ポップアップ、iframe 対応検索で共有する Playwright 補助処理。"""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -54,8 +55,30 @@ def launch_persistent_chrome(
 
 def restore_storage_state(context: Any, state_path: Any) -> None:
     """保存済み Cookie と Web Storage を永続コンテキストへ復元する。"""
-    if state_path is not None and state_path.is_file():
-        context.set_storage_state(str(state_path))
+    if state_path is None or not state_path.is_file():
+        return
+    state = json.loads(state_path.read_text(encoding='utf-8-sig'))
+    cookies = state.get('cookies', [])
+    if cookies:
+        context.add_cookies(cookies)
+    origins = {
+        item['origin']: item.get('localStorage', [])
+        for item in state.get('origins', [])
+        if isinstance(item, dict) and isinstance(item.get('origin'), str)
+    }
+    if not origins:
+        return
+    serialized_origins = json.dumps(origins, ensure_ascii=False)
+    context.add_init_script(
+        script=f"""(() => {{
+            const origins = {serialized_origins};
+            const entries = origins[window.location.origin];
+            if (!entries) return;
+            for (const entry of entries) {{
+                window.localStorage.setItem(entry.name, entry.value);
+            }}
+        }})();"""
+    )
 
 
 def open_pages(context: Any) -> list[Any]:

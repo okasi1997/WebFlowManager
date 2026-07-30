@@ -17,10 +17,14 @@ class FakeFrame:
 class FakeContext:
     def __init__(self) -> None:
         self.pages = []
-        self.restored_state = None
+        self.restored_cookies = None
+        self.init_script = None
 
-    def set_storage_state(self, state_path: str) -> None:
-        self.restored_state = state_path
+    def add_cookies(self, cookies) -> None:
+        self.restored_cookies = cookies
+
+    def add_init_script(self, script: str) -> None:
+        self.init_script = script
 
 
 class FakePage:
@@ -105,10 +109,17 @@ class PageRuntimeTests(unittest.TestCase):
     def test_saved_login_state_is_restored_into_persistent_context(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             state_path = Path(folder) / 'browser_state.json'
-            state_path.write_text('{"cookies": [], "origins": []}', encoding='utf-8')
+            state_path.write_text(
+                '{"cookies": [{"name": "sid", "value": "1", "domain": ".example.test", "path": "/"}], '
+                '"origins": [{"origin": "https://example.test", '
+                '"localStorage": [{"name": "token", "value": "saved"}]}]}',
+                encoding='utf-8',
+            )
             context = FakeContext()
             restore_storage_state(context, state_path)
-            self.assertEqual(context.restored_state, str(state_path))
+            self.assertEqual(context.restored_cookies[0]['name'], 'sid')
+            self.assertIn('https://example.test', context.init_script)
+            self.assertIn('localStorage.setItem', context.init_script)
 
     def test_active_page_follows_newest_open_tab(self) -> None:
         context = FakeContext()
