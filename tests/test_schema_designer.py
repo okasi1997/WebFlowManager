@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+from pathlib import Path
 
+from core.database import Database
 from ui.structured_data import SchemaDesignerDialog
 
 
@@ -58,6 +61,35 @@ class SchemaDesignerOrderingTests(unittest.TestCase):
         changed = SchemaDesignerDialog._drop_node(root, self.first, root, container, 'inside')
         self.assertFalse(changed)
         self.assertEqual(root['children'], [self.first, container])
+
+    def test_add_after_selected_regular_field(self) -> None:
+        root = {'name': 'Data', 'type': 'list', 'children': self.children}
+        parent, index = SchemaDesignerDialog._add_location(root, (self.second, root))
+        self.assertIs(parent, root)
+        self.assertEqual(index, 2)
+
+    def test_add_inside_selected_container(self) -> None:
+        container = {'name': 'output', 'type': 'object', 'children': [self.first]}
+        root = {'name': 'Data', 'type': 'list', 'children': [container]}
+        parent, index = SchemaDesignerDialog._add_location(root, (container, root))
+        self.assertIs(parent, container)
+        self.assertEqual(index, 1)
+
+    def test_add_at_end_without_selection(self) -> None:
+        root = {'name': 'Data', 'type': 'list', 'children': self.children}
+        parent, index = SchemaDesignerDialog._add_location(root, None)
+        self.assertIs(parent, root)
+        self.assertEqual(index, 3)
+
+    def test_legacy_list_root_is_loaded_as_object(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            database = Database(Path(folder) / 'test.db')
+            legacy = {'name': 'Data', 'type': 'list', 'children': [self.first]}
+            database.save_data_schema(0, legacy)
+            loaded = database.get_data_schema()
+            database.close()
+        self.assertEqual(loaded['type'], 'object')
+        self.assertEqual(loaded['children'], [self.first])
 
 
 if __name__ == '__main__':

@@ -6,7 +6,7 @@ import threading
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, Callable
-from browser.page_runtime import BROWSER_ARGS, BROWSER_IGNORED_DEFAULT_ARGS, active_page
+from browser.page_runtime import active_page, launch_persistent_chrome, restore_storage_state
 from browser.profile_runtime import persistent_profile_dir
 
 
@@ -45,15 +45,8 @@ class AuthBrowserSession:
             user_data_dir = persistent_profile_dir(self.project_dir, state_path)
             if user_data_dir is None:
                 raise RuntimeError('保存対象のログイン状態を選択してください。')
-            user_data_dir.mkdir(parents=True, exist_ok=True)
-            context = playwright.chromium.launch_persistent_context(
-                user_data_dir=str(user_data_dir),
-                channel='chrome',
-                headless=False,
-                args=BROWSER_ARGS,
-                ignore_default_args=BROWSER_IGNORED_DEFAULT_ARGS,
-                no_viewport=True,
-            )
+            context = launch_persistent_chrome(playwright, user_data_dir, visible=True)
+            restore_storage_state(context, state_path)
             pages = context.pages
             page = pages[-1] if pages else context.new_page()
             page.goto(url, wait_until='domcontentloaded')

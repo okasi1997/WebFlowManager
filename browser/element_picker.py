@@ -7,7 +7,7 @@ from concurrent.futures import Future
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from browser.page_runtime import BROWSER_ARGS, BROWSER_IGNORED_DEFAULT_ARGS, active_page, locators_in_frames, page_frames
+from browser.page_runtime import active_page, is_topmost, launch_persistent_chrome, locators_in_frames, page_frames, restore_storage_state
 from browser.profile_runtime import persistent_profile_dir
 from i18n import tr
 PICKER_SCRIPT = 'msg.0167'
@@ -70,11 +70,7 @@ class ElementPicker:
     def _actionable_matches(cls, locator: Any) -> list[Any]:
         # DOM に存在するだけでなく、表示中かつ最前面にある要素へ絞り込む。
         """表示領域内にあり、他要素に覆われていない一致要素だけを返す。"""
-        return [item for item in cls._visible_matches(locator) if cls._is_topmost(item)]
-
-    @staticmethod
-    def _is_topmost(locator: Any) -> bool:
-        return bool(locator.evaluate('element => {\n            const rect = element.getBoundingClientRect();\n            if (rect.width <= 0 || rect.height <= 0 ||\n                rect.right <= 0 || rect.bottom <= 0 ||\n                rect.left >= window.innerWidth || rect.top >= window.innerHeight) return false;\n            const left = Math.max(0, rect.left), right = Math.min(window.innerWidth, rect.right);\n            const top = Math.max(0, rect.top), bottom = Math.min(window.innerHeight, rect.bottom);\n            const points = [\n                [(left + right) / 2, (top + bottom) / 2],\n                [left + Math.min(3, (right - left) / 2), (top + bottom) / 2],\n                [right - Math.min(3, (right - left) / 2), (top + bottom) / 2],\n                [(left + right) / 2, top + Math.min(3, (bottom - top) / 2)],\n                [(left + right) / 2, bottom - Math.min(3, (bottom - top) / 2)]\n            ];\n            return points.some(([x, y]) => {\n                const hit = document.elementFromPoint(x, y);\n                return hit && (hit === element || element.contains(hit));\n            });\n        }'))
+        return [item for item in cls._visible_matches(locator) if is_topmost(item)]
 
 
 class _DebugPause(BaseException):
@@ -133,15 +129,8 @@ class DebugBrowserSession:
             if user_data_dir is None:
                 temporary_profile = tempfile.TemporaryDirectory(prefix='webflow_chrome_')
                 user_data_dir = Path(temporary_profile.name)
-            user_data_dir.mkdir(parents=True, exist_ok=True)
-            context = playwright.chromium.launch_persistent_context(
-                user_data_dir=str(user_data_dir),
-                channel='chrome',
-                headless=False,
-                args=BROWSER_ARGS,
-                ignore_default_args=BROWSER_IGNORED_DEFAULT_ARGS,
-                no_viewport=True,
-            )
+            context = launch_persistent_chrome(playwright, user_data_dir, visible=True)
+            restore_storage_state(context, state_path)
             pages = context.pages
             page = pages[-1] if pages else context.new_page()
             page.goto(target_url or self.start_url, wait_until='domcontentloaded')

@@ -98,7 +98,7 @@ class Database:
 
     @staticmethod
     def _default_data_schema() -> dict[str, Any]:
-        return {'name': 'Data', 'type': 'list', 'children': [{'name': 'case_no', 'type': 'text'}, {'name': 'opp_name', 'type': 'text'}, {'name': 'plans', 'type': 'list', 'children': [{'name': 'plan', 'type': 'text'}, {'name': 'quantity', 'type': 'number'}, {'name': 'attrs', 'type': 'list', 'children': [{'name': 'attr', 'type': 'text'}]}]}]}
+        return {'name': 'Data', 'type': 'object', 'children': [{'name': 'case_no', 'type': 'text'}, {'name': 'opp_name', 'type': 'text'}, {'name': 'plans', 'type': 'list', 'children': [{'name': 'plan', 'type': 'text'}, {'name': 'quantity', 'type': 'number'}, {'name': 'attrs', 'type': 'list', 'children': [{'name': 'attr', 'type': 'text'}]}]}]}
 
     @classmethod
     def _merge_schemas(cls, base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
@@ -253,28 +253,11 @@ class Database:
         self.connection.execute('UPDATE events SET enabled=? WHERE id=?', (int(enabled), event_id))
         self.connection.commit()
 
-    def delete_event(self, event_id: int, workflow_id: int) -> None:
-        with self.connection:
-            self.connection.execute('DELETE FROM events WHERE id=?', (event_id,))
-            self._normalize_positions(workflow_id)
-
     def delete_events(self, event_ids: list[int], workflow_id: int) -> None:
         unique_ids = list(dict.fromkeys(event_ids))
         with self.connection:
             self.connection.executemany('DELETE FROM events WHERE id=? AND workflow_id=?', ((event_id, workflow_id) for event_id in unique_ids))
             self._normalize_positions(workflow_id)
-
-    def move_event(self, event_id: int, workflow_id: int, direction: int) -> None:
-        rows = self.list_events(workflow_id)
-        ids = [row['id'] for row in rows]
-        if event_id not in ids:
-            return
-        old = ids.index(event_id)
-        new = old + direction
-        if new < 0 or new >= len(ids):
-            return
-        ids[old], ids[new] = (ids[new], ids[old])
-        self.reorder_events(workflow_id, ids)
 
     def reorder_events(self, workflow_id: int, event_ids: list[int]) -> None:
         existing = {row['id'] for row in self.list_events(workflow_id)}
@@ -359,90 +342,6 @@ class Database:
             end.update(action='group_end', value='', data_path='', refresh_on_retry=0, guard={})
             events.append(end)
         return events
-
-    def export_workflow(self, workflow_id: int, path: Path) -> None:
-        workflow = self.connection.execute('SELECT name, description, guard_json FROM workflows WHERE id=?', (workflow_id,)).fetchone()
-        if workflow is None:
-            raise ValueError('Workflow not found')
-        events = [dict(row) for row in self.list_events(workflow_id)]
-        for event in events:
-            event.pop('id', None)
-            event.pop('workflow_id', None)
-            event.pop('refresh_on_retry', None)
-            event['guard'] = decode_guard(event.pop('guard_json', ''))
-        workflow_data = dict(workflow)
-        workflow_data['guard'] = decode_guard(workflow_data.pop('guard_json', ''))
-        payload = {'version': 2, 'workflow': workflow_data, 'events': self._events_to_group_items(events)}
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
-
-    def import_workflow(self, path: Path, allowed_actions: tuple[str, ...] | None=None, allowed_selector_types: tuple[str, ...] | None=None) -> int:
-        try:
-            payload: Any = json.loads(path.read_text(encoding='utf-8-sig'))
-        except json.JSONDecodeError as error:
-            raise ValueError(f'msg.0098{error}') from error
-        if not isinstance(payload, dict) or payload.get('version') not in {1, 2}:
-            raise ValueError('msg.0099')
-        workflow = payload.get('workflow')
-        events = payload.get('events')
-        if not isinstance(workflow, dict) or not isinstance(events, list):
-            raise ValueError('msg.0100')
-        events = self._group_items_to_events(events)
-        data_schema = payload.get('data_schema')
-        data_records = payload.get('data_records', [])
-        if data_schema is not None and (not isinstance(data_schema, dict)):
-            raise ValueError('msg.0101')
-        if not isinstance(data_records, list):
-            raise ValueError('msg.0102')
-        for record_index, record in enumerate(data_records, 1):
-            if not isinstance(record, dict) or not isinstance(record.get('name'), str) or (not isinstance(record.get('data'), dict)):
-                raise ValueError(f'msg.0103{record_index}msg.0104')
-        name = workflow.get('name')
-        description = workflow.get('description', '')
-        if not isinstance(name, str) or not name.strip():
-            raise ValueError('msg.0105')
-        if not isinstance(description, str):
-            raise ValueError('msg.0106')
-        required = {'name', 'action', 'selector_type', 'selector', 'value'}
-        normalized: list[dict[str, Any]] = []
-        for index, event in enumerate(events, 1):
-            if not isinstance(event, dict) or not required.issubset(event):
-                raise ValueError(f'msg.0103{index}msg.0107')
-            if any((not isinstance(event[key], str) for key in required)):
-                raise ValueError(f'msg.0103{index}msg.0108')
-            if allowed_actions is not None and event['action'] not in allowed_actions:
-                raise ValueError(f'msg.0103{index}msg.0109')
-            if allowed_selector_types is not None and event['selector_type'] not in allowed_selector_types:
-                raise ValueError(f'msg.0103{index}msg.0110')
-            try:
-                timeout = int(event.get('timeout_ms', 10000))
-            except (TypeError, ValueError) as error:
-                raise ValueError(f'msg.0103{index}msg.0111') from error
-            if timeout <= 0:
-                raise ValueError(f'msg.0103{index}msg.0112')
-            failure_action = str(event.get('failure_action', 'none'))
-            if failure_action not in {'none', 'refresh', 'goto'}:
-                failure_action = 'none'
-            normalized.append({'name': event['name'].strip(), 'action': event['action'], 'selector_type': event['selector_type'], 'selector': event['selector'], 'fallback_selector_type': str(event.get('fallback_selector_type', 'none')), 'fallback_selector': str(event.get('fallback_selector', '')), 'value': event['value'], 'timeout_ms': timeout, 'enabled': int(bool(event.get('enabled', 1))), 'continue_on_error': int(bool(event.get('continue_on_error', 0))), 'refresh_on_retry': 0, 'failure_action': failure_action, 'failure_target': str(event.get('failure_target', '')), 'data_path': str(event.get('data_path', '')), 'guard': decode_guard(event.get('guard'))})
-            if not normalized[-1]['name']:
-                raise ValueError(f'msg.0103{index}msg.0113')
-        existing_names = {row['name'] for row in self.list_workflows()}
-        imported_name = name.strip()
-        if imported_name in existing_names:
-            suffix = 2
-            while f'{imported_name} ({suffix})' in existing_names:
-                suffix += 1
-            imported_name = f'{imported_name} ({suffix})'
-        with self.connection:
-            position = self.connection.execute('SELECT COALESCE(MAX(position), 0) + 1 FROM workflows').fetchone()[0]
-            workflow_guard = json.dumps(decode_guard(workflow.get('guard')), ensure_ascii=False)
-            cursor = self.connection.execute('INSERT INTO workflows(name, description, position, guard_json) VALUES (?, ?, ?, ?)', (imported_name, description.strip(), position, workflow_guard))
-            workflow_id = int(cursor.lastrowid)
-            for position, event in enumerate(normalized, 1):
-                cursor = self.connection.execute('INSERT INTO events\n                       (workflow_id, position, name, action, selector_type, selector,\n                        fallback_selector_type, fallback_selector, value,\n                        timeout_ms, enabled, continue_on_error, refresh_on_retry, data_path, guard_json)\n                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (workflow_id, position, event['name'], event['action'], event['selector_type'], event['selector'], event['fallback_selector_type'], event['fallback_selector'], event['value'], event['timeout_ms'], event['enabled'], event['continue_on_error'], 0, event['data_path'], json.dumps(event['guard'], ensure_ascii=False)))
-                self.connection.execute('UPDATE events SET failure_action=?, failure_target=? WHERE id=?', (event['failure_action'], event['failure_target'], cursor.lastrowid))
-        self._migrate_combined_event_groups()
-        self.connection.commit()
-        return workflow_id
 
     def export_workflow_collection(self, path: Path) -> None:
         workflows: list[dict[str, Any]] = []
@@ -596,7 +495,10 @@ class Database:
         row = self.connection.execute('SELECT schema_json FROM global_data_schema WHERE id=1').fetchone()
         if row is None:
             return self._default_data_schema()
-        return json.loads(row['schema_json'])
+        schema = json.loads(row['schema_json'])
+        # 旧版の list ルートも、一件分のデータを表す object として扱う。
+        schema['type'] = 'object'
+        return schema
 
     def save_data_schema(self, _workflow_id: int, schema: dict[str, Any]) -> None:
         payload = json.dumps(schema, ensure_ascii=False)
@@ -613,6 +515,18 @@ class Database:
         cursor = self.connection.execute('INSERT INTO global_data_records(position, name, data_json) VALUES (?, ?, ?)', (position, name, json.dumps(data, ensure_ascii=False)))
         self.connection.commit()
         return int(cursor.lastrowid)
+
+    def reorder_data_records(self, record_ids: list[int]) -> None:
+        existing = {row['id'] for row in self.connection.execute(
+            'SELECT id FROM global_data_records').fetchall()}
+        if set(record_ids) != existing or len(record_ids) != len(existing):
+            raise ValueError('msg.0096')
+        with self.connection:
+            for position, record_id in enumerate(record_ids, 1):
+                self.connection.execute(
+                    'UPDATE global_data_records SET position=? WHERE id=?',
+                    (position, record_id),
+                )
 
     def update_data_record(self, record_id: int, name: str, data: dict[str, Any]) -> None:
         with self._lock:

@@ -3,7 +3,6 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 from typing import Any
-from i18n import tr
 
 class AutoScrollbar(ttk.Scrollbar):
     """全内容が表示できる場合だけ、自動的に非表示になるスクロールバー。"""
@@ -31,35 +30,16 @@ def scrollable_tree(parent: Any, **tree_options: Any) -> tuple[ttk.Frame, ttk.Tr
     return (frame, tree)
 
 
-def ask_yes_no(parent: tk.Misc, title: str, message: str) -> bool:
-    """OS の表示言語に依存しない「はい／いいえ」確認画面を表示する。"""
-    dialog = tk.Toplevel(parent)
-    dialog.title(tr(title))
-    dialog.geometry('440x160')
-    dialog.resizable(False, False)
-    dialog.transient(parent)
-    result = {'value': False}
-
-    body = ttk.Frame(dialog, padding=(18, 16, 18, 10))
-    body.pack(fill='both', expand=True)
-    ttk.Label(body, text='?', anchor='center', font=('', 16), width=2).pack(side='left', padx=(0, 12))
-    ttk.Label(body, text=tr(message), wraplength=350, justify='left').pack(side='left', fill='both', expand=True)
-
-    footer = ttk.Frame(dialog, padding=(12, 8))
-    footer.pack(fill='x')
-
-    def finish(value: bool) -> None:
-        result['value'] = value
-        dialog.destroy()
-
-    ttk.Button(footer, text='msg.0488', command=lambda: finish(False), width=10).pack(side='right')
-    yes_button = ttk.Button(
-        footer, text='msg.0487', command=lambda: finish(True), style='Primary.TButton', width=10)
-    yes_button.pack(side='right', padx=(0, 8))
-    dialog.protocol('WM_DELETE_WINDOW', lambda: finish(False))
-    dialog.bind('<Escape>', lambda _event: finish(False))
-    dialog.bind('<Return>', lambda _event: finish(True))
-    dialog.grab_set()
-    yes_button.focus_set()
-    parent.wait_window(dialog)
-    return result['value']
+def toggle_tree_indicator_on_double_click(
+        tree: ttk.Treeview,
+        event: tk.Event,
+        item: str,
+) -> bool:
+    """矢印の高速連続クリックで欠ける2回目の展開・折りたたみを補完する。"""
+    if tree.identify_element(event.x, event.y) != 'Treeitem.indicator':
+        return False
+    if not tree.get_children(item):
+        return False
+    opened = bool(tree.item(item, 'open'))
+    tree.item(item, open=not opened)
+    return True

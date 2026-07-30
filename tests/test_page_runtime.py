@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
 from pathlib import Path
 
-from browser.page_runtime import BROWSER_ARGS, BROWSER_IGNORED_DEFAULT_ARGS, active_page, locators_in_frames, settle_new_page
+from browser.page_runtime import BROWSER_ARGS, BROWSER_IGNORED_DEFAULT_ARGS, active_page, launch_persistent_chrome, locators_in_frames, restore_storage_state, settle_new_page
 from browser.profile_runtime import persistent_profile_dir
 from core.executor import WorkflowExecutor
 
@@ -16,6 +17,10 @@ class FakeFrame:
 class FakeContext:
     def __init__(self) -> None:
         self.pages = []
+        self.restored_state = None
+
+    def set_storage_state(self, state_path: str) -> None:
+        self.restored_state = state_path
 
 
 class FakePage:
@@ -41,6 +46,20 @@ class FakePage:
         self.front = True
 
 
+class FakeChromium:
+    def __init__(self) -> None:
+        self.options = None
+
+    def launch_persistent_context(self, **options):
+        self.options = options
+        return options
+
+
+class FakePlaywright:
+    def __init__(self) -> None:
+        self.chromium = FakeChromium()
+
+
 class PageRuntimeTests(unittest.TestCase):
     def test_workflow_browser_uses_normal_chrome_arguments(self) -> None:
         for visible in (True, False):
@@ -59,6 +78,18 @@ class PageRuntimeTests(unittest.TestCase):
             self.assertNotIn('permissions', options)
             self.assertNotIn('ignore_https_errors', options)
 
+    def test_all_browser_entry_points_share_persistent_launch_options(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            playwright = FakePlaywright()
+            profile = Path(folder) / 'profile'
+            options = launch_persistent_chrome(playwright, profile, visible=True)
+            self.assertTrue(profile.is_dir())
+            self.assertEqual(options['user_data_dir'], str(profile))
+            self.assertEqual(options['channel'], 'chrome')
+            self.assertFalse(options['headless'])
+            self.assertTrue(options['no_viewport'])
+            self.assertEqual(options['ignore_default_args'], BROWSER_IGNORED_DEFAULT_ARGS)
+
     def test_saved_state_maps_to_application_profile_directory(self) -> None:
         project = Path('C:/work/project')
         self.assertEqual(
@@ -70,6 +101,14 @@ class PageRuntimeTests(unittest.TestCase):
             project / 'data' / 'chrome_profiles' / 'sales',
         )
         self.assertIsNone(persistent_profile_dir(project, None))
+
+    def test_saved_login_state_is_restored_into_persistent_context(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            state_path = Path(folder) / 'browser_state.json'
+            state_path.write_text('{"cookies": [], "origins": []}', encoding='utf-8')
+            context = FakeContext()
+            restore_storage_state(context, state_path)
+            self.assertEqual(context.restored_state, str(state_path))
 
     def test_active_page_follows_newest_open_tab(self) -> None:
         context = FakeContext()

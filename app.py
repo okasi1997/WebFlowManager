@@ -23,7 +23,7 @@ from i18n import install_tk_translation, set_language, tr
 from ui.dialogs import EventDialog, EventGroupDialog, GuardConditionDialog, VariablesDialog, guard_operator_labels
 from ui.auth_state import AuthStateDialog, profile_path
 from ui.structured_data import DataPathDialog, HierarchicalDataDialog, SchemaDesignerDialog
-from ui.ui_helpers import AutoScrollbar, ask_yes_no
+from ui.ui_helpers import AutoScrollbar, toggle_tree_indicator_on_double_click
 
 class FlowManagerApp:
     """Tk の画面状態と、バックグラウンドで動く実行処理を接続する。"""
@@ -393,7 +393,7 @@ class FlowManagerApp:
         style.configure('TEntry', font=base)
         style.configure('TCombobox', font=base)
         style.configure('TSpinbox', font=base)
-        for button_style in ('TButton', 'Toolbar.TButton', 'Action.TButton', 'Secondary.TButton'):
+        for button_style in ('TButton', 'Toolbar.TButton', 'Action.TButton', 'Secondary.TButton', 'DialogAction.TButton'):
             style.configure(button_style, font=small)
         style.configure('Toolbar.TMenubutton', font=small)
         style.configure('Primary.TButton', font=(family, max(8, size - 1), 'bold'))
@@ -552,21 +552,22 @@ class FlowManagerApp:
         execution_content.pack(fill='both', expand=True)
         event_tab = ttk.Frame(execution_content, style='ExecutionTab.TFrame')
 
-        columns = ('position', 'name', 'action', 'value', 'data_path', 'guard', 'enabled')
+        columns = ('action', 'value', 'data_path', 'guard', 'enabled', 'position')
         self.event_table = ttk.Frame(event_tab)
         self.event_table.pack(fill='both', expand=True, pady=(8, 4))
         event_tree_style = ttk.Style(self.root)
         event_tree_style.layout('Event.Treeview.Item', [
             ('Treeitem.padding', {'sticky': 'nswe', 'children': [
+                ('Treeitem.indicator', {'side': 'left', 'sticky': ''}),
                 ('Treeitem.image', {'side': 'left', 'sticky': ''}),
                 ('Treeitem.text', {'sticky': 'nswe'})
             ]})
         ])
         self.event_tree = ttk.Treeview(self.event_table, columns=columns, show='tree headings', height=8, style='Event.Treeview')
-        self.event_tree.heading('#0', text='')
-        self.event_tree.column('#0', width=1, minwidth=1, stretch=False)
-        headings = {'position': 'msg.0027', 'name': 'msg.0028', 'action': 'msg.0029', 'value': 'msg.0032', 'data_path': 'msg.0033', 'guard': 'msg.0405', 'enabled': 'msg.0006'}
-        widths = {'position': 48, 'name': 170, 'action': 78, 'value': 110, 'data_path': 130, 'guard': 190, 'enabled': 58}
+        self.event_tree.heading('#0', text='msg.0028')
+        self.event_tree.column('#0', width=170, minwidth=90, stretch=False)
+        headings = {'position': 'msg.0027', 'action': 'msg.0029', 'value': 'msg.0032', 'data_path': 'msg.0033', 'guard': 'msg.0405', 'enabled': 'msg.0006'}
+        widths = {'position': 48, 'action': 78, 'value': 110, 'data_path': 130, 'guard': 190, 'enabled': 58}
         for column in columns:
             self.event_tree.heading(column, text=headings[column])
             self.event_tree.column(column, width=widths[column], minwidth=35, stretch=False)
@@ -590,7 +591,6 @@ class FlowManagerApp:
         self.event_tree.tag_configure('retry_end', background='#F7F7F7', foreground='#737373', font=small_font)
         self.event_tree.tag_configure('event_group', background='#F3F3F3', foreground='#3D3D3D', font=small_bold_font)
         self.event_tree.bind('<Double-1>', self._event_double_click)
-        self.event_tree.bind('<Button-1>', self._event_group_click, add='+')
         self._bind_drag_sort(self.event_tree, 'event')
         event_buttons = ttk.Frame(event_tab)
         event_buttons.pack(fill='x')
@@ -687,7 +687,8 @@ class FlowManagerApp:
             'guard': int(flexible * 0.43),
         }
         for column, width in widths.items():
-            self.event_tree.column(column, width=max(45, width))
+            target = '#0' if column == 'name' else column
+            self.event_tree.column(target, width=max(45, width))
 
     def _resize_execution_status_columns(self, event: tk.Event) -> None:
         available = max(500, event.width - 3)
@@ -772,14 +773,13 @@ class FlowManagerApp:
                 marker = f'{modes} ' if modes else ''
             else:
                 marker = '↻ ' if row['action'] == 'loop_start' else '⟳ ' if row['action'] == 'retry_start' else ''
-            indentation = '    ' * len(parents)
             clean_name = str(row['name']).lstrip('○◯●⟳↻ ')
             group_open = open_states.get(str(row['id']), True)
-            display_name = f'{indentation}{("▼ " if group_open else "▶ ") if is_group else ""}{marker}{clean_name}'
+            display_name = f'{marker}{clean_name}'
             guard_summary = summarize_guard(decode_guard(row['guard_json']), guard_operator_labels()) or tr('msg.0404')
             parent = parents[-1] if parents else ''
             display_action = 'group' if row['action'] == 'group_start' else 'loop' if row['action'] == 'loop_start' else 'retry' if row['action'] == 'retry_start' else row['action']
-            self.event_tree.insert(parent, 'end', iid=str(row['id']), open=group_open if is_group else False, values=(row['position'], display_name, display_action, row['value'], row['data_path'], guard_summary, 'msg.0037' if row['enabled'] else 'msg.0038'), tags=tuple((tag for tag, applies in (('odd', row_index % 2 == 1), ('disabled', not row['enabled']), ('event_group', is_group)) if applies)))
+            self.event_tree.insert(parent, 'end', iid=str(row['id']), text=display_name, open=group_open if is_group else False, values=(display_action, row['value'], row['data_path'], guard_summary, 'msg.0037' if row['enabled'] else 'msg.0038', row['position']), tags=tuple((tag for tag, applies in (('odd', row_index % 2 == 1), ('disabled', not row['enabled']), ('event_group', is_group)) if applies)))
             if is_group:
                 parents.append(str(row['id']))
         self._append_group_counts()
@@ -799,56 +799,14 @@ class FlowManagerApp:
             pending.extend(children)
             if 'event_group' not in self.event_tree.item(item, 'tags'):
                 continue
-            values = list(self.event_tree.item(item, 'values'))
-            values[1] = f'{values[1]} （{descendant_event_count(item)}{tr("msg.0438")}）'
-            self.event_tree.item(item, values=values)
-
-    def _event_group_click(self, event: tk.Event) -> None:
-        """グループ名のクリックで展開状態を切り替える。"""
-        item = self.event_tree.identify_row(event.y)
-        if not item or not self._event_name_hit(item, event.x):
-            return
-        if not self.event_tree.get_children(item):
-            return
-        self.event_tree.selection_set(item)
-        self.event_tree.focus(item)
-        if getattr(self, '_pending_group_toggle', None) is None:
-            after_id = self.root.after(350, lambda current=item: self._finish_group_toggle(current))
-            self._pending_group_toggle = (item, after_id)
-
-    def _event_name_hit(self, item: str, pointer_x: int) -> bool:
-        """イベント名セル内の実際の文字描画範囲だけをクリック対象にする。"""
-        if self.event_tree.identify_column(pointer_x) != '#2':
-            return False
-        box = self.event_tree.bbox(item, 'name')
-        if not box:
-            return False
-        text = str(self.event_tree.item(item, 'values')[1])
-        font = tkfont.Font(root=self.root, family=self.ui_font_family, size=max(8, self.ui_font_size - 1), weight='bold')
-        text_start = box[0] + 6
-        return text_start <= pointer_x <= text_start + font.measure(text) + 8
-
-    def _cancel_pending_group_toggle(self) -> None:
-        pending = getattr(self, '_pending_group_toggle', None)
-        if pending is not None:
-            self.root.after_cancel(pending[1])
-            self._pending_group_toggle = None
-
-    def _finish_group_toggle(self, item: str) -> None:
-        self._pending_group_toggle = None
-        if self.event_tree.exists(item):
-            self._toggle_event_group(item)
-
-    def _toggle_event_group(self, item: str) -> None:
-        """表示中の矢印と Treeview の open 状態を常に同時に更新する。"""
-        opened = bool(self.event_tree.item(item, 'open'))
-        self.event_tree.item(item, open=not opened)
-        values = list(self.event_tree.item(item, 'values'))
-        name = str(values[1])
-        values[1] = name.replace('▼ ', '▶ ', 1) if opened else name.replace('▶ ', '▼ ', 1)
-        self.event_tree.item(item, values=values)
+            name = str(self.event_tree.item(item, 'text'))
+            self.event_tree.item(
+                item,
+                text=f'{name} （{descendant_event_count(item)}{tr("msg.0438")}）',
+            )
 
     def _add_workflow(self) -> None:
+        selected_id = self.current_workflow_id
         name = simpledialog.askstring('msg.0040', 'msg.0041', parent=self.root)
         if not name:
             return
@@ -857,6 +815,11 @@ class FlowManagerApp:
         except sqlite3.IntegrityError:
             messagebox.showerror('msg.0042', 'msg.0043')
             return
+        workflow_ids = [row['id'] for row in self.db.list_workflows()]
+        workflow_ids.remove(workflow_id)
+        insert_at = workflow_ids.index(selected_id) + 1 if selected_id in workflow_ids else len(workflow_ids)
+        workflow_ids.insert(insert_at, workflow_id)
+        self.db.reorder_workflows(workflow_ids)
         self._refresh_workflows(workflow_id)
 
     def _edit_workflow(self) -> None:
@@ -928,6 +891,22 @@ class FlowManagerApp:
         selection = self.event_tree.selection()
         return int(selection[0]) if selection else None
 
+    @classmethod
+    def _event_insert_before_id(
+            cls, rows: list[dict[str, object]], selected_id: int | None) -> int | None:
+        """選択行の直後、コンテナ選択時はその内部末尾となる挿入基準を返す。"""
+        if selected_id is None:
+            return None
+        selected = next((row for row in rows if row['id'] == selected_id), None)
+        if selected is None:
+            return None
+        if selected['action'] in {'loop_start', 'retry_start', 'group_start'}:
+            return cls._paired_boundary_event_id(rows, selected_id)
+        row_ids = [int(row['id']) for row in rows]
+        selected_index = row_ids.index(selected_id)
+        next_index = selected_index + 1
+        return row_ids[next_index] if next_index < len(row_ids) else None
+
     def _event_double_click(self, event: tk.Event) -> str | None:
         if self.event_tree.identify_region(event.x, event.y) == 'heading':
         # 行の編集と切替だけを抑止する。並べ替えなどの見出しクリック処理は
@@ -938,12 +917,17 @@ class FlowManagerApp:
             return
         self.event_tree.selection_set(item)
         self.event_tree.focus(item)
-        if self.event_tree.identify_column(event.x) == '#7':
-            self._cancel_pending_group_toggle()
+        if self.event_tree.identify_column(event.x) == '#0':
+            if self.event_tree.get_children(item):
+                # 矢印の連続クリックで2回目がダブルクリック通知になった場合も、
+                # その1回分だけ展開状態を反転する。グループ名のダブルクリックは無効。
+                toggle_tree_indicator_on_double_click(self.event_tree, event, item)
+                return 'break'
+            self._edit_event()
+            return 'break'
+        if self.event_tree.identify_column(event.x) == '#5':
             self._toggle_event()
         elif self.event_tree.get_children(item):
-            # シングルクリック予約を取り消し、グループ編集を開く。
-            self._cancel_pending_group_toggle()
             self._edit_event()
             return 'break'
         else:
@@ -970,11 +954,8 @@ class FlowManagerApp:
         if not self.current_workflow_id:
             messagebox.showinfo('msg.0048', 'msg.0049')
             return
-        insert_before_id = self._selected_event()
         existing_rows = [dict(row) for row in self.db.list_events(self.current_workflow_id)]
-        selected_row = next((row for row in existing_rows if row['id'] == insert_before_id), None)
-        if selected_row and selected_row['action'] in {'loop_start', 'retry_start', 'group_start'}:
-            insert_before_id = self._paired_boundary_event_id(existing_rows, insert_before_id)
+        insert_before_id = self._event_insert_before_id(existing_rows, self._selected_event())
         actions = tuple(action for action in self.settings['actions'] if action not in {'loop_start', 'loop_end', 'retry_start', 'retry_end', 'group_start', 'group_end'})
         dialog = self._register_dialog('event_editor', lambda: EventDialog(self.root, actions, self.settings['selector_types'], self._pick_element, self._test_element, self._open_debug_browser, self._close_debug_browser, None, self._choose_data_path, self.settings['picker']['start_url']))
         if dialog is None:
@@ -997,15 +978,8 @@ class FlowManagerApp:
         if not self.current_workflow_id:
             messagebox.showinfo('msg.0048', 'msg.0049')
             return
-        insert_before_id = self._selected_event()
         existing_rows = [dict(row) for row in self.db.list_events(self.current_workflow_id)]
-        selected_row = next((row for row in existing_rows if row['id'] == insert_before_id), None)
-        if selected_row and selected_row['action'] in {'loop_start', 'retry_start', 'group_start'}:
-            pair_id = self._paired_boundary_event_id(existing_rows, insert_before_id)
-            row_ids = [int(row['id']) for row in existing_rows]
-            if pair_id in row_ids:
-                next_index = row_ids.index(pair_id) + 1
-                insert_before_id = row_ids[next_index] if next_index < len(row_ids) else None
+        insert_before_id = self._event_insert_before_id(existing_rows, self._selected_event())
         dialog = self._register_dialog('event_group_editor', lambda: EventGroupDialog(self.root, self._choose_data_path))
         if dialog is None:
             return
@@ -1150,8 +1124,6 @@ class FlowManagerApp:
     def _drag_motion(self, event: tk.Event, tree: ttk.Treeview, kind: str) -> None:
         if not self.drag_source[kind]:
             return
-        if kind == 'event':
-            self._cancel_pending_group_toggle()
         target = tree.identify_row(event.y)
         if target:
             tree.configure(cursor='hand2')
@@ -1637,7 +1609,11 @@ class FlowManagerApp:
         self.auth_browser.shutdown()
         state_path = profile_path(self.project_dir, self.db.get_auth_profile())
         profile_dir = persistent_profile_dir(self.project_dir, state_path)
-        if profile_has_state(profile_dir) and ask_yes_no(self.root, 'msg.0485', 'msg.0486'):
+        if profile_has_state(profile_dir) and messagebox.askyesno(
+                'msg.0485',
+                'msg.0486',
+                parent=self.root,
+        ):
             try:
                 assert profile_dir is not None
                 clear_profile(self.project_dir, profile_dir)

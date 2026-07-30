@@ -171,8 +171,12 @@ class GuardConditionDialog(tk.Toplevel):
         self.wait_window(dialog)
         self._restore_modal_state()
         if dialog.result:
-            self.rules.append(dialog.result)
+            selection = self.tree.selection()
+            insert_at = int(selection[0]) + 1 if selection else len(self.rules)
+            self.rules.insert(insert_at, dialog.result)
             self._refresh()
+            self.tree.selection_set(str(insert_at))
+            self.tree.focus(str(insert_at))
 
     def _edit_rule(self, choose_path: Callable[[], str | None]) -> None:
         selection = self.tree.selection()
@@ -203,7 +207,29 @@ class GuardConditionDialog(tk.Toplevel):
         self.result = {'logic': self.logic.get(), 'rules': self.rules}
         self.destroy()
 
-class EventGroupDialog(tk.Toplevel):
+class _GuardEditorMixin:
+    """イベント系ダイアログで共通の実行条件編集を提供する。"""
+
+    def _guard_summary(self) -> str:
+        return summarize_guard(self.guard, guard_operator_labels()) or tr('msg.0404')
+
+    def _edit_guard(self) -> None:
+        dialog = GuardConditionDialog(
+            self,
+            self.guard,
+            lambda: self.choose_data_path('condition'),
+        )
+        self.wait_window(dialog)
+        if self.winfo_exists():
+            self.grab_set()
+            self.lift()
+            self.focus_force()
+        if dialog.result is not None:
+            self.guard = dialog.result
+            self.guard_summary.configure(text=self._guard_summary())
+
+
+class EventGroupDialog(_GuardEditorMixin, tk.Toplevel):
     """ループと再試行の境界イベントを一つのグループ設定として編集する。"""
 
     def __init__(self, parent: tk.Misc, choose_data_path: Callable[[str], str | None], event: dict[str, Any] | None=None) -> None:
@@ -278,9 +304,6 @@ class EventGroupDialog(tk.Toplevel):
         self.transient(parent)
         self.grab_set()
 
-    def _guard_summary(self) -> str:
-        return summarize_guard(self.guard, guard_operator_labels()) or tr('msg.0404')
-
     def _update_fields(self, _event: object=None) -> None:
         loop = self.loop_enabled.get()
         retry = self.retry_enabled.get()
@@ -294,17 +317,6 @@ class EventGroupDialog(tk.Toplevel):
         path = self.choose_data_path('loop_start')
         if path:
             self.data_path.set(path)
-
-    def _edit_guard(self) -> None:
-        dialog = GuardConditionDialog(self, self.guard, lambda: self.choose_data_path('condition'))
-        self.wait_window(dialog)
-        if self.winfo_exists():
-            self.grab_set()
-            self.lift()
-            self.focus_force()
-        if dialog.result is not None:
-            self.guard = dialog.result
-            self.guard_summary.configure(text=self._guard_summary())
 
     def _save(self) -> None:
         name = self.name.get().strip()
@@ -335,7 +347,7 @@ class EventGroupDialog(tk.Toplevel):
         self.destroy()
 
 
-class EventDialog(tk.Toplevel):
+class EventDialog(_GuardEditorMixin, tk.Toplevel):
     """操作種別に応じて入力可能な項目を切り替えるイベント編集画面。"""
 
     def __init__(self, parent: tk.Misc, actions: tuple[str, ...], selector_types: tuple[str, ...], pick_element: Callable[..., None], test_element: Callable[..., None], open_debug: Callable[..., None], close_debug: Callable[..., None], execute_to_event: Callable[..., None] | None, choose_data_path: Callable[[str], str | None], default_url: str, event: dict[str, Any] | None=None) -> None:
@@ -592,21 +604,6 @@ class EventDialog(tk.Toplevel):
         path = filedialog.askopenfilename(parent=self)
         if path:
             self.values['value'].set(path)
-
-    def _guard_summary(self) -> str:
-        summary = summarize_guard(self.guard, guard_operator_labels())
-        return summary or tr('msg.0404')
-
-    def _edit_guard(self) -> None:
-        dialog = GuardConditionDialog(self, self.guard, lambda: self.choose_data_path('condition'))
-        self.wait_window(dialog)
-        if self.winfo_exists():
-            self.grab_set()
-            self.lift()
-            self.focus_force()
-        if dialog.result is not None:
-            self.guard = dialog.result
-            self.guard_summary.configure(text=self._guard_summary())
 
     def _pick(self) -> None:
         self.pick_button.config(state='disabled')

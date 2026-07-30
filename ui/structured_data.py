@@ -9,7 +9,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Any
 from core.database import Database
 from i18n import SUPPORTED_LANGUAGES, tr, tr_language
-from ui.ui_helpers import AutoScrollbar, scrollable_tree
+from ui.ui_helpers import AutoScrollbar, scrollable_tree, toggle_tree_indicator_on_double_click
 TYPES = ('text', 'number', 'boolean', 'object', 'list')
 
 def validate_schema(node: Any, location: str='Data') -> None:
@@ -33,10 +33,6 @@ def validate_schema(node: Any, location: str='Data') -> None:
 
 def scalar_paths(schema: dict[str, Any]) -> list[str]:
     return [path for path, node in schema_paths(schema) if node['type'] not in ('object', 'list')]
-
-def flatten_record(schema: dict[str, Any], data: dict[str, Any]) -> list[dict[str, Any]]:
-    """入れ子の list を、Excel に書き出せる葉の行へ展開する。"""
-    return [values for values, _groups in _flatten_record_with_groups(schema, data)]
 
 def _flatten_record_with_groups(schema: dict[str, Any], data: dict[str, Any]) -> list[tuple[dict[str, Any], dict[str, int]]]:
     # list の添字も返し、同じ親値を Excel 上で何度も出力しないようにする。
@@ -367,24 +363,22 @@ class SchemaDesignerDialog(tk.Toplevel):
         self.geometry('720x560')
         ttk.Label(self, text='msg.0256', style='Section.TLabel').pack(anchor='w', padx=10, pady=10)
         tree_frame = ttk.Frame(self)
-        self.root_tree = ttk.Treeview(tree_frame, columns=('type', 'path'), show='tree headings', height=1)
-        self.tree = ttk.Treeview(tree_frame, columns=('type', 'path'), show='tree')
-        for tree in (self.root_tree, self.tree):
-            tree.column('#0', width=180)
-            tree.column('type', width=90)
-            tree.column('path', width=260)
-        self.root_tree.heading('#0', text='msg.0250')
-        self.root_tree.heading('type', text='msg.0257')
-        self.root_tree.heading('path', text='msg.0258')
-        yscroll = AutoScrollbar(tree_frame, orient='vertical', command=self.tree.yview)
-        xscroll = AutoScrollbar(tree_frame, orient='horizontal', command=self._scroll_schema_x)
-        self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=lambda first, last: self._sync_schema_x(first, last, xscroll))
-        self.root_tree.configure(xscrollcommand=lambda _first, _last: None)
-        self.root_tree.grid(row=0, column=0, sticky='ew')
-        self.tree.grid(row=1, column=0, sticky='nsew')
-        yscroll.grid(row=1, column=1, sticky='ns')
-        xscroll.grid(row=2, column=0, sticky='ew')
-        tree_frame.rowconfigure(1, weight=1)
+        self.tree = ttk.Treeview(tree_frame, columns=('type', 'path'), show='tree headings')
+        self.tree.column('#0', width=180)
+        self.tree.column('type', width=90)
+        self.tree.column('path', width=260)
+        self.tree.heading('#0', text='msg.0250')
+        self.tree.heading('type', text='msg.0257')
+        self.tree.heading('path', text='msg.0258')
+        # 展開・折りたたみでスクロールバーが消えると列幅が変わって揺れるため、
+        # 構造デザイナーでは縦スクロールバーの領域を常に確保する。
+        yscroll = ttk.Scrollbar(tree_frame, orient='vertical', command=self.tree.yview)
+        xscroll = AutoScrollbar(tree_frame, orient='horizontal', command=self.tree.xview)
+        self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        self.tree.grid(row=0, column=0, sticky='nsew')
+        yscroll.grid(row=0, column=1, sticky='ns')
+        xscroll.grid(row=1, column=0, sticky='ew')
+        tree_frame.rowconfigure(0, weight=1)
         tree_frame.columnconfigure(0, weight=1)
         tree_frame.pack(fill='both', expand=True, padx=10)
         buttons = ttk.Frame(self)
@@ -410,36 +404,23 @@ class SchemaDesignerDialog(tk.Toplevel):
         self.drag_source_item = ''
         for column in range(4):
             buttons.columnconfigure(column, weight=1)
-        self.tree.tag_configure('schema_root', background='#E7EEF5', foreground='#4A5560', font=(self.db.get_ui_font()[0], self.db.get_ui_font()[1], 'bold'))
         self.tree.bind('<<TreeviewSelect>>', self._update_action_buttons)
-        self.root_tree.bind('<<TreeviewSelect>>', self._select_schema_root)
+        self.tree.bind('<Double-1>', self._tree_double_click)
         self.tree.bind('<ButtonPress-1>', self._drag_start, add='+')
         self.tree.bind('<B1-Motion>', self._drag_motion, add='+')
         self.tree.bind('<ButtonRelease-1>', self._drag_end, add='+')
         self._refresh()
         self.transient(parent)
 
-    def _scroll_schema_x(self, *args: Any) -> None:
-        self.tree.xview(*args)
-        self.root_tree.xview(*args)
-
-    def _sync_schema_x(self, first: str, last: str, scrollbar: ttk.Scrollbar) -> None:
-        scrollbar.set(first, last)
-        self.root_tree.xview_moveto(first)
-
-    def _select_schema_root(self, _event: object=None) -> None:
-        if self.root_tree.selection():
-            self.tree.selection_remove(self.tree.selection())
-        self._update_action_buttons()
-
     def _refresh(self, selected_node: dict[str, Any] | None=None) -> None:
+        root_open = True
+        if getattr(self, 'schema_root_item', '') and self.tree.exists(self.schema_root_item):
+            root_open = bool(self.tree.item(self.schema_root_item, 'open'))
         self.tree.delete(*self.tree.get_children())
-        self.root_tree.delete(*self.root_tree.get_children())
         self.node_by_item.clear()
-        # 先頭行は編集対象の業務フィールドではなくスキーマのコンテナである。
-        # 互換性のため保存済みスキーマ名は維持し、画面には中立的な名称を表示する。
-        root = self.root_tree.insert('', 'end', text='Data', values=('list', ''), open=True, tags=('schema_root',))
-        self.root_tree.tag_configure('schema_root', background='#E7EEF5', foreground='#4A5560', font=(self.db.get_ui_font()[0], self.db.get_ui_font()[1], 'bold'))
+        root = self.tree.insert('', 'end', text='msg.0489', values=('object', ''), open=root_open)
+        self.schema_root_item = root
+        self.node_by_item[root] = (self.schema, None)
 
         def add(parent_item: str, parent_node: dict[str, Any], prefix: str) -> None:
             for node in parent_node.get('children', []):
@@ -451,15 +432,13 @@ class SchemaDesignerDialog(tk.Toplevel):
                     self.tree.focus(item)
                     self.tree.see(item)
                 add(item, node, path)
-        add('', self.schema, '')
+        add(root, self.schema, '')
         if selected_node is self.schema:
-            self.root_tree.selection_set(root)
-            self.root_tree.focus(root)
+            self.tree.selection_set(root)
+            self.tree.focus(root)
         self._update_action_buttons()
 
     def _update_action_buttons(self, _event: object=None) -> None:
-        if self.tree.selection():
-            self.root_tree.selection_remove(self.root_tree.selection())
         selected = self._selected()
         editable = selected is not None and selected[1] is not None
         state = 'normal' if editable else 'disabled'
@@ -469,18 +448,49 @@ class SchemaDesignerDialog(tk.Toplevel):
         self.child_add_button.configure(state='normal' if can_add_child else 'disabled')
 
     def _selected(self) -> tuple[dict[str, Any], dict[str, Any] | None] | None:
-        if self.root_tree.selection():
-            return self.schema, None
         selected = self.tree.selection()
         return self.node_by_item.get(selected[0]) if selected else None
 
+    def _tree_double_click(self, event: tk.Event) -> str | None:
+        """通常フィールドをダブルクリックしたときに編集画面を開く。"""
+        if self.tree.identify_region(event.x, event.y) == 'heading':
+            return 'break'
+        item = self.tree.identify_row(event.y)
+        selected = self.node_by_item.get(item)
+        if not selected:
+            return None
+        self.tree.selection_set(item)
+        self.tree.focus(item)
+        if (
+                self.tree.identify_column(event.x) == '#0'
+                and selected[0]['type'] in ('object', 'list')
+        ):
+            # 矢印の連続クリックで2回目がダブルクリック通知になった場合も、
+            # その1回分だけ展開状態を反転する。名称のダブルクリックは無効。
+            toggle_tree_indicator_on_double_click(self.tree, event, item)
+            return 'break'
+        if selected[1] is None:
+            return None
+        self._edit()
+        return 'break'
+
+    @staticmethod
+    def _add_location(
+            schema: dict[str, Any],
+            selected: tuple[dict[str, Any], dict[str, Any] | None] | None,
+    ) -> tuple[dict[str, Any], int]:
+        """選択状態から新規フィールドの親と挿入位置を決定する。"""
+        if selected and selected[0]['type'] in ('object', 'list'):
+            parent = selected[0]
+            return parent, len(parent.setdefault('children', []))
+        if selected and selected[1] is not None:
+            parent = selected[1]
+            children = parent.setdefault('children', [])
+            return parent, children.index(selected[0]) + 1
+        return schema, len(schema.setdefault('children', []))
+
     def _add(self) -> None:
-        selected = self._selected()
-        parent = selected[1] if selected and selected[1] is not None else self.schema
-        if parent is None:
-            return
-        children = parent.setdefault('children', [])
-        insert_at = children.index(selected[0]) if selected and selected[1] is parent else len(children)
+        parent, insert_at = self._add_location(self.schema, self._selected())
         self._add_to(parent, insert_at)
 
     def _add_child(self) -> None:
@@ -664,7 +674,7 @@ class SchemaDesignerDialog(tk.Toplevel):
             payload = json.loads(Path(path).read_text(encoding='utf-8-sig'))
             imported = payload.get('schema') if isinstance(payload, dict) and 'schema' in payload else payload
             validate_schema(imported)
-            if imported['type'] != 'list':
+            if imported['type'] not in ('object', 'list'):
                 raise ValueError('msg.0271')
         except (OSError, json.JSONDecodeError, ValueError) as error:
             messagebox.showerror('msg.0057', str(error), parent=self)
@@ -672,6 +682,7 @@ class SchemaDesignerDialog(tk.Toplevel):
         if not messagebox.askyesno('msg.0272', 'msg.0273', parent=self):
             return
         self.schema = copy.deepcopy(imported)
+        self.schema['type'] = 'object'
         self.db.save_data_schema(self.workflow_id, self.schema)
         for record in self.db.list_data_records(self.workflow_id):
             self.db.update_data_record(record['id'], record['name'], normalize_record(self.schema, record['data']))
@@ -969,12 +980,18 @@ class HierarchicalDataDialog(tk.Toplevel):
         self.force_select_identity = None
 
     def _add_record(self) -> None:
+        selected_id = self.current_id
         entered_name = simpledialog.askstring('msg.0289', 'msg.0319', parent=self)
         if entered_name is None:
             return
         name = entered_name.strip() or tr('msg.0320')
         data = {child['name']: default_value(child) for child in self.schema.get('children', [])}
         record_id = self.db.add_data_record(self.workflow_id, name, data)
+        record_ids = [row['id'] for row in self.db.list_data_records(self.workflow_id)]
+        record_ids.remove(record_id)
+        insert_at = record_ids.index(selected_id) + 1 if selected_id in record_ids else len(record_ids)
+        record_ids.insert(insert_at, record_id)
+        self.db.reorder_data_records(record_ids)
         self._refresh_records(record_id)
         self._select_record()
 

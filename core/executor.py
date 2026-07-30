@@ -6,13 +6,11 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from browser.page_runtime import BROWSER_ARGS, BROWSER_IGNORED_DEFAULT_ARGS, active_page, locators_in_frames, open_pages, settle_new_page
+from browser.page_runtime import active_page, browser_args, browser_context_options, is_topmost, launch_persistent_chrome, locators_in_frames, open_pages, restore_storage_state, settle_new_page
 from browser.profile_runtime import persistent_profile_dir
 from core.conditions import decode_guard, evaluate_guard
 from i18n import tr
 VARIABLE_PATTERN = re.compile('\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}')
-HEADLESS_WIDTH = 1920
-HEADLESS_HEIGHT = 1080
 
 def find_variables(events: list[dict[str, Any]]) -> list[str]:
     """外部入力が必要な変数だけを抽出する。get_text の生成変数は除外する。"""
@@ -62,15 +60,12 @@ class WorkflowExecutor:
             if profile_dir is None:
                 temporary_profile = tempfile.TemporaryDirectory(prefix='webflow_chrome_')
                 profile_dir = Path(temporary_profile.name)
-            profile_dir.mkdir(parents=True, exist_ok=True)
-            context = playwright.chromium.launch_persistent_context(
-                user_data_dir=str(profile_dir),
-                channel='chrome',
-                headless=not browser_visible,
-                args=self._browser_args(browser_visible),
-                ignore_default_args=BROWSER_IGNORED_DEFAULT_ARGS if browser_visible else None,
-                **self._context_options(browser_visible),
+            context = launch_persistent_chrome(
+                playwright,
+                profile_dir,
+                visible=browser_visible,
             )
+            restore_storage_state(context, state_path)
             pages = context.pages
             page = pages[-1] if pages else context.new_page()
             try:
@@ -103,15 +98,11 @@ class WorkflowExecutor:
 
     @staticmethod
     def _browser_args(browser_visible: bool) -> list[str]:
-        if browser_visible:
-            return list(BROWSER_ARGS)
-        return [f'--window-size={HEADLESS_WIDTH},{HEADLESS_HEIGHT}']
+        return browser_args(browser_visible)
 
     @staticmethod
     def _context_options(browser_visible: bool) -> dict[str, Any]:
-        if browser_visible:
-            return {'no_viewport': True}
-        return {'viewport': {'width': HEADLESS_WIDTH, 'height': HEADLESS_HEIGHT}, 'screen': {'width': HEADLESS_WIDTH, 'height': HEADLESS_HEIGHT}, 'device_scale_factor': 1}
+        return browser_context_options(browser_visible)
 
     def _execute_workflow_on_page(self, page: Any, events: list[dict[str, Any]], variables: dict[str, str], artifact_dir: Path, root_data: dict[str, Any] | None, trace: str, start_index: int=0, log_prefix: str='', on_event_start: Callable[[dict[str, Any]], None] | None=None) -> None:
         enabled = [event for event in events if event.get('enabled', 1)][start_index:]
@@ -383,14 +374,10 @@ class WorkflowExecutor:
                 break
             page.wait_for_timeout(100)
         visible = [item for item in all_matches if item.is_visible()]
-        actionable = [item for item in visible if self._is_topmost(item)]
+        actionable = [item for item in visible if is_topmost(item)]
         if len(actionable) != 1:
             raise RuntimeError(f'msg.0204{len(all_matches)}msg.0205{len(visible)}msg.0206{len(actionable)}msg.0073')
         return actionable[0]
-
-    @staticmethod
-    def _is_topmost(locator: Any) -> bool:
-        return bool(locator.evaluate('element => {\n            const rect = element.getBoundingClientRect();\n            if (rect.width <= 0 || rect.height <= 0 ||\n                rect.right <= 0 || rect.bottom <= 0 ||\n                rect.left >= window.innerWidth || rect.top >= window.innerHeight) return false;\n            const left = Math.max(0, rect.left), right = Math.min(window.innerWidth, rect.right);\n            const top = Math.max(0, rect.top), bottom = Math.min(window.innerHeight, rect.bottom);\n            const points = [\n                [(left + right) / 2, (top + bottom) / 2],\n                [left + Math.min(3, (right - left) / 2), (top + bottom) / 2],\n                [right - Math.min(3, (right - left) / 2), (top + bottom) / 2],\n                [(left + right) / 2, top + Math.min(3, (bottom - top) / 2)],\n                [(left + right) / 2, bottom - Math.min(3, (bottom - top) / 2)]\n            ];\n            return points.some(([x, y]) => {\n                const hit = document.elementFromPoint(x, y);\n                return hit && (hit === element || element.contains(hit));\n            });\n        }'))
 
     def _execute_event(self, page: Any, event: dict[str, Any], variables: dict[str, str], artifact_dir: Path) -> Any:
         page = active_page(page)
