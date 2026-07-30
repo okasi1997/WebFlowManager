@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 from browser.page_runtime import BROWSER_ARGS, BROWSER_IGNORED_DEFAULT_ARGS, active_page, launch_persistent_chrome, locators_in_frames, restore_storage_state, settle_new_page
+from browser.picker_scripts import picker_script
 from browser.profile_runtime import persistent_profile_dir
 from core.executor import WorkflowExecutor
 
@@ -65,6 +66,14 @@ class FakePlaywright:
 
 
 class PageRuntimeTests(unittest.TestCase):
+    def test_picker_script_can_be_reinstalled_and_uses_shadow_event_path(self) -> None:
+        script = picker_script('待機', '選択中')
+        self.assertIn('__webFlowPickerCleanup', script)
+        self.assertIn('event.composedPath()', script)
+        self.assertIn('actionableSelector', script)
+        self.assertIn('"待機"', script)
+        self.assertIn('"選択中"', script)
+
     def test_workflow_browser_uses_normal_chrome_arguments(self) -> None:
         for visible in (True, False):
             arguments = WorkflowExecutor._browser_args(visible)

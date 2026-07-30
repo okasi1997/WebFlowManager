@@ -7,11 +7,10 @@ from concurrent.futures import Future
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from browser.page_runtime import active_page, is_topmost, launch_persistent_chrome, locators_in_frames, page_frames, restore_storage_state
+from browser.page_runtime import active_page, bring_page_to_front, is_topmost, launch_persistent_chrome, locators_in_frames, page_frames, restore_storage_state
+from browser.picker_scripts import picker_script
 from browser.profile_runtime import persistent_profile_dir
 from i18n import tr
-PICKER_SCRIPT = 'msg.0167'
-TEST_READY_SCRIPT = 'msg.0168'
 
 class ElementPicker:
     """F2 で選択モードへ入り、操作可能な要素だけを候補として返す。"""
@@ -172,27 +171,31 @@ class DebugBrowserSession:
         self._cancel_requested.clear()
         def task() -> None:
             _context, page = self._ensure_page(target_url)
-            page.bring_to_front()
+            bring_page_to_front(page)
         self._submit(task)
 
     def pick(self, target_url: str='') -> dict[str, str]:
         self._cancel_requested.clear()
 
         def task() -> dict[str, str]:
-            context, page = self._ensure_page(target_url)
-            page.bring_to_front()
+            _context, page = self._ensure_page(target_url)
+            bring_page_to_front(page)
             picker = ElementPicker()
+            initialized_frames: set[Any] = set()
+            script = picker_script(tr('msg.0490'), tr('msg.0491'))
             while True:
                 if self._cancel_requested.is_set():
                     raise RuntimeError('msg.0170')
                 page = active_page(page)
-                page.wait_for_timeout(500)
+                page.wait_for_timeout(100)
                 for frame in page_frames(page):
                     try:
-                        if not frame.evaluate('() => window.__sfFlowPicked !== undefined'):
-                            frame.evaluate(tr(PICKER_SCRIPT))
+                        if frame not in initialized_frames:
+                            frame.evaluate(script)
+                            initialized_frames.add(frame)
                         result = frame.evaluate('() => window.__sfFlowPicked')
                     except Exception:
+                        initialized_frames.discard(frame)
                         continue
                     if result:
                         if result.get('cancelled'):
@@ -204,7 +207,7 @@ class DebugBrowserSession:
         def task() -> int:
             _context, page = self._ensure_page(target_url)
             page = active_page(page)
-            page.bring_to_front()
+            bring_page_to_front(page)
             picker = ElementPicker()
             actionable = picker._actionable_matches_in_page(page, selector_type, selector)
             if len(actionable) == 1:
@@ -234,7 +237,7 @@ class DebugBrowserSession:
                         executor._execute_workflow_on_page(page, job['events'], variables, artifact_dir, root_data, f'debug_{index}', on_event_start=pause_at_target)
             except _DebugPause:
                 page = active_page(page)
-                page.bring_to_front()
+                bring_page_to_front(page)
                 return
             raise RuntimeError('msg.0359')
         self._submit(task)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
@@ -94,6 +95,49 @@ def active_page(reference_page: Any) -> Any:
     """
     pages = open_pages(reference_page.context)
     return pages[-1] if pages else reference_page
+
+
+def bring_page_to_front(page: Any) -> None:
+    """対象タブと、そのタブを表示する Chrome ウィンドウを前面へ移動する。"""
+    page.bring_to_front()
+    try:
+        page.evaluate('() => window.focus()')
+    except Exception:
+        pass
+    if sys.platform != 'win32':
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        title = page.title().strip()
+        if not title:
+            return
+        user32 = ctypes.windll.user32
+        matches: list[int] = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def collect(window: int, _parameter: int) -> bool:
+            if not user32.IsWindowVisible(window):
+                return True
+            class_buffer = ctypes.create_unicode_buffer(64)
+            user32.GetClassNameW(window, class_buffer, len(class_buffer))
+            if class_buffer.value != 'Chrome_WidgetWin_1':
+                return True
+            length = user32.GetWindowTextLengthW(window)
+            text_buffer = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(window, text_buffer, length + 1)
+            if title in text_buffer.value:
+                matches.append(window)
+            return True
+
+        user32.EnumWindows(collect, 0)
+        if matches:
+            user32.ShowWindow(matches[0], 9)
+            user32.SetForegroundWindow(matches[0])
+    except Exception:
+        # OS の前面制御が拒否された場合も Playwright のタブ切替結果は維持する。
+        pass
 
 
 def page_frames(page: Any) -> list[Any]:
