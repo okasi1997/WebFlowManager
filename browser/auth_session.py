@@ -81,7 +81,17 @@ class AuthBrowserSession:
 
         self._open_browser, self._save, self._status, self._close_browser = open_browser, save, status, close
         while True:
-            task, future = self._tasks.get()
+            try:
+                task, future = self._tasks.get(timeout=0.1)
+            except queue.Empty:
+                # 同期 API の呼出しが途切れると、新規タブの Target が一時停止したまま
+                # になるため、待機中も短い呼出しで Playwright のイベントを処理する。
+                try:
+                    if page is not None and not page.is_closed():
+                        page.wait_for_timeout(50)
+                except Exception:
+                    pass
+                continue
             if task is None:
                 try:
                     close()

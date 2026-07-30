@@ -150,7 +150,17 @@ class DebugBrowserSession:
         self._ensure_page = ensure_page
         self._dispose = dispose
         while True:
-            task, future = self._tasks.get()
+            try:
+                task, future = self._tasks.get(timeout=0.1)
+            except queue.Empty:
+                # ブラウザーを手動操作している間も新規タブの Target を再開できるよう、
+                # 同期 API を定期的に呼び出して Playwright のイベントを処理する。
+                try:
+                    if page is not None and not page.is_closed():
+                        page.wait_for_timeout(50)
+                except Exception:
+                    pass
+                continue
             if task is None:
                 try:
                     dispose()

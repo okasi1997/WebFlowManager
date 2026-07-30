@@ -48,7 +48,10 @@ class PageRuntimeTests(unittest.TestCase):
             self.assertNotIn('--ignore-certificate-errors', arguments)
             self.assertNotIn('--allow-insecure-localhost', arguments)
         self.assertEqual(WorkflowExecutor._browser_args(True), BROWSER_ARGS)
-        self.assertEqual(BROWSER_IGNORED_DEFAULT_ARGS, ['--no-sandbox'])
+        self.assertEqual(
+            BROWSER_IGNORED_DEFAULT_ARGS,
+            ['--no-sandbox', '--enable-automation'],
+        )
 
     def test_workflow_context_does_not_force_site_permissions(self) -> None:
         for visible in (True, False):

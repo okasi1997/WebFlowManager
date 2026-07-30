@@ -5,7 +5,10 @@ from typing import Any, Callable
 
 
 BROWSER_ARGS = ['--start-maximized']
-BROWSER_IGNORED_DEFAULT_ARGS = ['--no-sandbox']
+BROWSER_IGNORED_DEFAULT_ARGS = [
+    '--no-sandbox',
+    '--enable-automation',
+]
 
 
 def open_pages(context: Any) -> list[Any]:
