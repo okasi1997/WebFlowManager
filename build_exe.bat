@@ -26,14 +26,13 @@ if exist "dist\%APP_NAME%" rmdir /s /q "dist\%APP_NAME%"
 if exist "%APP_NAME%.spec" del /q "%APP_NAME%.spec"
 
 echo [4/6] Building %APP_NAME%.exe...
-"%PYTHON%" -m PyInstaller --noconfirm --clean --windowed --onedir --contents-directory "_internal" --name "%APP_NAME%" --icon "assets\app.ico" --add-data "settings.json;." --add-data "locales;locales" --add-data "assets;assets" --collect-all playwright "main.py"
+"%PYTHON%" -m PyInstaller --noconfirm --clean --windowed --onedir --contents-directory "_internal" --name "%APP_NAME%" --icon "assets\app.ico" --add-data "locales;locales" --add-data "assets;assets" --collect-all playwright "main.py"
 if errorlevel 1 goto :error
 
 echo [5/6] Preparing writable folders...
 if not exist "dist\%APP_NAME%\data" mkdir "dist\%APP_NAME%\data"
 if not exist "dist\%APP_NAME%\log" mkdir "dist\%APP_NAME%\log"
 if not exist "dist\%APP_NAME%\artifacts" mkdir "dist\%APP_NAME%\artifacts"
-copy /y "settings.json" "dist\%APP_NAME%\settings.json" >nul
 for /d %%D in (*) do if exist "%%D\index.html" if exist "%%D\style.css" xcopy "%%D" "dist\%APP_NAME%\%%~nxD\" /e /i /y >nul
 
 if "%INCLUDE_LOCAL_DATA%"=="1" (
@@ -81,7 +80,6 @@ echo   Python: %PYTHON%
 "%PYTHON%" --version
 if errorlevel 1 goto :error
 if not exist "main.py" goto :missing_input
-if not exist "settings.json" goto :missing_input
 if not exist "locales" goto :missing_input
 if not exist "assets\app.ico" goto :missing_input
 for /d %%D in (*) do if exist "%%D\index.html" if exist "%%D\style.css" echo   Manual: %%D

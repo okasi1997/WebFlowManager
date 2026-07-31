@@ -47,23 +47,17 @@ env\Scripts\python.exe main.py
 
 現在の実行方式では Google Chrome を使用するため、通常は `playwright install chromium` は不要です。Chrome がインストールされていない場合は、先に Chrome をインストールしてください。
 
-## settings.json
+## 既定の開始 URL
 
-`settings.json` で外部設定できる項目は、picker が最初に開く URL だけです。
+要素選択画面やログイン状態画面で最初に開く URL は、左メニューの「設定」にある
+「ブラウザー設定」から変更できます。`http://` または `https://` で始まる URL を入力し、
+「開始 URL を保存」を押してください。設定はデータベースへ保存され、再起動後も維持されます。
 
-```json
-{
-  "picker": {
-    "start_url": "https://github.com/?locale=ja"
-  }
-}
-```
+旧バージョンの `settings.json` が残っている場合は、データベースに開始 URL がない初回起動時だけ
+値を自動移行します。移行後の `settings.json` は不要です。
 
-`picker.start_url` は「デバッグページを開く/表示」やログイン状態画面で、URL が指定されていない場合に使用する既定 URL です。`http://` または `https://` で始まる URL を指定し、変更後にアプリを再起動してください。
-
-操作種別と検出方法は実装と一体の機能であるため、外部設定ではなく `core/settings.py` の `SUPPORTED_ACTIONS` と `SUPPORTED_SELECTOR_TYPES` で固定しています。
-
-EXE 版では、`WebFlowManager.exe` と同じフォルダーにある `settings.json` を編集します。
+操作種別と検出方法は実装と一体の機能であるため、`core/settings.py` の
+`SUPPORTED_ACTIONS` と `SUPPORTED_SELECTOR_TYPES` で固定しています。
 
 ## 基本的な使用手順
 
@@ -274,7 +268,7 @@ version 1 の `loop_start` / `loop_end`、`retry_start` / `retry_end` は読込�
 | `data/chrome_profiles/*/` | Cookie、サイト権限、証明書例外などを含む専用 Chrome プロファイル |
 | `log/` | アプリの実行ログ |
 | `artifacts/` | 実行時、デバッグ時のスクリーンショット |
-| `settings.json` | picker が最初に開く既定 URL |
+| `data/flows.db` | フロー、データ、画面設定、既定の開始 URL |
 | `操作手順書_ja/` | 全体・基本・画面別の日本語操作手順と画像 |
 
 ## セキュリティ上の注意
@@ -291,12 +285,11 @@ WebFlowManager/
 ├─ main.py                         # 起動入口
 ├─ app.py                          # メイン画面とアプリケーション制御
 ├─ i18n.py                         # 言語リソースの読み込み
-├─ settings.json                   # picker の既定開始 URL
 ├─ core/
 │  ├─ database.py                  # SQLite と JSON 入出力
 │  ├─ executor.py                  # Playwright による実行処理
 │  ├─ conditions.py                # 実行条件の解析と判定
-│  └─ settings.py                  # 固定機能一覧と settings.json の検証
+│  └─ settings.py                  # 固定機能一覧と既定値
 ├─ ui/
 │  ├─ dialogs.py                   # イベント、グループ、条件画面
 │  ├─ input_data.py                # 実行変数の管理画面

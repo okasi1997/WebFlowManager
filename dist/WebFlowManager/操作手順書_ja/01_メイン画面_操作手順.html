@@ -3,7 +3,7 @@
 <title>メイン画面 操作手順</title><link rel="stylesheet" href="style.css"></head>
 <body>
 <h1>メイン画面 操作手順</h1>
-<p class="sub">業務フローとイベントの作成、並べ替え、実行を行う画面です。</p>
+<p class="sub">左側メニューを選択すると、同じウィンドウの右側でフロー設計、データ、ログイン状態、実行管理を切り替えられます。</p>
 <div class="figure">
   <img src="images/01_main.png" alt="メイン画面">
   <div class="legend">画像内の A〜D は手順番号ではなく、画面上の操作エリアを示します。</div>
@@ -22,15 +22,13 @@
 <tr><td>全フロー Json を読み込む</td><td>保存済みの全フローで現在内容を置き換えます。</td><td>必要なら先に出力します。</td></tr>
 <tr><td>全フロー Json を出力</td><td>全フローとイベントをバックアップします。</td><td>保存先を確認します。</td></tr>
 </tbody></table>
-<h2>イベント側のボタンとタブ</h2>
+<h2>イベント側のボタン</h2>
 <table><thead><tr><th>項目</th><th>操作内容</th><th>確認事項</th></tr></thead><tbody>
 <tr><td>イベント追加</td><td>選択中のフローへイベントを追加します。</td><td>追加先のフロー名を先に確認します。</td></tr>
 <tr><td>グループ追加</td><td>繰り返し・再試行に使うイベントグループを追加します。</td><td>挿入位置のイベントを先に選択します。</td></tr>
 <tr><td>編集</td><td>選択中のイベントまたはグループを編集します。</td><td>保存後、一覧の内容を確認します。</td></tr>
 <tr><td>上へ／下へ</td><td>イベントの実行順を変更します。</td><td>グループ境界を越える移動に注意します。</td></tr>
 <tr class="danger-row"><td>削除</td><td>選択中のイベントまたはグループを削除します。</td><td>確認画面の対象名を確認します。</td></tr>
-<tr><td>イベント一覧</td><td>登録内容と実行順を確認します。</td><td>「有効」と実行条件を確認します。</td></tr>
-<tr><td>実行状況／実行ログ</td><td>進行状況／詳細な結果を確認します。</td><td>失敗時は最初のエラーを確認します。</td></tr>
 </tbody></table>
 <h2>フローを作成してイベントを追加する</h2>
 <div class="step"><b>手順 1</b>　左側の <span class="button">新規</span> を押し、業務フロー名を入力します。</div>
@@ -41,9 +39,10 @@
 <div class="success"><b>完了確認：</b>右側の「イベント一覧」に、登録したイベントが実行順どおりに表示されていれば完了です。</div>
 <h2>登録内容を実行する</h2>
 <div class="step"><b>手順 1</b>　実行するフローとイベントが「有効」になっていることを確認します。</div>
-<div class="step"><b>手順 2</b>　データを使う場合は <span class="button">共通データ</span> を開き、「今回実行」を確認します。</div>
-<div class="step"><b>手順 3</b>　画面上部の <span class="button">▶ 順番に実行</span> を押します。</div>
-<div class="step"><b>手順 4</b>　「実行状況」または「実行ログ」で結果を確認します。</div>
+<div class="step"><b>手順 2</b>　左側メニューの「データ」から <span class="button">共通データ</span> を選択し、右側画面で「今回実行」を確認します。</div>
+<div class="step"><b>手順 3</b>　左側メニューの「実行」から <span class="button">実行管理</span> を選択します。</div>
+<div class="step"><b>手順 4</b>　画面右上の <span class="button">▶ 順番に実行</span> を押します。</div>
+<div class="step"><b>手順 5</b>　「実行状況」または「実行ログ」で結果を確認します。</div>
 <div class="tip"><b>動作確認：</b>最初は「Chrome を表示」を有効にし、データ1件で実行すると確認しやすくなります。</div>
 <div class="warning"><b>実行できない場合：</b>フローとイベントの「有効」、共通データの「今回実行」、ログイン状態、実行条件の順に確認してください。</div>
 <p class="manual-nav"><a href="00_基本操作手順.html">基本操作手順へ</a>　｜　<a href="index.html">全体操作手順へ</a></p>

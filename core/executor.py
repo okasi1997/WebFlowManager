@@ -11,6 +11,7 @@ from browser.profile_runtime import persistent_profile_dir
 from core.conditions import decode_guard, evaluate_guard
 from i18n import tr
 VARIABLE_PATTERN = re.compile('\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}')
+DATA_REFERENCE_PATTERN = re.compile(r'\$\{data:([^{}]+)\}')
 
 def find_variables(events: list[dict[str, Any]]) -> list[str]:
     """外部入力が必要な変数だけを抽出する。get_text の生成変数は除外する。"""
@@ -51,11 +52,18 @@ class WorkflowExecutor:
         artifact_dir = self.project_dir / 'artifacts' / (datetime.now().strftime('%Y%m%d_%H%M%S_%f') + f'_{safe_session}')
         artifact_dir.mkdir(parents=True, exist_ok=True)
         state_path = self.project_dir / 'data' / 'browser_state.json' if storage_state_path is False else storage_state_path
-        output_state_path = state_path if session_name in {'batch', 'preamble'} else (state_path.parent / f'{state_path.stem}_{safe_session}.json' if state_path is not None else None)
+        shared_session = session_name in {'batch', 'preamble'}
+        output_state_path = state_path if shared_session else (state_path.parent / f'{state_path.stem}_{safe_session}.json' if state_path is not None else None)
         # 各並列組は同じログイン状態を読み込むが、終了時の書き込み先は分離する。
         # 複数スレッドによる browser_state.json の同時上書きを避けるためである。
         with sync_playwright() as playwright:
-            profile_dir = persistent_profile_dir(self.project_dir, state_path)
+            # Chrome locks a persistent user-data directory to one process.
+            # Parallel groups therefore need independent profile directories;
+            # they still restore the same selected login storage state below.
+            profile_dir = persistent_profile_dir(
+                self.project_dir,
+                state_path if shared_session else output_state_path,
+            )
             temporary_profile = None
             context = None
             if profile_dir is None:
@@ -222,6 +230,12 @@ class WorkflowExecutor:
             data_path = str(event.get('data_path', ''))
             if data_path and event.get('action') != 'get_text':
                 effective['value'] = str(self._resolve_data(root_data, data_path, loop_context))
+            for field in ('selector', 'fallback_selector', 'value', 'failure_target'):
+                effective[field] = self._substitute_data_references(
+                    str(effective.get(field, '')),
+                    root_data,
+                    loop_context,
+                )
             prefix = self._event_log_prefix(log_prefix, event, loop_progress)
             self.logger(f"{prefix}msg.0191{event['name']}" + (f' ← {data_path}' if data_path else ''))
             try:
@@ -240,7 +254,7 @@ class WorkflowExecutor:
                     self.logger(f'{prefix}msg.0430')
                     page.reload(wait_until='domcontentloaded')
                 elif failure_action == 'goto':
-                    target = substitute(str(event.get('failure_target', '')), variables)
+                    target = substitute(str(effective.get('failure_target', '')), variables)
                     self.logger(f'{prefix}msg.0431{target}')
                     page.goto(target, wait_until='domcontentloaded')
                 if not event.get('continue_on_error', 0):
@@ -320,6 +334,25 @@ class WorkflowExecutor:
             return cls._resolve_data(root_data, path, loop_context)
         except (KeyError, TypeError, ValueError):
             return None
+
+    @classmethod
+    def _substitute_data_references(
+        cls,
+        text: str,
+        root_data: dict[str, Any] | None,
+        loop_context: dict[str, Any],
+    ) -> str:
+        """Replace ${data:path} tokens with scalar values from the current record."""
+        def replace(match: re.Match[str]) -> str:
+            path = match.group(1).strip()
+            if not path:
+                raise ValueError('Data reference path is empty')
+            value = cls._resolve_data(root_data, path, loop_context)
+            if isinstance(value, (dict, list)):
+                raise ValueError(f'Data reference must point to a scalar value: {path}')
+            return '' if value is None else str(value)
+
+        return DATA_REFERENCE_PATTERN.sub(replace, text)
 
     @staticmethod
     def _assign_data(root_data: dict[str, Any] | None, path: str, loop_context: dict[str, Any], value: Any) -> None:

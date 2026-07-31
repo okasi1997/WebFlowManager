@@ -104,15 +104,15 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
 <div class="note"><span class="label">補足：</span>仮想環境を有効にする方法と、<code>env\Scripts\python.exe main.py</code> で直接起動する方法のどちらでも動作します。</div>
 
 <h3>起動後の基本設定</h3>
-<div class="step"><b>手順 1</b>　右上の「設定」で、言語、フォント、文字サイズ、Chrome 表示を確認します。</div>
+<div class="step"><b>手順 1</b>　左メニューの「設定」で、言語、フォント、文字サイズ、開始 URL、Chrome 表示を確認します。</div>
 <div class="step"><b>手順 2</b>　ログインが必要なサイトでは、使用するログイン状態を準備します。</div>
 <div class="note"><span class="label">Chrome 表示：</span>フローの作成中や動作確認中は表示を有効にします。動作が安定した後は、必要に応じて非表示で実行します。</div>
 <h3>picker の開始 URL を変更する</h3>
-<p><code>settings.json</code> では、picker が最初に開く既定 URL だけを変更できます。ソース版ではプロジェクト直下、EXE 版では <code>WebFlowManager.exe</code> と同じフォルダーのファイルを編集します。</p>
-<div class="step"><b>手順 1</b>　アプリを終了し、<code>settings.json</code> をテキストエディターで開きます。</div>
-<div class="step"><b>手順 2</b>　<code>picker.start_url</code> に <code>http://</code> または <code>https://</code> で始まる URL を設定して保存します。</div>
-<div class="step"><b>手順 3</b>　アプリを再起動し、「デバッグページを開く/表示」で開始ページを確認します。</div>
-<div class="note"><span class="label">固定項目：</span>操作種別と検出方法はプログラム機能と一体のため、<code>settings.json</code> からは変更できません。</div>
+<p>picker が最初に開く既定 URL は、アプリの設定画面で変更できます。</p>
+<div class="step"><b>手順 1</b>　左メニュー最下部の「設定」を開きます。</div>
+<div class="step"><b>手順 2</b>　「ブラウザー設定」の「既定の開始 URL」に <code>http://</code> または <code>https://</code> で始まる URL を入力します。</div>
+<div class="step"><b>手順 3</b>　「開始 URL を保存」を押し、ログイン状態画面またはイベント編集画面から開始ページを確認します。</div>
+<div class="note"><span class="label">旧設定：</span>旧バージョンの <code>settings.json</code> は初回のみ自動移行され、以降は不要です。</div>
 
 <h2>3. 業務をフローに分ける</h2>
 <p>実際のブラウザー操作を、目的ごとの業務フローへ分けます。後から順番変更や再利用がしやすい大きさにします。</p>

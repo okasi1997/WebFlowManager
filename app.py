@@ -1,7 +1,10 @@
 """メイン画面、ダイアログ管理、および PCL バッチ実行の調停を行う。"""
 from __future__ import annotations
 import ctypes
+import json
+import ntpath
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -18,10 +21,11 @@ from browser.profile_runtime import clear_profile, persistent_profile_dir, profi
 from core.database import Database
 from core.conditions import decode_guard, summarize_guard
 from core.executor import WorkflowExecutor, find_variables
-from core.settings import SettingsError, load_settings
+from core.settings import DEFAULT_START_URL, runtime_settings
 from i18n import install_tk_translation, set_language, tr
 from ui.dialogs import EventDialog, EventGroupDialog, GuardConditionDialog, VariablesDialog, guard_operator_labels
 from ui.auth_state import AuthStateDialog, profile_path
+from ui.message_dialog import install_app_messageboxes
 from ui.structured_data import DataPathDialog, HierarchicalDataDialog, SchemaDesignerDialog
 from ui.ui_helpers import AutoScrollbar, toggle_tree_indicator_on_double_click
 
@@ -41,14 +45,11 @@ class FlowManagerApp:
         self.db = Database(self.project_dir / 'data' / 'flows.db')
         set_language(self.db.get_language())
         install_tk_translation()
-        settings_path = self.project_dir / 'settings.json'
-        if not settings_path.is_file():
-            settings_path = self.resource_dir / 'settings.json'
-        try:
-            self.settings = load_settings(settings_path)
-        except SettingsError as error:
-            self.db.close()
-            raise RuntimeError(tr(f'msg.0001{error}')) from error
+        start_url = self.db.get_start_url()
+        if start_url is None:
+            start_url = self._read_legacy_start_url()
+            self.db.set_start_url(start_url)
+        self.settings = runtime_settings(start_url)
         self.ui_font_family, self.ui_font_size = self.db.get_ui_font()
         if os.name == 'nt':
             try:
@@ -63,12 +64,13 @@ class FlowManagerApp:
                 self.root.iconbitmap(default=str(self.app_icon_path))
             except tk.TclError:
                 pass
-        self.root.geometry('1180x720')
-        self.root.minsize(900, 600)
-        self.root.configure(bg='#F3F3F3')
+        self.root.geometry('1380x820')
+        self.root.minsize(1180, 720)
+        self.root.configure(bg='#F6F7F9')
         self.root._flow_show_toplevel = self._show_toplevel
         self._install_deferred_toplevel_display()
         self._configure_styles()
+        install_app_messageboxes(self.root)
         self.root.bind_class('TCombobox', '<<ComboboxSelected>>', self._clear_combobox_text_selection, add='+')
         self.current_workflow_id: int | None = None
         self.running = False
@@ -76,15 +78,28 @@ class FlowManagerApp:
         self.execution_task_states: dict[str, tuple[dict[str, object], dict[str, object] | None, str]] = {}
         self.open_dialogs: dict[str, tk.Toplevel] = {}
         self.browser_visible = tk.BooleanVar(value=self.db.get_browser_visible())
-        self._build_settings_menu()
+        self._build_settings_state()
         self.debug_browser = DebugBrowserSession(
             self.project_dir, self.settings['picker']['start_url'], self._log,
             lambda: profile_path(self.project_dir, self.db.get_auth_profile()))
         self.auth_browser = AuthBrowserSession(self.project_dir, lambda message: self._log(message, 'AuthBrowserSession'))
         self.drag_source: dict[str, str | None] = {'workflow': None, 'event': None}
-        self._build_ui()
+        try:
+            self._build_ui()
+        except Exception:
+            # 初期画面の構築に失敗した場合も Playwright の子プロセスを確実に終了し、
+            # 親プロセス終了後の EPIPE エラーを残さない。
+            for browser_session in (self.debug_browser, self.auth_browser):
+                try:
+                    browser_session.shutdown()
+                except Exception:
+                    pass
+            self.db.close()
+            self.root.destroy()
+            raise
         self._apply_font_configuration()
-        self._refresh_workflows()
+        initial_workflows = self.db.list_workflows()
+        self._refresh_workflows(initial_workflows[0]['id'] if initial_workflows else None)
         self.root.after_idle(lambda: self._apply_window_chrome(self.root))
         self.root.protocol('WM_DELETE_WINDOW', self._close)
 
@@ -276,12 +291,17 @@ class FlowManagerApp:
         style.configure('DialogSection.TLabel', background='#F3F3F3', foreground='#3B3B3B', font=bold_font, padding=(0, 2, 0, 4))
         style.configure('DialogCard.TFrame', background='#FFFFFF', relief='solid', borderwidth=1, bordercolor='#E1E1E1')
         style.configure('DialogCardBody.TFrame', background='#FFFFFF')
+        style.configure('DialogFooter.TFrame', background='#F6F7F9')
         style.configure('DialogCard.TLabel', background='#FFFFFF', foreground='#1F1F1F', font=font)
+        style.configure('MessageBody.TLabel', background='#FFFFFF', foreground='#171717', font=(family, size + 1), padding=(0, 2))
         style.map('DialogCard.TLabel', background=[('disabled', '#FFFFFF')], foreground=[('disabled', '#A0A0A0')])
         style.configure('DialogCardSection.TLabel', background='#FFFFFF', foreground='#1F1F1F', font=bold_font, padding=(0, 1, 0, 5))
         style.configure('DialogCardSubtle.TLabel', background='#FFFFFF', foreground='#616161', font=small_font)
         style.map('DialogCardSubtle.TLabel', background=[('disabled', '#FFFFFF')], foreground=[('disabled', '#A0A0A0')])
         style.configure('DialogCard.TCheckbutton', background='#FFFFFF', foreground='#1F1F1F', font=font)
+        style.configure('InfoIcon.TLabel', background='#E5F3FF', foreground='#0078D4', font=(family, size + 5, 'bold'), padding=(8, 6), anchor='center')
+        style.configure('WarningIcon.TLabel', background='#FFF4CE', foreground='#9D5D00', font=(family, size + 5, 'bold'), padding=(8, 6), anchor='center')
+        style.configure('ErrorIcon.TLabel', background='#FDE7E9', foreground='#C42B1C', font=(family, size + 5, 'bold'), padding=(8, 6), anchor='center')
         style.map('DialogCard.TCheckbutton', background=[('active', '#FFFFFF')], foreground=[('disabled', '#A0A0A0')])
         style.configure('DialogAction.TButton', background='#E9EDF2', foreground='#1F1F1F', bordercolor='#E9EDF2', lightcolor='#E9EDF2', darkcolor='#E9EDF2', font=small_font, padding=(7, 12), relief='flat', borderwidth=1, focusthickness=1, focuscolor='#0078D4')
         style.map('DialogAction.TButton', background=[('active', '#DCE8F1'), ('pressed', '#CCDDE9'), ('disabled', '#F1F1F1')], foreground=[('disabled', '#999999')], bordercolor=[('active', '#DCE8F1'), ('focus', '#0078D4'), ('disabled', '#F1F1F1')], lightcolor=[('active', '#DCE8F1'), ('disabled', '#F1F1F1')], darkcolor=[('active', '#DCE8F1'), ('disabled', '#F1F1F1')])
@@ -299,14 +319,20 @@ class FlowManagerApp:
         style.map('TButton', background=[('active', '#E8E8E8'), ('pressed', '#DCDCDC'), ('disabled', '#F3F3F3')], foreground=[('disabled', '#A0A0A0')], bordercolor=[('active', '#B8B8B8'), ('focus', '#0078D4')])
         style.configure('Primary.TButton', background='#0078D4', foreground='#FFFFFF', bordercolor='#0078D4', font=(family, max(8, size - 1), 'bold'), relief='flat')
         style.map('Primary.TButton', background=[('active', '#106EBE'), ('pressed', '#005A9E'), ('disabled', '#C8C8C8')], foreground=[('disabled', '#F3F3F3')], bordercolor=[('disabled', '#C8C8C8')])
-        style.configure('Secondary.TButton', background='#E7EBF0', foreground='#1F1F1F', bordercolor='#E7EBF0', lightcolor='#E7EBF0', darkcolor='#E7EBF0', font=small_font, relief='flat')
-        style.map('Secondary.TButton', background=[('active', '#DCE4EC'), ('pressed', '#CEDAE5'), ('disabled', '#F1F1F1')], foreground=[('disabled', '#A0A0A0')], bordercolor=[('active', '#DCE4EC'), ('pressed', '#CEDAE5')], lightcolor=[('active', '#DCE4EC'), ('pressed', '#CEDAE5')], darkcolor=[('active', '#DCE4EC'), ('pressed', '#CEDAE5')])
-        style.configure('Danger.TButton', background='#FFFFFF', foreground='#C42B1C', bordercolor='#D4D4D4')
-        style.map('Danger.TButton', background=[('active', '#FDE7E9'), ('pressed', '#F8D7DA')], bordercolor=[('active', '#C42B1C')])
-        style.configure('Toolbar.TButton', background='#FFFFFF', foreground='#1F1F1F', bordercolor='#D4D4D4', font=small_font, relief='flat')
-        style.map('Toolbar.TButton', background=[('active', '#E8E8E8'), ('pressed', '#DCDCDC'), ('disabled', '#F3F3F3')], foreground=[('disabled', '#A0A0A0')], bordercolor=[('active', '#B8B8B8')])
-        style.configure('Action.TButton', background='#FFFFFF', foreground='#1F1F1F', bordercolor='#D4D4D4', font=small_font, relief='flat')
-        style.map('Action.TButton', background=[('active', '#E8E8E8'), ('pressed', '#DCDCDC'), ('disabled', '#F3F3F3')], foreground=[('disabled', '#A0A0A0')], bordercolor=[('active', '#0078D4')])
+        style.configure('Secondary.TButton', background='#EDF2F7', foreground='#1F1F1F', bordercolor='#D9E0E7', lightcolor='#EDF2F7', darkcolor='#EDF2F7', font=small_font, padding=(10, 7), relief='flat')
+        style.map('Secondary.TButton', background=[('active', '#E1EAF3'), ('pressed', '#D4E1ED'), ('disabled', '#F4F5F6')], foreground=[('disabled', '#A0A0A0')], bordercolor=[('active', '#C8D7E5'), ('pressed', '#B9CCDD')], lightcolor=[('active', '#E1EAF3'), ('pressed', '#D4E1ED')], darkcolor=[('active', '#E1EAF3'), ('pressed', '#D4E1ED')])
+        style.configure('MessagePrimary.TButton', background='#0078D4', foreground='#FFFFFF', bordercolor='#0078D4', lightcolor='#0078D4', darkcolor='#0078D4', font=(family, max(8, size - 1), 'bold'), padding=(10, 5), relief='flat', borderwidth=1)
+        style.map('MessagePrimary.TButton', background=[('active', '#106EBE'), ('pressed', '#005A9E')], bordercolor=[('active', '#106EBE'), ('pressed', '#005A9E')])
+        style.configure('MessageSecondary.TButton', background='#EDF2F7', foreground='#1F1F1F', bordercolor='#D9E0E7', lightcolor='#EDF2F7', darkcolor='#EDF2F7', font=(family, max(8, size - 1), 'bold'), padding=(10, 5), relief='flat', borderwidth=1)
+        style.map('MessageSecondary.TButton', background=[('active', '#E1EAF3'), ('pressed', '#D4E1ED')], bordercolor=[('active', '#C8D7E5'), ('pressed', '#B9CCDD')], lightcolor=[('active', '#E1EAF3'), ('pressed', '#D4E1ED')], darkcolor=[('active', '#E1EAF3'), ('pressed', '#D4E1ED')])
+        style.configure('Danger.TButton', background='#FDF0F1', foreground='#B42318', bordercolor='#F0C9CD', lightcolor='#FDF0F1', darkcolor='#FDF0F1', padding=(10, 7), relief='flat')
+        style.map('Danger.TButton', background=[('disabled', '#F6F6F6'), ('active', '#FBE3E5'), ('pressed', '#F6D3D6')], foreground=[('disabled', '#A6A6A6'), ('active', '#9F1C13')], bordercolor=[('disabled', '#E5E5E5'), ('active', '#E7AEB4')])
+        style.configure('Toolbar.TButton', background='#F5F7FA', foreground='#1F1F1F', bordercolor='#D9DEE5', font=small_font, padding=(9, 6), relief='flat')
+        style.map('Toolbar.TButton', background=[('active', '#E8EEF4'), ('pressed', '#DDE6EF'), ('disabled', '#F4F5F6')], foreground=[('disabled', '#A0A0A0')], bordercolor=[('active', '#C5D1DD')])
+        style.configure('ExecutionAction.TButton', background='#E1E9F1', foreground='#263746', bordercolor='#BBC9D6', lightcolor='#E1E9F1', darkcolor='#E1E9F1', font=small_font, padding=(10, 6), relief='flat', borderwidth=1)
+        style.map('ExecutionAction.TButton', background=[('active', '#D2E0EC'), ('pressed', '#C3D4E3'), ('disabled', '#F1F3F5')], foreground=[('disabled', '#9A9A9A')], bordercolor=[('active', '#91ABC1'), ('pressed', '#7898B2'), ('disabled', '#E0E3E6')], lightcolor=[('active', '#D2E0EC'), ('pressed', '#C3D4E3')], darkcolor=[('active', '#D2E0EC'), ('pressed', '#C3D4E3')])
+        style.configure('Action.TButton', background='#EAF2F9', foreground='#075A9C', bordercolor='#C9DCEB', lightcolor='#EAF2F9', darkcolor='#EAF2F9', font=small_font, padding=(10, 7), relief='flat')
+        style.map('Action.TButton', background=[('active', '#DCEBF7'), ('pressed', '#CFE3F2'), ('disabled', '#F4F5F6')], foreground=[('disabled', '#A0A0A0')], bordercolor=[('active', '#9FC4DF'), ('focus', '#0078D4')])
         style.configure('Toolbar.TMenubutton', background='#FFFFFF', foreground='#1F1F1F', bordercolor='#D4D4D4', arrowcolor='#616161', font=small_font, padding=(9, 5), relief='flat')
         style.map('Toolbar.TMenubutton', background=[('active', '#E8E8E8'), ('pressed', '#DCDCDC')], bordercolor=[('active', '#B8B8B8')])
         style.configure('Treeview', background='#FFFFFF', fieldbackground='#FFFFFF', foreground='#3D3D3D', rowheight=28, font=font, borderwidth=1, bordercolor='#D4D4D4')
@@ -329,6 +355,37 @@ class FlowManagerApp:
         style.configure('ExecutionTab.TFrame', background='#FFFFFF', relief='flat', borderwidth=0)
         style.configure('ExecutionTabHeader.TFrame', background='#FFFFFF')
         style.configure('ExecutionTab.TLabel', background='#FFFFFF', foreground='#616161', font=small_font)
+        style.configure('AppShell.TFrame', background='#F6F7F9')
+        style.configure('Sidebar.TFrame', background='#FFFFFF')
+        style.configure('SidebarSection.TLabel', background='#FFFFFF', foreground='#7A7A7A', font=small_font, padding=(18, 12, 8, 4))
+        style.configure('SidebarBrand.TLabel', background='#FFFFFF', foreground='#1F2937', font=(family, size + 2, 'bold'))
+        style.configure('SidebarBrandSubtle.TLabel', background='#FFFFFF', foreground='#737373', font=(family, max(8, size - 1)))
+        style.configure('Sidebar.TButton', background='#FFFFFF', foreground='#303030', bordercolor='#FFFFFF', lightcolor='#FFFFFF', darkcolor='#FFFFFF', font=font, padding=(18, 11), relief='flat', borderwidth=0, anchor='w', focusthickness=0)
+        style.map('Sidebar.TButton', background=[('active', '#F0F4F8'), ('pressed', '#E7EEF5')], bordercolor=[('active', '#F0F4F8')])
+        style.configure('SidebarSelected.TButton', background='#E8F2FC', foreground='#0067C0', bordercolor='#E8F2FC', lightcolor='#E8F2FC', darkcolor='#E8F2FC', font=bold_font, padding=(18, 11), relief='flat', borderwidth=0, anchor='w', focusthickness=0)
+        style.map('SidebarSelected.TButton', background=[('active', '#DCECFB'), ('pressed', '#D1E6F8')], foreground=[('active', '#005A9E')])
+        style.configure('PageTitle.TLabel', background='#FFFFFF', foreground='#161616', font=(family, size + 8, 'bold'))
+        style.configure('PageSubtitle.TLabel', background='#FFFFFF', foreground='#616161', font=font)
+        style.configure('Page.TFrame', background='#F6F7F9')
+        style.configure('PageHeader.TFrame', background='#FFFFFF')
+        style.configure('Summary.TFrame', background='#FFFFFF')
+        style.configure('Summary.TLabel', background='#FFFFFF', foreground='#3B3B3B', font=font, padding=(18, 8))
+        style.configure('CompactSummary.TLabel', background='#FFFFFF', foreground='#3B3B3B', font=font, padding=(10, 4))
+        style.configure('ExecutionSurface.TFrame', background='#FFFFFF', relief='solid', borderwidth=1, bordercolor='#E1E5EA')
+        style.configure(
+            'Execution.Horizontal.TProgressbar',
+            background='#0078D4',
+            troughcolor='#E5EAF0',
+            bordercolor='#E5EAF0',
+            lightcolor='#0078D4',
+            darkcolor='#0078D4',
+            thickness=12,
+        )
+        style.configure('EmbeddedCard.TFrame', background='#FFFFFF', relief='solid', borderwidth=1, bordercolor='#E1E5EA')
+        style.configure('EmbeddedCardBody.TFrame', background='#FFFFFF')
+        style.configure('EmbeddedCard.TLabel', background='#FFFFFF', foreground='#242424', font=font)
+        style.configure('EmbeddedCardSubtle.TLabel', background='#FFFFFF', foreground='#6B6B6B', font=small_font)
+        style.configure('EmbeddedCardTitle.TLabel', background='#FFFFFF', foreground='#1F1F1F', font=(family, size + 3, 'bold'), padding=(0, 2, 0, 5))
         style.configure('LogArea.TFrame', background='#FFFFFF', relief='solid', borderwidth=1, bordercolor='#D4D4D4')
         style.configure('TPanedwindow', background='#D4D4D4', sashwidth=3)
         style.configure('TSeparator', background='#D4D4D4')
@@ -382,9 +439,13 @@ class FlowManagerApp:
         style.configure('DialogSection.TLabel', font=bold)
         style.configure('Subtle.TLabel', font=small)
         style.configure('DialogCard.TLabel', font=base)
+        style.configure('MessageBody.TLabel', font=(family, size + 1))
         style.configure('DialogCardSection.TLabel', font=bold)
         style.configure('DialogCardSubtle.TLabel', font=small)
         style.configure('DialogCard.TCheckbutton', font=base)
+        style.configure('InfoIcon.TLabel', font=(family, size + 5, 'bold'))
+        style.configure('WarningIcon.TLabel', font=(family, size + 5, 'bold'))
+        style.configure('ErrorIcon.TLabel', font=(family, size + 5, 'bold'))
         style.configure('DialogAction.TButton', font=small)
         style.configure('DialogInline.TButton', font=small)
         style.configure('Dialog.TEntry', font=base)
@@ -393,16 +454,30 @@ class FlowManagerApp:
         style.configure('TEntry', font=base)
         style.configure('TCombobox', font=base)
         style.configure('TSpinbox', font=base)
-        for button_style in ('TButton', 'Toolbar.TButton', 'Action.TButton', 'Secondary.TButton', 'DialogAction.TButton'):
+        for button_style in ('TButton', 'Toolbar.TButton', 'ExecutionAction.TButton', 'Action.TButton', 'Secondary.TButton', 'DialogAction.TButton'):
             style.configure(button_style, font=small)
         style.configure('Toolbar.TMenubutton', font=small)
         style.configure('Primary.TButton', font=(family, max(8, size - 1), 'bold'))
+        style.configure('MessagePrimary.TButton', font=(family, max(8, size - 1), 'bold'))
+        style.configure('MessageSecondary.TButton', font=(family, max(8, size - 1), 'bold'))
         style.configure('Treeview', font=base, rowheight=max(26, size * 2 + 8))
         style.configure('Status.Treeview', font=base, rowheight=max(26, size * 2 + 8))
         style.configure('Treeview.Heading', font=(family, max(8, size - 1), 'bold'))
         style.configure('ExecutionTab.TButton', font=small)
         style.configure('ExecutionTabSelected.TButton', font=small)
         style.configure('ExecutionTab.TLabel', font=small)
+        style.configure('SidebarSection.TLabel', font=small)
+        style.configure('SidebarBrand.TLabel', font=(family, size + 2, 'bold'))
+        style.configure('SidebarBrandSubtle.TLabel', font=(family, max(8, size - 1)))
+        style.configure('Sidebar.TButton', font=base)
+        style.configure('SidebarSelected.TButton', font=bold)
+        style.configure('PageTitle.TLabel', font=(family, size + 8, 'bold'))
+        style.configure('PageSubtitle.TLabel', font=base)
+        style.configure('Summary.TLabel', font=base)
+        style.configure('CompactSummary.TLabel', font=base)
+        style.configure('EmbeddedCard.TLabel', font=base)
+        style.configure('EmbeddedCardSubtle.TLabel', font=small)
+        style.configure('EmbeddedCardTitle.TLabel', font=(family, size + 3, 'bold'))
         style.configure('TCheckbutton', font=base)
         if hasattr(self, 'run_button'):
             self.run_button.configure(font=bold)
@@ -412,7 +487,7 @@ class FlowManagerApp:
             self.event_tree.tag_configure('event_group', font=(family, max(8, size - 1), 'bold'))
         self.root.update_idletasks()
 
-    def _build_settings_menu(self) -> None:
+    def _build_settings_state(self) -> None:
         installed = {name.casefold(): name for name in tkfont.families(self.root)}
         candidates = ('Segoe UI', 'Meiryo', 'Yu Gothic UI', 'Microsoft YaHei UI', 'Arial', 'Calibri', 'Tahoma', 'Verdana', 'Noto Sans CJK JP', 'Noto Sans CJK SC', 'Cascadia Code', 'Consolas')
         available = [installed[name.casefold()] for name in candidates if name.casefold() in installed]
@@ -422,31 +497,12 @@ class FlowManagerApp:
             self._apply_font_configuration()
         elif self.ui_font_family not in available:
             available.insert(0, installed[self.ui_font_family.casefold()])
+        self.available_font_families = tuple(available)
         self.font_family_choice = tk.StringVar(value=self.ui_font_family)
         self.font_size_choice = tk.IntVar(value=self.ui_font_size)
         self.menu_language_choice = tk.StringVar(value=self.db.get_language())
-        menu_options = {'tearoff': False, 'bg': '#F3F3F3', 'fg': '#1F1F1F', 'activebackground': '#ADD6FF', 'activeforeground': '#1F1F1F', 'bd': 0}
-        settings_menu = tk.Menu(self.root, **menu_options)
-        appearance_menu = tk.Menu(settings_menu, **menu_options)
-        font_menu = tk.Menu(appearance_menu, **menu_options)
-        for family in available:
-            font_menu.add_radiobutton(label=family, variable=self.font_family_choice, value=family, command=lambda value=family: self._set_ui_font(family=value))
-        size_menu = tk.Menu(appearance_menu, **menu_options)
-        for size in (8, 9, 10, 11, 12, 14, 16, 18):
-            size_menu.add_radiobutton(label=str(size), variable=self.font_size_choice, value=size, command=lambda value=size: self._set_ui_font(size=value))
-        appearance_menu.add_cascade(label=tr('msg.0373'), menu=font_menu)
-        appearance_menu.add_cascade(label=tr('msg.0374'), menu=size_menu)
-        appearance_menu.add_separator()
-        appearance_menu.add_command(label=tr('msg.0375'), command=self._reset_ui_font)
-        language_menu = tk.Menu(settings_menu, **menu_options)
-        language_menu.add_radiobutton(label=tr('msg.0022'), variable=self.menu_language_choice, value='ja', command=lambda: self._set_language_from_menu('ja'))
-        language_menu.add_radiobutton(label=tr('msg.0023'), variable=self.menu_language_choice, value='zh', command=lambda: self._set_language_from_menu('zh'))
-        settings_menu.add_cascade(label=tr('msg.0372'), menu=appearance_menu)
-        settings_menu.add_cascade(label=tr('msg.0376'), menu=language_menu)
-        settings_menu.add_separator()
-        settings_menu.add_checkbutton(label=tr('msg.0377'), variable=self.browser_visible, command=lambda: self.db.set_browser_visible(self.browser_visible.get()))
-        settings_menu.add_command(label=tr('msg.0378'), command=lambda: self.root.geometry('1180x720'))
-        self.settings_menu = settings_menu
+        self.start_url_choice = tk.StringVar(value=str(self.settings['picker']['start_url']))
+        self.default_timeout_choice = tk.StringVar(value=str(self.db.get_default_timeout_ms()))
 
     def _set_ui_font(self, family: str | None=None, size: int | None=None) -> None:
         self.ui_font_family = family or self.ui_font_family
@@ -465,18 +521,126 @@ class FlowManagerApp:
         self.db.set_language(language)
         messagebox.showinfo('msg.0089', 'msg.0090')
 
+    def _read_legacy_start_url(self) -> str:
+        """旧 settings.json の開始 URL を初回だけ移行する。"""
+        candidates = (self.project_dir / 'settings.json', self.resource_dir / 'settings.json')
+        for path in dict.fromkeys(candidates):
+            if not path.is_file():
+                continue
+            try:
+                raw = json.loads(path.read_text(encoding='utf-8'))
+                value = raw.get('picker', {}).get('start_url', '')
+            except (OSError, ValueError, AttributeError):
+                continue
+            if isinstance(value, str) and value.strip().startswith(('http://', 'https://')):
+                return value.strip()
+        return DEFAULT_START_URL
+
+    def _save_execution_settings(self) -> None:
+        """ブラウザーと新規イベントの既定値を保存する。"""
+        value = self.start_url_choice.get().strip()
+        if not value.startswith(('http://', 'https://')):
+            messagebox.showwarning('入力内容の確認', '開始 URL は http:// または https:// で始めてください。', parent=self.root)
+            return
+        try:
+            default_timeout_ms = int(self.default_timeout_choice.get().strip())
+            if not 1 <= default_timeout_ms <= 3600000:
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning('msg.0159', 'msg.0509', parent=self.root)
+            return
+        previous = str(self.settings['picker']['start_url'])
+        self.db.set_start_url(value)
+        self.db.set_default_timeout_ms(default_timeout_ms)
+        self.db.set_browser_visible(self.browser_visible.get())
+        self.settings['picker']['start_url'] = value
+        self.debug_browser.start_url = value
+        if hasattr(self, 'auth_view'):
+            self.auth_view.start_url = value
+            if not self.auth_view.url.get().strip() or self.auth_view.url.get().strip() == previous:
+                self.auth_view.url.set(value)
+        messagebox.showinfo('msg.0281', 'msg.0510', parent=self.root)
+
     def _build_ui(self) -> None:
-        outer = ttk.Panedwindow(self.root, orient='horizontal')
+        shell = ttk.Frame(self.root, style='AppShell.TFrame')
+        shell.pack(fill='both', expand=True)
+        sidebar = ttk.Frame(shell, width=224, style='Sidebar.TFrame')
+        sidebar.pack(side='left', fill='y')
+        sidebar.pack_propagate(False)
+        ttk.Separator(shell, orient='vertical').pack(side='left', fill='y')
+        content = ttk.Frame(shell, style='Page.TFrame')
+        content.pack(side='left', fill='both', expand=True)
+
+        self.page_frames: dict[str, ttk.Frame] = {}
+        design_page = ttk.Frame(content, style='Page.TFrame')
+        schema_page = ttk.Frame(content, style='Page.TFrame')
+        data_page = ttk.Frame(content, style='Page.TFrame')
+        auth_page = ttk.Frame(content, style='Page.TFrame')
+        execution_page = ttk.Frame(content, style='Page.TFrame')
+        settings_page = ttk.Frame(content, style='Page.TFrame')
+        self.page_frames.update(
+            design=design_page,
+            schema=schema_page,
+            data=data_page,
+            auth=auth_page,
+            execution=execution_page,
+            settings=settings_page,
+        )
+        for page in self.page_frames.values():
+            page.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        self.sidebar_buttons: dict[str, ttk.Button] = {}
+        self.sidebar_icons = self._create_sidebar_icons()
+        brand = ttk.Frame(sidebar, style='Sidebar.TFrame')
+        brand.pack(fill='x', padx=18, pady=(20, 12))
+        ttk.Label(brand, text='msg.0002', style='SidebarBrand.TLabel').pack(anchor='w')
+        ttk.Label(brand, text='msg.0525', style='SidebarBrandSubtle.TLabel').pack(anchor='w', pady=(2, 0))
+        ttk.Separator(sidebar).pack(fill='x', padx=14, pady=(0, 4))
+        ttk.Label(sidebar, text='msg.0526', style='SidebarSection.TLabel').pack(fill='x', pady=(4, 0))
+        self._add_sidebar_button(sidebar, 'auth', 'msg.0460', lambda: self._show_page('auth'))
+        ttk.Label(sidebar, text='msg.0527', style='SidebarSection.TLabel').pack(fill='x', pady=(12, 0))
+        self._add_sidebar_button(sidebar, 'design', 'msg.0528', lambda: self._show_page('design'))
+        ttk.Label(sidebar, text='msg.0529', style='SidebarSection.TLabel').pack(fill='x', pady=(12, 0))
+        self._add_sidebar_button(sidebar, 'schema', 'msg.0530', lambda: self._show_page('schema'))
+        self._add_sidebar_button(sidebar, 'data', 'msg.0019', lambda: self._show_page('data'))
+        ttk.Label(sidebar, text='msg.0531', style='SidebarSection.TLabel').pack(fill='x', pady=(12, 0))
+        self._add_sidebar_button(sidebar, 'execution', 'msg.0532', lambda: self._show_page('execution'))
+        sidebar_spacer = ttk.Frame(sidebar, style='Sidebar.TFrame')
+        sidebar_spacer.pack(fill='both', expand=True)
+        ttk.Separator(sidebar).pack(fill='x', padx=14, pady=(0, 8))
+        self._add_sidebar_button(sidebar, 'settings', 'msg.0533', lambda: self._show_page('settings'))
+
+        self._build_embedded_page_header(
+            design_page,
+            'msg.0528',
+            'msg.0534',
+        )
+        design_body = ttk.Frame(design_page, padding=(18, 12, 18, 18), style='Page.TFrame')
+        design_body.pack(fill='both', expand=True)
+        outer = ttk.Panedwindow(design_body, orient='horizontal')
         self.main_pane = outer
-        outer.pack(fill='both', expand=True, padx=14, pady=12)
-        left = ttk.Frame(outer, padding=(8, 4, 12, 4))
-        right = ttk.Frame(outer, padding=(14, 4, 4, 4))
-        outer.add(left, weight=1)
-        outer.add(right, weight=4)
+        outer.pack(fill='both', expand=True)
+        left_shell = ttk.Frame(outer, style='EmbeddedCard.TFrame')
+        right_shell = ttk.Frame(outer, style='EmbeddedCard.TFrame')
+        left = ttk.Frame(left_shell, padding=(16, 14), style='EmbeddedCardBody.TFrame')
+        right = ttk.Frame(right_shell, padding=(16, 14), style='EmbeddedCardBody.TFrame')
+        left.pack(fill='both', expand=True, padx=1, pady=1)
+        right.pack(fill='both', expand=True, padx=1, pady=1)
+        outer.add(left_shell, weight=1)
+        outer.add(right_shell, weight=4)
         self.root.after_idle(self._set_initial_pane_ratio)
-        ttk.Label(left, text='msg.0003', style='Section.TLabel').pack(anchor='w')
-        ttk.Label(left, text='msg.0004', style='Subtle.TLabel').pack(anchor='w')
-        workflow_table = ttk.Frame(left)
+        ttk.Label(left, text='msg.0003', style='EmbeddedCardTitle.TLabel').pack(anchor='w')
+        ttk.Label(left, text='msg.0004', style='EmbeddedCardSubtle.TLabel').pack(anchor='w')
+        # Treeview 自体の選択背景や自動スクロールバーに左右されず、
+        # 表の四辺が常に連続して見える専用の外枠を使用する。
+        workflow_table = tk.Frame(
+            left,
+            background='#D4D4D4',
+            highlightbackground='#D4D4D4',
+            highlightcolor='#D4D4D4',
+            highlightthickness=1,
+            bd=0,
+        )
         workflow_table.pack(fill='both', expand=True, pady=6)
         self.workflow_tree = ttk.Treeview(workflow_table, columns=('position', 'name', 'enabled', 'pcl_start', 'guard'), show='headings', height=8)
         self.workflow_tree.heading('position', text='msg.0005')
@@ -502,58 +666,42 @@ class FlowManagerApp:
         self.workflow_tree.bind('<<TreeviewSelect>>', self._select_workflow)
         self.workflow_tree.bind('<Double-1>', self._workflow_double_click)
         self._bind_drag_sort(self.workflow_tree, 'workflow')
-        workflow_buttons = ttk.Frame(left)
+        workflow_buttons = ttk.Frame(left, style='EmbeddedCardBody.TFrame')
         workflow_buttons.pack(fill='x')
-        controls = (
-            ('msg.0008', self._add_workflow, 'Action.TButton'),
-            ('msg.0009', self._edit_workflow, 'TButton'),
-            ('msg.0013', self._toggle_workflow, 'TButton'),
-            ('msg.0010', self._delete_workflow, 'Danger.TButton'),
-            ('msg.0011', lambda: self._move_workflow(-1), 'TButton'),
-            ('msg.0012', lambda: self._move_workflow(1), 'TButton'),
-            ('msg.0014', self._toggle_pcl_start, 'TButton'),
-            ('msg.0403', self._edit_workflow_guard, 'TButton'),
-        )
-        for index, (text, command, button_style) in enumerate(controls):
-            ttk.Button(workflow_buttons, text=text, command=command, style=button_style).grid(
-                row=index // 4, column=index % 4, padx=2, pady=2, sticky='ew'
-            )
-        for column in range(4):
+        ttk.Button(
+            workflow_buttons, text='msg.0008', command=self._add_workflow,
+            style='Action.TButton',
+        ).grid(row=0, column=0, padx=3, pady=3, sticky='ew')
+        ttk.Button(
+            workflow_buttons, text='msg.0013', command=self._toggle_workflow,
+            style='Secondary.TButton',
+        ).grid(row=0, column=1, padx=3, pady=3, sticky='ew')
+        ttk.Button(
+            workflow_buttons, text='msg.0403', command=self._edit_workflow_guard,
+            style='Secondary.TButton',
+        ).grid(row=1, column=0, padx=3, pady=3, sticky='ew')
+        ttk.Button(
+            workflow_buttons, text='msg.0010', command=self._delete_workflow,
+            style='Danger.TButton',
+        ).grid(row=1, column=1, padx=3, pady=3, sticky='ew')
+        for column in range(2):
             workflow_buttons.columnconfigure(column, weight=1, uniform='workflow_action')
-        collection_buttons = ttk.Frame(left)
+        collection_buttons = ttk.Frame(left, style='EmbeddedCardBody.TFrame')
         collection_buttons.pack(fill='x', pady=(12, 0))
         ttk.Separator(collection_buttons).pack(fill='x', pady=(0, 8))
-        ttk.Label(collection_buttons, text='msg.0015', style='Subtle.TLabel').pack(anchor='w', pady=(0, 5))
+        ttk.Label(collection_buttons, text='msg.0015', style='EmbeddedCardSubtle.TLabel').pack(anchor='w', pady=(0, 5))
         ttk.Button(collection_buttons, text='msg.0016', command=self._import, style='Toolbar.TButton').pack(fill='x', pady=2)
         ttk.Button(collection_buttons, text='msg.0017', command=self._export, style='Toolbar.TButton').pack(fill='x', pady=2)
-        header = ttk.Frame(right)
+        header = ttk.Frame(right, style='EmbeddedCardBody.TFrame')
         header.pack(fill='x')
-        self.title_label = ttk.Label(header, text='msg.0018', style='Section.TLabel')
+        self.title_label = ttk.Label(header, text='msg.0018', style='PageTitle.TLabel')
         self.title_label.pack(side='left')
-        ttk.Menubutton(header, text='⚙ msg.0371', menu=self.settings_menu, style='Toolbar.TMenubutton').pack(side='right', padx=(6, 0))
-        ttk.Button(header, text='msg.0019', command=self._manage_structured_data, style='Toolbar.TButton').pack(side='right', padx=3)
-        ttk.Button(header, text='msg.0020', command=self._design_schema, style='Toolbar.TButton').pack(side='right', padx=3)
-        ttk.Button(header, text='msg.0460', command=self._manage_auth_state, style='Toolbar.TButton').pack(side='right', padx=3)
-        self.run_button = tk.Button(header, text='msg.0021', command=self._run_workflow, bg='#0078D4', fg='white', activebackground='#106EBE', activeforeground='white', disabledforeground='#F3F3F3', relief='flat', bd=0, font=(self.ui_font_family, self.ui_font_size, 'bold'), padx=12, pady=3, cursor='hand2')
-        self.run_button.pack(side='right', padx=3)
         ttk.Separator(right).pack(fill='x', pady=(8, 4))
-        self.execution_status = ttk.Label(right, text='msg.0026', style='Subtle.TLabel')
-        self.execution_status.pack(fill='x', pady=(3, 0))
-        self.execution_panel = ttk.Frame(right)
-        self.execution_panel.pack(fill='both', expand=True, pady=(8, 0))
-        execution_tab_bar = ttk.Frame(self.execution_panel)
-        execution_tab_bar.pack(fill='x')
-        self.execution_tab_buttons: dict[str, ttk.Button] = {}
-        for index, (name, text) in enumerate((('events', 'msg.0452'), ('status', 'msg.0444'), ('log', 'msg.0036'))):
-            button = ttk.Button(execution_tab_bar, text=text, command=lambda tab=name: self._select_execution_tab(tab), style='ExecutionTabSelected.TButton' if name == 'events' else 'ExecutionTab.TButton')
-            button.pack(side='left', padx=(2 if index else 0, 0))
-            self.execution_tab_buttons[name] = button
-        execution_content = ttk.Frame(self.execution_panel, style='ExecutionTab.TFrame')
-        execution_content.pack(fill='both', expand=True)
-        event_tab = ttk.Frame(execution_content, style='ExecutionTab.TFrame')
+        event_tab = ttk.Frame(right, style='EmbeddedCardBody.TFrame')
+        event_tab.pack(fill='both', expand=True)
 
         columns = ('action', 'value', 'data_path', 'guard', 'enabled', 'position')
-        self.event_table = ttk.Frame(event_tab)
+        self.event_table = ttk.Frame(event_tab, style='EmbeddedCardBody.TFrame')
         self.event_table.pack(fill='both', expand=True, pady=(8, 4))
         event_tree_style = ttk.Style(self.root)
         event_tree_style.layout('Event.Treeview.Item', [
@@ -592,7 +740,7 @@ class FlowManagerApp:
         self.event_tree.tag_configure('event_group', background='#F3F3F3', foreground='#3D3D3D', font=small_bold_font)
         self.event_tree.bind('<Double-1>', self._event_double_click)
         self._bind_drag_sort(self.event_tree, 'event')
-        event_buttons = ttk.Frame(event_tab)
+        event_buttons = ttk.Frame(event_tab, style='EmbeddedCardBody.TFrame')
         event_buttons.pack(fill='x')
         event_actions = (
             ('msg.0034', self._add_event, 'Action.TButton'),
@@ -603,10 +751,126 @@ class FlowManagerApp:
             ('msg.0010', self._delete_event, 'Danger.TButton'),
         )
         for index, (text, command, button_style) in enumerate(event_actions):
+            if button_style == 'TButton':
+                button_style = 'Secondary.TButton'
             ttk.Button(event_buttons, text=text, command=command, style=button_style).grid(
                 row=0, column=index, padx=3, pady=2, sticky='ew'
             )
             event_buttons.columnconfigure(index, weight=1, uniform='event_action')
+
+        execution_header = ttk.Frame(execution_page, padding=(30, 14, 30, 12), style='PageHeader.TFrame')
+        execution_header.pack(fill='x')
+        execution_titles = ttk.Frame(execution_header, style='PageHeader.TFrame')
+        execution_titles.pack(side='left', fill='x', expand=True)
+        ttk.Label(execution_titles, text='msg.0532', style='PageTitle.TLabel').pack(anchor='w')
+        ttk.Label(
+            execution_titles,
+            text='msg.0535',
+            style='PageSubtitle.TLabel',
+        ).pack(anchor='w', pady=(4, 0))
+        self.run_button = tk.Button(
+            execution_header,
+            text='msg.0021',
+            command=self._run_workflow,
+            bg='#0078D4',
+            fg='white',
+            activebackground='#106EBE',
+            activeforeground='white',
+            disabledforeground='#F3F3F3',
+            relief='flat',
+            bd=0,
+            font=(self.ui_font_family, self.ui_font_size, 'bold'),
+            padx=18,
+            pady=8,
+            cursor='hand2',
+        )
+        self.run_button.pack(side='right')
+        ttk.Separator(execution_page).pack(fill='x')
+
+        summary = ttk.Frame(execution_page, padding=(22, 4), style='Summary.TFrame')
+        summary.pack(fill='x')
+        self.execution_status = ttk.Label(summary, text='msg.0026', style='CompactSummary.TLabel')
+        self.execution_status.pack(side='left', fill='x', expand=True)
+        ttk.Separator(summary, orient='vertical').pack(side='left', fill='y', pady=4)
+        self.execution_target_summary = ttk.Label(summary, text='msg.0536', style='CompactSummary.TLabel')
+        self.execution_target_summary.pack(side='left', fill='x', expand=True)
+        ttk.Separator(summary, orient='vertical').pack(side='left', fill='y', pady=4)
+        session_settings = ttk.Frame(summary, style='Summary.TFrame')
+        session_settings.pack(side='left', fill='x', expand=True)
+        ttk.Label(session_settings, text='msg.0287', style='CompactSummary.TLabel').pack(side='left')
+        self.execution_session_limit = tk.StringVar(value=str(self.db.get_pcl_session_limit()))
+        execution_session_spinbox = ttk.Spinbox(
+            session_settings, from_=1, to=20, width=4,
+            textvariable=self.execution_session_limit,
+            command=self._save_execution_session_limit,
+        )
+        execution_session_spinbox.pack(side='left', padx=(6, 0))
+        execution_session_spinbox.bind('<Return>', self._save_execution_session_limit)
+        execution_session_spinbox.bind('<FocusOut>', self._save_execution_session_limit)
+        ttk.Separator(execution_page).pack(fill='x')
+
+        self.execution_panel = ttk.Frame(execution_page, padding=(22, 16, 22, 16), style='Page.TFrame')
+        self.execution_panel.pack(fill='both', expand=True)
+        execution_toolbar = ttk.Frame(self.execution_panel, style='Page.TFrame')
+        execution_toolbar.pack(fill='x')
+        execution_tab_bar = ttk.Frame(execution_toolbar, style='Page.TFrame')
+        execution_tab_bar.pack(side='left')
+        self.execution_tab_buttons: dict[str, ttk.Button] = {}
+        for index, (name, text) in enumerate((('status', 'msg.0444'), ('log', 'msg.0036'))):
+            button = ttk.Button(
+                execution_tab_bar,
+                text=text,
+                command=lambda tab=name: self._select_execution_tab(tab),
+                style='ExecutionTabSelected.TButton' if name == 'status' else 'ExecutionTab.TButton',
+            )
+            button.pack(side='left', padx=(2 if index else 0, 0))
+            self.execution_tab_buttons[name] = button
+        ttk.Button(
+            execution_toolbar,
+            text='msg.0537',
+            command=self._clear_execution_results,
+            style='ExecutionAction.TButton',
+        ).pack(side='right')
+        self.stop_button = ttk.Button(
+            execution_toolbar,
+            text='msg.0538',
+            style='ExecutionAction.TButton',
+            state='disabled',
+        )
+        self.stop_button.pack(side='right', padx=(0, 8))
+        ttk.Button(
+            execution_toolbar, text='msg.0292',
+            command=self._set_execution_record_group, style='ExecutionAction.TButton',
+        ).pack(side='right', padx=(0, 6))
+        ttk.Button(
+            execution_toolbar, text='msg.0291',
+            command=self._toggle_execution_record, style='ExecutionAction.TButton',
+        ).pack(side='right', padx=(0, 6))
+        execution_content = ttk.Frame(self.execution_panel, style='ExecutionSurface.TFrame')
+        execution_content.pack(fill='both', expand=True)
+        execution_footer = ttk.Frame(self.execution_panel, padding=(14, 10), style='ExecutionSurface.TFrame')
+        execution_footer.pack(fill='x', pady=(10, 0))
+        self.execution_progress_text = ttk.Label(
+            execution_footer,
+            text='msg.0539',
+            style='ExecutionTab.TLabel',
+        )
+        self.execution_progress_text.pack(side='left')
+        self.execution_progress = ttk.Progressbar(
+            execution_footer,
+            mode='determinate',
+            maximum=1,
+            value=0,
+            style='Execution.Horizontal.TProgressbar',
+        )
+        self.execution_progress.pack(side='left', fill='x', expand=True, padx=18)
+        self.execution_progress_count = ttk.Label(
+            execution_footer,
+            text='0 / 0',
+            style='ExecutionTab.TLabel',
+        )
+        self.execution_progress_count.pack(side='right')
+
         self.parallel_frame = ttk.Frame(execution_content, padding=(10, 8), style='ExecutionTab.TFrame')
         self.parallel_summary = ttk.Label(self.parallel_frame, text='msg.0451', style='ExecutionTab.TLabel')
         self.parallel_summary.grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 6))
@@ -616,24 +880,34 @@ class FlowManagerApp:
             bd=0,
             highlightthickness=0,
         )
-        parallel_table_frame.grid(row=1, column=0, sticky='nsew')
+        parallel_table_frame.grid(row=1, column=0, columnspan=2, sticky='nsew')
         parallel_table_inner = tk.Frame(parallel_table_frame, bg='#FFFFFF', bd=0, highlightthickness=0)
         parallel_table_inner.grid(row=0, column=0, sticky='nsew', padx=1, pady=1)
-        parallel_columns = ('group', 'data', 'workflow', 'event', 'status')
+        parallel_columns = ('group', 'enabled', 'data', 'summary', 'workflow', 'event', 'status')
         self.parallel_tree = ttk.Treeview(parallel_table_inner, columns=parallel_columns, show='headings', height=4, style='Status.Treeview')
-        for column, heading, width in (
-            ('group', 'msg.0445', 65), ('data', 'msg.0446', 130),
-            ('workflow', 'msg.0447', 165), ('event', 'msg.0448', 220),
-            ('status', 'msg.0288', 85),
+        for column, heading, width, minimum in (
+            ('group', 'msg.0522', 120, 105), ('enabled', 'msg.0523', 130, 115),
+            ('data', 'msg.0446', 160, 130), ('summary', 'msg.0517', 150, 110),
+            ('workflow', 'msg.0447', 170, 130), ('event', 'msg.0448', 220, 160),
+            ('status', 'msg.0288', 120, 100),
         ):
             self.parallel_tree.heading(column, text=heading)
-            self.parallel_tree.column(column, width=width, minwidth=55, stretch=column in {'data', 'workflow', 'event'})
-        self.parallel_scrollbar = ttk.Scrollbar(parallel_table_inner, orient='vertical', command=self.parallel_tree.yview)
-        self.parallel_tree.configure(yscrollcommand=self.parallel_scrollbar.set)
+            self.parallel_tree.column(column, width=width, minwidth=minimum, stretch=False)
+        self.parallel_scrollbar = AutoScrollbar(parallel_table_inner, orient='vertical', command=self.parallel_tree.yview)
+        self.parallel_xscrollbar = AutoScrollbar(parallel_table_inner, orient='horizontal', command=self.parallel_tree.xview)
+        self.parallel_tree.configure(
+            yscrollcommand=self.parallel_scrollbar.set,
+            xscrollcommand=self.parallel_xscrollbar.set,
+        )
         self.parallel_tree.grid(row=0, column=0, sticky='nsew')
         self.parallel_scrollbar.grid(row=0, column=1, sticky='ns')
+        self.parallel_xscrollbar.grid(row=1, column=0, sticky='ew')
         self.parallel_scrollbar.grid_remove()
+        self.parallel_xscrollbar.grid_remove()
         self.parallel_tree.bind('<Configure>', self._resize_execution_status_columns)
+        self.parallel_tree.bind('<Double-1>', self._execution_record_double_click)
+        self.parallel_tree.bind('<Motion>', self._execution_record_motion)
+        self.parallel_tree.bind('<Leave>', lambda _event: self.parallel_tree.configure(cursor=''))
         parallel_table_inner.columnconfigure(0, weight=1)
         parallel_table_inner.rowconfigure(0, weight=1)
         parallel_table_frame.columnconfigure(0, weight=1)
@@ -666,8 +940,544 @@ class FlowManagerApp:
         log_inner.rowconfigure(0, weight=1)
         self.log_frame.columnconfigure(0, weight=1)
         self.log_frame.rowconfigure(0, weight=1)
-        self.execution_tabs = {'events': event_tab, 'status': self.parallel_frame, 'log': log_tab}
-        self._select_execution_tab('events')
+        self.execution_tabs = {'status': self.parallel_frame, 'log': log_tab}
+
+        self._build_embedded_page_header(
+            schema_page,
+            'msg.0530',
+            'msg.0540',
+        )
+        schema_host = ttk.Frame(schema_page, padding=(22, 8, 22, 20), style='Page.TFrame')
+        schema_host.pack(fill='both', expand=True)
+        self.schema_view = SchemaDesignerDialog(
+            schema_host,
+            self.db,
+            0,
+            'msg.0088',
+            embedded=True,
+        )
+        ttk.Frame.pack(self.schema_view, fill='both', expand=True)
+
+        self._build_embedded_page_header(
+            data_page,
+            'msg.0019',
+            'msg.0541',
+        )
+        data_host = ttk.Frame(data_page, padding=(22, 8, 22, 20), style='Page.TFrame')
+        data_host.pack(fill='both', expand=True)
+        self.data_view = HierarchicalDataDialog(
+            data_host,
+            self.db,
+            0,
+            'msg.0088',
+            embedded=True,
+        )
+        ttk.Frame.pack(self.data_view, fill='both', expand=True)
+
+        self._build_embedded_page_header(
+            auth_page,
+            'msg.0460',
+            'msg.0542',
+        )
+        auth_host = ttk.Frame(auth_page, padding=(22, 8, 22, 20), style='Page.TFrame')
+        auth_host.pack(fill='both', expand=True)
+        self.auth_view = AuthStateDialog(
+            auth_host,
+            self.project_dir,
+            self.auth_browser,
+            self.db.get_auth_profile(),
+            self._set_auth_profile,
+            self.settings['picker']['start_url'],
+            embedded=True,
+        )
+        ttk.Frame.pack(self.auth_view, fill='both', expand=True)
+
+        self._build_settings_page(settings_page)
+        self._select_execution_tab('status')
+        self._refresh_execution_overview()
+        self._refresh_execution_plan_preview()
+        self._show_page('design')
+
+    def _add_sidebar_button(
+            self,
+            parent: ttk.Frame,
+            key: str,
+            text: str,
+            command: Callable[[], object],
+    ) -> None:
+        """サイドバー項目を同じ見た目と余白で追加する。"""
+        def invoke() -> None:
+            command()
+            self.root.after_idle(self.root.focus_set)
+
+        button = ttk.Button(
+            parent,
+            text=text,
+            image=self.sidebar_icons[key]['normal'],
+            compound='left',
+            command=invoke,
+            style='Sidebar.TButton',
+            takefocus=False,
+        )
+        button.pack(fill='x', padx=12, pady=1)
+        self.sidebar_buttons[key] = button
+
+    def _create_sidebar_icons(self) -> dict[str, dict[str, tk.PhotoImage]]:
+        """サイドバー用の軽量な線画アイコンを通常色と選択色で生成する。"""
+        icon_builders = {
+            'auth': self._draw_auth_icon,
+            'design': self._draw_flow_icon,
+            'schema': self._draw_database_icon,
+            'data': self._draw_table_icon,
+            'execution': self._draw_execution_icon,
+            'settings': self._draw_settings_icon,
+        }
+        colors = {'normal': '#4B5563', 'selected': '#0067C0'}
+        icons: dict[str, dict[str, tk.PhotoImage]] = {}
+        for key, builder in icon_builders.items():
+            icons[key] = {}
+            for state, color in colors.items():
+                image = tk.PhotoImage(master=self.root, width=20, height=20)
+                builder(image, color)
+                icons[key][state] = image
+        return icons
+
+    @staticmethod
+    def _icon_pixel(image: tk.PhotoImage, color: str, x: int, y: int, size: int = 1) -> None:
+        """画像範囲内にだけアイコンの画素を描画する。"""
+        if 0 <= x < 20 and 0 <= y < 20:
+            image.put(color, to=(x, y, min(20, x + size), min(20, y + size)))
+
+    @classmethod
+    def _icon_line(
+            cls,
+            image: tk.PhotoImage,
+            color: str,
+            start: tuple[int, int],
+            end: tuple[int, int],
+            width: int = 2,
+    ) -> None:
+        """整数座標の線分を描画し、外部画像ライブラリへの依存を避ける。"""
+        x1, y1 = start
+        x2, y2 = end
+        dx = abs(x2 - x1)
+        sx = 1 if x1 < x2 else -1
+        dy = -abs(y2 - y1)
+        sy = 1 if y1 < y2 else -1
+        error = dx + dy
+        while True:
+            cls._icon_pixel(image, color, x1, y1, width)
+            if x1 == x2 and y1 == y2:
+                break
+            doubled = error * 2
+            if doubled >= dy:
+                error += dy
+                x1 += sx
+            if doubled <= dx:
+                error += dx
+                y1 += sy
+
+    @classmethod
+    def _icon_rectangle(
+            cls,
+            image: tk.PhotoImage,
+            color: str,
+            left: int,
+            top: int,
+            right: int,
+            bottom: int,
+    ) -> None:
+        cls._icon_line(image, color, (left, top), (right, top))
+        cls._icon_line(image, color, (right, top), (right, bottom))
+        cls._icon_line(image, color, (right, bottom), (left, bottom))
+        cls._icon_line(image, color, (left, bottom), (left, top))
+
+    @classmethod
+    def _draw_auth_icon(cls, image: tk.PhotoImage, color: str) -> None:
+        for x, y in ((8, 3), (9, 2), (10, 2), (11, 3), (12, 4), (12, 5),
+                     (11, 6), (10, 7), (9, 7), (8, 6), (7, 5), (7, 4)):
+            cls._icon_pixel(image, color, x, y, 2)
+        cls._icon_line(image, color, (5, 16), (6, 12))
+        cls._icon_line(image, color, (6, 12), (9, 10))
+        cls._icon_line(image, color, (9, 10), (12, 10))
+        cls._icon_line(image, color, (12, 10), (15, 12))
+        cls._icon_line(image, color, (15, 12), (16, 16))
+        cls._icon_line(image, color, (5, 16), (16, 16))
+
+    @classmethod
+    def _draw_flow_icon(cls, image: tk.PhotoImage, color: str) -> None:
+        for left, top, right, bottom in ((7, 2, 12, 6), (2, 13, 7, 17), (13, 13, 18, 17)):
+            cls._icon_rectangle(image, color, left, top, right, bottom)
+        cls._icon_line(image, color, (10, 7), (10, 10))
+        cls._icon_line(image, color, (5, 10), (15, 10))
+        cls._icon_line(image, color, (5, 10), (5, 12))
+        cls._icon_line(image, color, (15, 10), (15, 12))
+
+    @classmethod
+    def _draw_database_icon(cls, image: tk.PhotoImage, color: str) -> None:
+        cls._icon_line(image, color, (4, 4), (6, 2))
+        cls._icon_line(image, color, (6, 2), (14, 2))
+        cls._icon_line(image, color, (14, 2), (16, 4))
+        cls._icon_line(image, color, (16, 4), (14, 6))
+        cls._icon_line(image, color, (14, 6), (6, 6))
+        cls._icon_line(image, color, (6, 6), (4, 4))
+        cls._icon_line(image, color, (4, 4), (4, 15))
+        cls._icon_line(image, color, (16, 4), (16, 15))
+        cls._icon_line(image, color, (4, 10), (6, 12))
+        cls._icon_line(image, color, (6, 12), (14, 12))
+        cls._icon_line(image, color, (14, 12), (16, 10))
+        cls._icon_line(image, color, (4, 15), (6, 17))
+        cls._icon_line(image, color, (6, 17), (14, 17))
+        cls._icon_line(image, color, (14, 17), (16, 15))
+
+    @classmethod
+    def _draw_table_icon(cls, image: tk.PhotoImage, color: str) -> None:
+        cls._icon_rectangle(image, color, 2, 3, 18, 17)
+        cls._icon_line(image, color, (2, 8), (18, 8))
+        cls._icon_line(image, color, (2, 13), (18, 13))
+        cls._icon_line(image, color, (8, 3), (8, 17))
+        cls._icon_line(image, color, (13, 3), (13, 17))
+
+    @classmethod
+    def _draw_execution_icon(cls, image: tk.PhotoImage, color: str) -> None:
+        cls._icon_rectangle(image, color, 2, 2, 18, 18)
+        for left, right, y in ((7, 8, 6), (7, 11, 7), (7, 13, 8), (7, 15, 9),
+                               (7, 15, 10), (7, 13, 11), (7, 11, 12), (7, 8, 13)):
+            image.put(color, to=(left, y, right, y + 1))
+
+    @classmethod
+    def _draw_settings_icon(cls, image: tk.PhotoImage, color: str) -> None:
+        # 小さい歯車は中心円と八方向のスポークで明瞭に見せる。
+        for x, y in ((8, 7), (9, 6), (10, 6), (11, 7), (12, 8), (12, 10),
+                     (11, 12), (9, 12), (7, 11), (6, 9), (7, 8)):
+            cls._icon_pixel(image, color, x, y, 2)
+        for start, end in (
+            ((10, 1), (10, 5)), ((10, 14), (10, 18)),
+            ((1, 10), (5, 10)), ((14, 10), (18, 10)),
+            ((3, 3), (6, 6)), ((14, 14), (17, 17)),
+            ((3, 17), (6, 14)), ((14, 6), (17, 3)),
+        ):
+            cls._icon_line(image, color, start, end)
+        image.put('#FFFFFF', to=(9, 9, 12, 12))
+
+    @staticmethod
+    def _build_embedded_page_header(parent: ttk.Frame, title: str, subtitle: str) -> None:
+        """埋め込み画面に共通のタイトル領域を追加する。"""
+        header = ttk.Frame(parent, padding=(30, 24, 30, 16), style='PageHeader.TFrame')
+        header.pack(fill='x')
+        ttk.Label(header, text=title, style='PageTitle.TLabel').pack(anchor='w')
+        ttk.Label(header, text=subtitle, style='PageSubtitle.TLabel').pack(anchor='w', pady=(4, 0))
+        ttk.Separator(parent).pack(fill='x')
+
+    def _show_page(self, page_name: str) -> None:
+        """指定した主画面を表示し、選択中のメニューを強調する。"""
+        page = self.page_frames.get(page_name)
+        if page is None:
+            return
+        page.lift()
+        selected_key = page_name
+        for key, button in self.sidebar_buttons.items():
+            selected = key == selected_key
+            button.configure(
+                style='SidebarSelected.TButton' if selected else 'Sidebar.TButton',
+                image=self.sidebar_icons[key]['selected' if selected else 'normal'],
+            )
+        if page_name == 'execution':
+            self._refresh_execution_overview()
+            self._refresh_execution_plan_preview()
+            self.root.after_idle(self._update_execution_status_scrollbar)
+        elif page_name == 'data':
+            self.data_view.schema = self.db.get_data_schema(0)
+            self.data_view._sync_all_records(show_message=False)
+            self.data_view._refresh_records(self.data_view.current_id)
+        elif page_name == 'auth':
+            try:
+                self.debug_browser.close_browser()
+            except Exception:
+                pass
+            self.auth_view._refresh_profiles(self.db.get_auth_profile())
+
+    def _build_settings_page(self, page: ttk.Frame) -> None:
+        """外観、言語、実行時ブラウザーの設定画面を構築する。"""
+        self._build_embedded_page_header(
+            page,
+            'msg.0533',
+            'msg.0543',
+        )
+        body = ttk.Frame(page, padding=(30, 22), style='Page.TFrame')
+        body.pack(fill='both', expand=True)
+        body.columnconfigure(0, weight=1, uniform='settings_card')
+        body.columnconfigure(1, weight=1, uniform='settings_card')
+
+        display_card = ttk.Frame(body, padding=(24, 20), style='ExecutionSurface.TFrame')
+        display_card.grid(row=0, column=0, sticky='nsew', padx=(0, 10))
+        display_card.columnconfigure(1, weight=1)
+        ttk.Label(display_card, text='msg.0544', style='DialogCardSection.TLabel').grid(
+            row=0,
+            column=0,
+            columnspan=2,
+            sticky='w',
+        )
+        ttk.Label(
+            display_card,
+            text='msg.0545',
+            style='DialogCardSubtle.TLabel',
+        ).grid(
+            row=1,
+            column=0,
+            columnspan=2,
+            sticky='w',
+            pady=(2, 16),
+        )
+        ttk.Label(display_card, text='msg.0546', width=14, anchor='w', style='DialogCard.TLabel').grid(row=2, column=0, sticky='w', pady=7)
+        font_box = ttk.Combobox(
+            display_card,
+            textvariable=self.font_family_choice,
+            values=self.available_font_families,
+            state='readonly',
+            width=30,
+        )
+        font_box.grid(row=2, column=1, sticky='w', pady=7)
+        font_box.bind(
+            '<<ComboboxSelected>>',
+            lambda _event: self._set_ui_font(family=self.font_family_choice.get()),
+        )
+        ttk.Label(display_card, text='msg.0547', width=14, anchor='w', style='DialogCard.TLabel').grid(row=3, column=0, sticky='w', pady=7)
+        size_box = ttk.Combobox(
+            display_card,
+            textvariable=self.font_size_choice,
+            values=(8, 9, 10, 11, 12, 14, 16, 18),
+            state='readonly',
+            width=10,
+        )
+        size_box.grid(row=3, column=1, sticky='w', pady=7)
+        size_box.bind(
+            '<<ComboboxSelected>>',
+            lambda _event: self._set_ui_font(size=int(self.font_size_choice.get())),
+        )
+        ttk.Label(display_card, text='msg.0548', width=14, anchor='w', style='DialogCard.TLabel').grid(row=4, column=0, sticky='w', pady=7)
+        language_box = ttk.Combobox(
+            display_card,
+            textvariable=self.menu_language_choice,
+            values=('ja', 'zh'),
+            state='readonly',
+            width=10,
+        )
+        language_box.grid(row=4, column=1, sticky='w', pady=7)
+        language_box.bind(
+            '<<ComboboxSelected>>',
+            lambda _event: self._set_language_from_menu(self.menu_language_choice.get()),
+        )
+        display_actions = ttk.Frame(display_card, style='DialogCardBody.TFrame')
+        display_actions.grid(row=5, column=0, columnspan=2, sticky='w', pady=(18, 0))
+        ttk.Button(
+            display_actions,
+            text='msg.0549',
+            command=self._reset_ui_font,
+            style='Secondary.TButton',
+        ).pack(side='left')
+        ttk.Button(
+            display_actions,
+            text='msg.0550',
+            command=lambda: self.root.geometry('1380x820'),
+            style='Secondary.TButton',
+        ).pack(side='left', padx=(8, 0))
+
+        browser_card = ttk.Frame(body, padding=(24, 20), style='ExecutionSurface.TFrame')
+        browser_card.grid(row=0, column=1, sticky='nsew', padx=(10, 0))
+        browser_card.columnconfigure(1, weight=1)
+        ttk.Label(browser_card, text='msg.0551', style='DialogCardSection.TLabel').grid(
+            row=0, column=0, columnspan=3, sticky='w'
+        )
+        ttk.Label(
+            browser_card,
+            text='msg.0552',
+            style='DialogCardSubtle.TLabel',
+            wraplength=520,
+            justify='left',
+        ).grid(row=1, column=0, columnspan=3, sticky='w', pady=(2, 16))
+        ttk.Label(browser_card, text='msg.0553', width=18, anchor='w', style='DialogCard.TLabel').grid(
+            row=2, column=0, sticky='w', pady=7
+        )
+        ttk.Entry(browser_card, textvariable=self.start_url_choice).grid(
+            row=2, column=1, columnspan=2, sticky='ew', pady=7
+        )
+        ttk.Label(browser_card, text='msg.0506', width=18, anchor='w', style='DialogCard.TLabel').grid(
+            row=3, column=0, sticky='w', pady=7
+        )
+        ttk.Spinbox(
+            browser_card,
+            textvariable=self.default_timeout_choice,
+            from_=1,
+            to=3600000,
+            increment=1000,
+            width=14,
+        ).grid(row=3, column=1, sticky='w', pady=7)
+        ttk.Label(browser_card, text='msg.0507', style='DialogCardSubtle.TLabel').grid(
+            row=3, column=2, sticky='w', padx=(10, 0), pady=7
+        )
+        ttk.Checkbutton(
+            browser_card,
+            text='msg.0554',
+            variable=self.browser_visible,
+            style='DialogCard.TCheckbutton',
+        ).grid(row=4, column=0, columnspan=3, sticky='w', pady=(12, 4))
+        ttk.Label(
+            browser_card,
+            text='msg.0555',
+            style='DialogCardSubtle.TLabel',
+            wraplength=520,
+            justify='left',
+        ).grid(row=5, column=0, columnspan=3, sticky='w', pady=(0, 14))
+        ttk.Button(
+            browser_card,
+            text='msg.0508',
+            command=self._save_execution_settings,
+            style='Primary.TButton',
+        ).grid(row=6, column=0, columnspan=3, sticky='e')
+
+    def _refresh_execution_overview(self) -> None:
+        """実行画面上部の対象件数と Session 数を最新化する。"""
+        records = [row for row in self.db.list_data_records() if row['enabled']]
+        self.execution_target_summary.configure(text=f'msg.0556{len(records)}msg.0557')
+        self.execution_session_limit.set(str(self.db.get_pcl_session_limit()))
+
+    def _save_execution_session_limit(self, _event: object=None) -> None:
+        try:
+            limit = int(self.execution_session_limit.get())
+            self.db.set_pcl_session_limit(limit)
+        except (TypeError, ValueError):
+            self.execution_session_limit.set(str(self.db.get_pcl_session_limit()))
+
+    @staticmethod
+    def _execution_group_sort_key(value: object) -> tuple[tuple[int, object], ...]:
+        """実行グループを数値部分優先の自然順で比較できる形にする。"""
+        return tuple(
+            (0, int(part)) if part.isdigit() else (1, part.casefold())
+            for part in re.split(r'(\d+)', str(value))
+            if part
+        )
+
+    def _refresh_execution_plan_preview(self) -> None:
+        """未実行時はデータ管理の現在の実行設定を一覧表示する。"""
+        if self.running or self.execution_task_states:
+            return
+        records = sorted(
+            (dict(row) for row in self.db.list_data_records()),
+            key=lambda record: (
+                self._execution_group_sort_key(record['execution_group']),
+                int(record['id']),
+            ),
+        )
+        enabled_count = sum(bool(record['enabled']) for record in records)
+        skipped_count = len(records) - enabled_count
+        group_totals: dict[str, int] = {}
+        for record in records:
+            group = str(record['execution_group'])
+            group_totals[group] = group_totals.get(group, 0) + 1
+        group_positions: dict[str, int] = {}
+        self.parallel_tree.delete(*self.parallel_tree.get_children())
+        self.parallel_tree.tag_configure('preview_skipped', foreground='#999999')
+        for record in records:
+            enabled = bool(record['enabled'])
+            group = str(record['execution_group'])
+            group_positions[group] = group_positions.get(group, 0) + 1
+            self.parallel_tree.insert(
+                '',
+                'end',
+                iid=f'preview:{record["id"]}',
+                values=(
+                    group,
+                    tr('msg.0248') if enabled else tr('msg.0309'),
+                    f'({group_positions[group]}/{group_totals[group]})  {record["name"]}',
+                    record['summary'],
+                    '-',
+                    '-',
+                    tr('msg.0513') if enabled else tr('msg.0309'),
+                ),
+                tags=() if enabled else ('preview_skipped',),
+            )
+        self.parallel_summary.configure(
+            text=f'{tr("msg.0513")}: {enabled_count} / {tr("msg.0309")}: {skipped_count}'
+        )
+        self.execution_progress.configure(maximum=max(1, enabled_count), value=0)
+        self.execution_progress_text.configure(text='msg.0539')
+        self.execution_progress_count.configure(text=f'0 / {enabled_count}')
+        if getattr(self, 'selected_execution_tab', None) == 'status':
+            self.root.after_idle(self._update_execution_status_scrollbar)
+
+    def _selected_execution_record_id(self) -> int | None:
+        selection = self.parallel_tree.selection()
+        if self.running or not selection or not selection[0].startswith('preview:'):
+            return None
+        return int(selection[0].split(':', 1)[1])
+
+    def _toggle_execution_record(self) -> None:
+        record_id = self._selected_execution_record_id()
+        if record_id is None:
+            messagebox.showinfo('msg.0310', 'msg.0311', parent=self.root)
+            return
+        record = next(row for row in self.db.list_data_records() if row['id'] == record_id)
+        self.db.set_data_record_enabled(record_id, not record['enabled'])
+        self._refresh_execution_overview()
+        self._refresh_execution_plan_preview()
+        self.parallel_tree.selection_set(f'preview:{record_id}')
+
+    def _set_execution_record_group(self) -> None:
+        record_id = self._selected_execution_record_id()
+        if record_id is None:
+            messagebox.showinfo('msg.0310', 'msg.0312', parent=self.root)
+            return
+        record = next(row for row in self.db.list_data_records() if row['id'] == record_id)
+        group = simpledialog.askstring(
+            'msg.0313', 'msg.0314', initialvalue=record['execution_group'], parent=self.root,
+        )
+        if group is None:
+            return
+        try:
+            self.db.set_data_record_group(record_id, group)
+        except ValueError as error:
+            messagebox.showerror('msg.0315', str(error), parent=self.root)
+            return
+        self._refresh_execution_plan_preview()
+        self.parallel_tree.selection_set(f'preview:{record_id}')
+
+    def _execution_record_double_click(self, event: tk.Event) -> str | None:
+        if self.parallel_tree.identify_region(event.x, event.y) != 'cell':
+            return None
+        item = self.parallel_tree.identify_row(event.y)
+        if not item.startswith('preview:'):
+            return None
+        self.parallel_tree.selection_set(item)
+        self.parallel_tree.focus(item)
+        column = self.parallel_tree.identify_column(event.x)
+        if column == '#1':
+            self._set_execution_record_group()
+        elif column == '#2':
+            self._toggle_execution_record()
+        return 'break'
+
+    def _execution_record_motion(self, event: tk.Event) -> None:
+        """Show that preview group/run cells can be edited by double-clicking."""
+        editable = (
+            not self.running
+            and self.parallel_tree.identify_region(event.x, event.y) == 'cell'
+            and self.parallel_tree.identify_row(event.y).startswith('preview:')
+            and self.parallel_tree.identify_column(event.x) in {'#1', '#2'}
+        )
+        self.parallel_tree.configure(cursor='hand2' if editable else '')
+
+    def _clear_execution_results(self) -> None:
+        """画面上の実行結果とログを初期状態へ戻す。"""
+        if self.running:
+            return
+        self.executing_tasks.clear()
+        self.execution_task_states.clear()
+        self._clear_log()
+        self._refresh_execution_indicators()
+        self.execution_status.configure(text='msg.0026')
+        self._refresh_execution_overview()
+        self._refresh_execution_plan_preview()
 
     def _set_initial_pane_ratio(self) -> None:
         if self.main_pane.winfo_exists() and self.main_pane.winfo_width() > 1:
@@ -677,24 +1487,36 @@ class FlowManagerApp:
         # Treeview の実クライアント幅を使用する。スクロールバー領域を固定確保すると、
         # AutoScrollbar が非表示になった際に空白が残るためである。
         available = max(620, event.width - 3)
-        fixed = {'position': 52, 'action': 82, 'enabled': 62}
+        fixed = {'position': 52, 'action': 90, 'enabled': 62}
         flexible = available - sum(fixed.values())
         widths = {
             **fixed,
-            'name': int(flexible * 0.24),
+            'name': int(flexible * 0.30),
             'value': int(flexible * 0.15),
             'data_path': int(flexible * 0.18),
-            'guard': int(flexible * 0.43),
+            'guard': int(flexible * 0.37),
         }
         for column, width in widths.items():
             target = '#0' if column == 'name' else column
-            self.event_tree.column(target, width=max(45, width))
+            minimum = 180 if target == '#0' else 45
+            self.event_tree.column(target, width=max(minimum, width))
 
     def _resize_execution_status_columns(self, event: tk.Event) -> None:
-        available = max(500, event.width - 3)
-        ratios = {'group': 0.08, 'data': 0.18, 'workflow': 0.24, 'event': 0.36, 'status': 0.14}
+        available = max(980, event.width - 3)
+        ratios = {
+            'group': 0.10, 'enabled': 0.11, 'data': 0.15, 'summary': 0.14,
+            'workflow': 0.16, 'event': 0.23, 'status': 0.11,
+        }
+        minimums = {
+            'group': 105, 'enabled': 115, 'data': 130, 'summary': 110,
+            'workflow': 130, 'event': 160, 'status': 100,
+        }
         for column, ratio in ratios.items():
-            self.parallel_tree.column(column, width=max(55, int(available * ratio)), stretch=False)
+            self.parallel_tree.column(
+                column,
+                width=max(minimums[column], int(available * ratio)),
+                stretch=False,
+            )
 
     def _select_execution_tab(self, selected: str) -> None:
         self.selected_execution_tab = selected
@@ -861,7 +1683,9 @@ class FlowManagerApp:
     def _workflow_double_click(self, event: tk.Event) -> str | None:
         if self.workflow_tree.identify_region(event.x, event.y) == 'heading':
             return 'break'
-        if self.workflow_tree.identify_column(event.x) == '#3':
+        if self.workflow_tree.identify_column(event.x) == '#2':
+            self._edit_workflow()
+        elif self.workflow_tree.identify_column(event.x) == '#3':
             self._toggle_workflow()
         elif self.workflow_tree.identify_column(event.x) == '#4':
             self._toggle_pcl_start()
@@ -957,7 +1781,7 @@ class FlowManagerApp:
         existing_rows = [dict(row) for row in self.db.list_events(self.current_workflow_id)]
         insert_before_id = self._event_insert_before_id(existing_rows, self._selected_event())
         actions = tuple(action for action in self.settings['actions'] if action not in {'loop_start', 'loop_end', 'retry_start', 'retry_end', 'group_start', 'group_end'})
-        dialog = self._register_dialog('event_editor', lambda: EventDialog(self.root, actions, self.settings['selector_types'], self._pick_element, self._test_element, self._verify_event, self._close_debug_browser, None, self._choose_data_path, self.settings['picker']['start_url']))
+        dialog = self._register_dialog('event_editor', lambda: EventDialog(self.root, actions, self.settings['selector_types'], self._pick_element, self._test_element, self._verify_event, self._close_debug_browser, None, self._choose_data_path, self.settings['picker']['start_url'], default_timeout_ms=self.db.get_default_timeout_ms()))
         if dialog is None:
             return
         self.root.wait_window(dialog)
@@ -1243,19 +2067,20 @@ class FlowManagerApp:
         # 実行中に画面側で編集されても、今回の実行計画は変化させない。
         if self.running:
             return
+        self._show_page('execution')
         self._select_execution_tab('status')
         all_workflows = self.db.list_workflows()
         enabled_workflows = [row for row in all_workflows if row['enabled']]
         if not enabled_workflows:
             messagebox.showinfo('msg.0048', 'msg.0060')
             return
-        marker = next((row for row in all_workflows if row['pcl_loop_start']), None)
-        marker_position = marker['position'] if marker else None
         jobs: list[dict[str, object]] = []
         for workflow in enabled_workflows:
             events = [dict(row) for row in self.db.list_events(workflow['id'])]
             if events:
-                jobs.append({'id': workflow['id'], 'name': workflow['name'], 'position': workflow['position'], 'events': events, 'guard': decode_guard(workflow['guard_json']), 'per_pcl': marker_position is not None and workflow['position'] >= marker_position})
+                # The former "data start" boundary is no longer part of the UI.
+                # Every enabled workflow now runs once for each enabled data row.
+                jobs.append({'id': workflow['id'], 'name': workflow['name'], 'position': workflow['position'], 'events': events, 'guard': decode_guard(workflow['guard_json']), 'per_pcl': True})
             else:
                 self._log(f"msg.0061{workflow['name']}")
         if not jobs:
@@ -1271,7 +2096,9 @@ class FlowManagerApp:
             if dialog.result is None:
                 return
             variables = dialog.result
-        all_structured_records = self.db.list_data_records()
+        # Worker/UI state uses plain dictionaries so record IDs can be mapped
+        # back to the persistent preview rows while execution is running.
+        all_structured_records = [dict(row) for row in self.db.list_data_records()]
         structured_records = [row for row in all_structured_records if row['enabled']]
         skipped_record_count = len(all_structured_records) - len(structured_records)
         pcl_jobs = [job for job in jobs if job['per_pcl']]
@@ -1295,6 +2122,7 @@ class FlowManagerApp:
             return
         self.running = True
         self.run_button.config(state='disabled')
+        self.execution_status.configure(text='msg.0558')
         self.executing_tasks.clear()
         self.execution_task_states.clear()
         self.db.prepare_data_record_statuses()
@@ -1363,10 +2191,16 @@ class FlowManagerApp:
                 if preamble_steps:
                     executor.run_batch(preamble_steps, variables, step_start, step_success, step_failure, event_start, self.browser_visible.get(), 'preamble', execution_state_path)
                 if groups and pcl_jobs:
-                    worker_count = 1
+                    # Different execution groups may run concurrently up to the
+                    # configured Session limit. Records inside one group remain
+                    # sequential because each group uses a single run_batch.
+                    worker_count = max(1, min(session_limit, len(groups)))
                     self._log(f'msg.0078{len(groups)}msg.0079{worker_count}msg.0080')
                     failures: list[str] = []
-                    with ThreadPoolExecutor(max_workers=worker_count) as pool:
+                    with ThreadPoolExecutor(
+                        max_workers=worker_count,
+                        thread_name_prefix='flow-group',
+                    ) as pool:
                         # 組ごとにブラウザーコンテキストと変数辞書を分離する。
                         # 同一組の PCL は一つの run_batch 内で順番に処理される。
                         futures = {pool.submit(WorkflowExecutor(self.project_dir, lambda message: self._log(message, 'WorkflowExecutor')).run_batch, group_steps(group, records), dict(variables), step_start, step_success, step_failure, event_start, self.browser_visible.get(), f'group_{group}', execution_state_path): group for group, records in groups.items()}
@@ -1386,26 +2220,15 @@ class FlowManagerApp:
             finally:
                 self.running = False
                 self.root.after(0, self._finish_execution_ui)
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _design_schema(self) -> None:
-        dialog = self._register_dialog('schema', lambda: SchemaDesignerDialog(self.root, self.db, 0, 'msg.0088'))
-        if dialog is None:
-            return
-        self.root.wait_window(dialog)
-
-    def _manage_auth_state(self) -> None:
-        try:
-            self.debug_browser.close_browser()
-        except Exception:
-            pass
-        dialog = self._register_dialog('auth_state', lambda: AuthStateDialog(
-            self.root, self.project_dir, self.auth_browser, self.db.get_auth_profile(),
-            self._set_auth_profile, self.settings['picker']['start_url']))
-        if dialog is not None:
-            self.root.wait_window(dialog)
+        threading.Thread(
+            target=worker,
+            name='workflow-runner',
+            daemon=True,
+        ).start()
 
     def _set_auth_profile(self, profile: str) -> None:
+        if self.db.get_auth_profile() == profile:
+            return
         self.db.set_auth_profile(profile)
         # 既に開いている要素選択ブラウザーは以前の Cookie を保持するため、
         # 状態切替時に閉じて次回の起動で新しいプロファイルを読み込ませる。
@@ -1413,12 +2236,6 @@ class FlowManagerApp:
             self.debug_browser.close_browser()
         except Exception:
             pass
-
-    def _manage_structured_data(self) -> None:
-        dialog = self._register_dialog('pcl_data', lambda: HierarchicalDataDialog(self.root, self.db, 0, 'msg.0088'))
-        if dialog is None:
-            return
-        self.root.wait_window(dialog)
 
     def _choose_data_path(self, action: str) -> str | None:
         schema = self.db.get_data_schema()
@@ -1518,15 +2335,25 @@ class FlowManagerApp:
         threading.Thread(target=worker, daemon=True).start()
 
     @staticmethod
-    def _format_file_log(message: str, now: datetime) -> str:
+    def _format_file_log(
+        message: str,
+        now: datetime,
+        thread_name: str = 'MainThread',
+    ) -> str:
         timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
         lines = message.splitlines() or ['']
-        return '\n'.join(f'{timestamp} {line}' for line in lines) + '\n'
+        return '\n'.join(
+            f'{timestamp} [{thread_name}] {line}' for line in lines
+        ) + '\n'
 
     def _log(self, message: str, _source: str='FlowManagerApp') -> None:
         translated = tr(message)
         now = datetime.now()
-        file_text = self._format_file_log(translated, now)
+        file_text = self._format_file_log(
+            translated,
+            now,
+            threading.current_thread().name,
+        )
         log_path = self.log_dir / f'{now:%Y-%m-%d}.log'
         try:
             with self._log_file_lock:
@@ -1536,12 +2363,35 @@ class FlowManagerApp:
             # ファイルログの失敗でワークフロー実行や画面ログを中断させない。
             pass
 
+        display_text = self._compact_display_log(message, translated)
+        if display_text is None:
+            return
+
         def append() -> None:
             self.log_text.config(state='normal')
-            self.log_text.insert('end', translated + '\n')
+            self.log_text.insert('end', display_text + '\n')
             self.log_text.see('end')
             self.log_text.config(state='disabled')
         self.root.after(0, append)
+
+    @staticmethod
+    def _compact_display_log(raw_message: str, translated: str) -> str | None:
+        """Keep the on-screen log concise while the file log remains complete."""
+        # These are intermediate or duplicate details. They remain in the daily
+        # log file but add little value beside the execution-status table.
+        if any(token in raw_message for token in ('msg.0076', 'msg.0078', 'msg.0212')):
+            return None
+        # The outer batch error repeats failures already reported per group.
+        if 'msg.0086' in raw_message and 'msg.0083' in raw_message:
+            return None
+        text = ' '.join(translated.splitlines()).strip()
+        if 'msg.0193' in raw_message:
+            # Show the artifact name in the UI; the full path is retained on disk.
+            prefix, separator, path = text.partition(':')
+            if separator and path.strip():
+                text = f'{prefix}: {ntpath.basename(path.strip())}'
+        maximum = 180
+        return text if len(text) <= maximum else f'{text[:maximum - 1]}…'
 
     @staticmethod
     def _execution_task_key(step: dict[str, object]) -> str:
@@ -1552,18 +2402,88 @@ class FlowManagerApp:
         return f'group:{step.get("group", "1")}:data:{record_id}'
 
     def _refresh_execution_indicators(self) -> None:
-        self.parallel_tree.delete(*self.parallel_tree.get_children())
         status_labels = {'waiting': tr('msg.0304'), 'running': tr('msg.0305'), 'success': tr('msg.0306'), 'failed': tr('msg.0307')}
         status_counts = {'waiting': 0, 'running': 0, 'success': 0, 'failed': 0}
-        for task_key, (step, event, status) in self.execution_task_states.items():
+        # Keep the execution-plan preview rows and their first four columns intact.
+        # Rebuilding the Treeview here used to remove skipped records and made the
+        # table appear to change shape when execution started.
+        records_by_id = {int(row['id']): row for row in self.db.list_data_records()}
+        for item in self.parallel_tree.get_children():
+            if not item.startswith('preview:'):
+                continue
+            record_id = int(item.split(':', 1)[1])
+            record = records_by_id.get(record_id)
+            values = list(self.parallel_tree.item(item, 'values'))
+            if len(values) < 7:
+                continue
+            values[4] = '-'
+            values[5] = '-'
+            values[6] = (
+                tr('msg.0513')
+                if record is not None and bool(record['enabled'])
+                else tr('msg.0309')
+            )
+            self.parallel_tree.item(item, values=values)
+        ordered_tasks = sorted(
+            self.execution_task_states.items(),
+            key=lambda item: (
+                0 if item[1][0].get('phase') == 'once' else 1,
+                self._execution_group_sort_key(item[1][0].get('group', '')),
+                int(item[1][0].get('pcl_index', 0)),
+            ),
+        )
+        for _task_key, (step, event, status) in ordered_tasks:
             record = step.get('record')
-            record_name = str(record.get('name', '')) if isinstance(record, dict) else ''
-            data_text = '-' if step.get('phase') == 'once' else f'{step.get("pcl_index")}/{step.get("pcl_total")} {record_name}'
-            group_text = '-' if step.get('phase') == 'once' else str(step.get('group', '1'))
+            workflow_text = '-' if status == 'waiting' else f'{step.get("position", "")}. {step.get("name", "")}'.strip('. ')
+            event_text = '-' if event is None or status == 'waiting' else f'{event.get("position", "")}. {event.get("name", "")}'.strip('. ')
+            status_counts[status] = status_counts.get(status, 0) + 1
+            if not isinstance(record, dict):
+                continue
+            item = f'preview:{record.get("id")}'
+            if not self.parallel_tree.exists(item):
+                continue
+            values = list(self.parallel_tree.item(item, 'values'))
+            if len(values) < 7:
+                continue
+            values[4] = workflow_text
+            values[5] = event_text
+            values[6] = status_labels.get(status, status)
+            self.parallel_tree.item(item, values=values)
+        # A preamble workflow runs once before per-data workflows and therefore
+        # has no record ID. Surface its live workflow/event on every enabled
+        # preview row; otherwise the log advances while the status table appears
+        # frozen. Once per-data work starts, record-specific states take over.
+        record_tasks_exist = any(
+            isinstance(step.get('record'), dict)
+            for step, _event, _status in self.execution_task_states.values()
+        )
+        preamble_display = next(
+            (
+                (step, event, status)
+                for step, event, status in self.execution_task_states.values()
+                if step.get('phase') == 'once'
+                and (status in {'running', 'failed'} or not record_tasks_exist)
+            ),
+            None,
+        )
+        if preamble_display is not None:
+            step, event, status = preamble_display
             workflow_text = f'{step.get("position", "")}. {step.get("name", "")}'.strip('. ')
             event_text = '-' if event is None else f'{event.get("position", "")}. {event.get("name", "")}'.strip('. ')
-            status_counts[status] = status_counts.get(status, 0) + 1
-            self.parallel_tree.insert('', 'end', iid=task_key, values=(group_text, data_text, workflow_text, event_text, status_labels.get(status, status)))
+            for item in self.parallel_tree.get_children():
+                if not item.startswith('preview:'):
+                    continue
+                record_id = int(item.split(':', 1)[1])
+                record = records_by_id.get(record_id)
+                if record is None or not bool(record['enabled']):
+                    continue
+                values = list(self.parallel_tree.item(item, 'values'))
+                if len(values) < 7:
+                    continue
+                values[4] = workflow_text
+                values[5] = event_text
+                values[6] = status_labels.get(status, status)
+                self.parallel_tree.item(item, values=values)
         if getattr(self, 'selected_execution_tab', None) == 'status':
             self.root.after_idle(self._update_execution_status_scrollbar)
         if self.execution_task_states:
@@ -1571,9 +2491,14 @@ class FlowManagerApp:
                 f'{status_labels[key]}: {status_counts[key]}' for key in ('waiting', 'running', 'success', 'failed')
             ))
         else:
-            self.parallel_summary.configure(text='msg.0451')
+            self.parallel_summary.configure(text='msg.0505')
         if self.executing_tasks:
-            self.execution_status.configure(text=f'{tr("msg.0450")}: {len(self.executing_tasks)}')
+            self.execution_status.configure(text='msg.0558')
+        total = len(self.execution_task_states)
+        completed = status_counts['success'] + status_counts['failed']
+        self.execution_progress.configure(maximum=max(1, total), value=completed)
+        self.execution_progress_text.configure(text=f'msg.0450：{status_counts["running"]}')
+        self.execution_progress_count.configure(text=f'{completed} / {total}')
 
     def _show_executing_step(self, step: dict[str, object], event: dict[str, object] | None) -> None:
         def update() -> None:
@@ -1601,7 +2526,7 @@ class FlowManagerApp:
             self.execution_task_states[task_key] = (step, event, 'success')
         self.executing_tasks.clear()
         self._refresh_execution_indicators()
-        self.execution_status.config(text='msg.0093')
+        self.execution_status.config(text='msg.0559')
 
     def _close(self) -> None:
         if self.running and (not messagebox.askyesno('msg.0094', 'msg.0095')):

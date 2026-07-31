@@ -53,6 +53,8 @@ class Database:
             self.connection.execute("ALTER TABLE global_data_records ADD COLUMN execution_status TEXT NOT NULL DEFAULT 'not_run'")
         if 'execution_group' not in global_record_columns:
             self.connection.execute("ALTER TABLE global_data_records ADD COLUMN execution_group TEXT NOT NULL DEFAULT '1'")
+        if 'summary' not in global_record_columns:
+            self.connection.execute("ALTER TABLE global_data_records ADD COLUMN summary TEXT NOT NULL DEFAULT ''")
         self._initialize_workflow_positions()
         self._migrate_global_data()
         self._migrate_combined_event_groups()
@@ -429,6 +431,46 @@ class Database:
         self.connection.execute("INSERT INTO app_meta(key, value) VALUES ('browser_visible', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", ('1' if visible else '0',))
         self.connection.commit()
 
+    def get_start_url(self) -> str | None:
+        """保存済みの既定開始 URL を返す。未設定の場合は None を返す。"""
+        row = self.connection.execute("SELECT value FROM app_meta WHERE key='start_url'").fetchone()
+        if row is None:
+            return None
+        value = str(row['value']).strip()
+        return value if value.startswith(('http://', 'https://')) else None
+
+    def set_start_url(self, start_url: str) -> None:
+        """要素選択と認証画面で使用する既定開始 URL を保存する。"""
+        value = start_url.strip()
+        if not value.startswith(('http://', 'https://')):
+            raise ValueError('Invalid start URL')
+        self.connection.execute(
+            "INSERT INTO app_meta(key, value) VALUES ('start_url', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (value,),
+        )
+        self.connection.commit()
+
+    def get_default_timeout_ms(self) -> int:
+        row = self.connection.execute(
+            "SELECT value FROM app_meta WHERE key='default_timeout_ms'"
+        ).fetchone()
+        try:
+            value = int(row['value']) if row is not None else 10000
+        except (TypeError, ValueError):
+            return 10000
+        return value if 1 <= value <= 3600000 else 10000
+
+    def set_default_timeout_ms(self, timeout_ms: int) -> None:
+        if not 1 <= timeout_ms <= 3600000:
+            raise ValueError('Invalid default timeout')
+        self.connection.execute(
+            "INSERT INTO app_meta(key, value) VALUES ('default_timeout_ms', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (str(timeout_ms),),
+        )
+        self.connection.commit()
+
     def get_language(self) -> str:
         row = self.connection.execute("SELECT value FROM app_meta WHERE key='language'").fetchone()
         return row['value'] if row is not None and row['value'] in {'ja', 'zh'} else 'ja'
@@ -507,12 +549,12 @@ class Database:
 
     def list_data_records(self, _workflow_id: int=0, enabled_only: bool=False) -> list[dict[str, Any]]:
         where = ' WHERE enabled=1' if enabled_only else ''
-        rows = self.connection.execute('SELECT id, position, name, enabled, execution_group, execution_status, data_json FROM global_data_records' + where + ' ORDER BY position').fetchall()
-        return [{'id': row['id'], 'position': row['position'], 'name': row['name'], 'enabled': bool(row['enabled']), 'data': json.loads(row['data_json'])} | {'execution_group': row['execution_group'], 'execution_status': row['execution_status']} for row in rows]
+        rows = self.connection.execute('SELECT id, position, name, summary, enabled, execution_group, execution_status, data_json FROM global_data_records' + where + ' ORDER BY position').fetchall()
+        return [{'id': row['id'], 'position': row['position'], 'name': row['name'], 'summary': row['summary'], 'enabled': bool(row['enabled']), 'data': json.loads(row['data_json'])} | {'execution_group': row['execution_group'], 'execution_status': row['execution_status']} for row in rows]
 
-    def add_data_record(self, _workflow_id: int, name: str, data: dict[str, Any]) -> int:
+    def add_data_record(self, _workflow_id: int, name: str, data: dict[str, Any], summary: str='') -> int:
         position = self.connection.execute('SELECT COALESCE(MAX(position), 0) + 1 FROM global_data_records').fetchone()[0]
-        cursor = self.connection.execute('INSERT INTO global_data_records(position, name, data_json) VALUES (?, ?, ?)', (position, name, json.dumps(data, ensure_ascii=False)))
+        cursor = self.connection.execute('INSERT INTO global_data_records(position, name, summary, data_json) VALUES (?, ?, ?, ?)', (position, name, summary.strip(), json.dumps(data, ensure_ascii=False)))
         self.connection.commit()
         return int(cursor.lastrowid)
 
@@ -532,6 +574,10 @@ class Database:
         with self._lock:
             self.connection.execute('UPDATE global_data_records SET name=?, data_json=? WHERE id=?', (name, json.dumps(data, ensure_ascii=False), record_id))
             self.connection.commit()
+
+    def set_data_record_summary(self, record_id: int, summary: str) -> None:
+        self.connection.execute('UPDATE global_data_records SET summary=? WHERE id=?', (summary.strip(), record_id))
+        self.connection.commit()
 
     def set_data_record_enabled(self, record_id: int, enabled: bool) -> None:
         self.connection.execute('UPDATE global_data_records SET enabled=?, execution_status=? WHERE id=?', (int(enabled), 'not_run' if enabled else 'skipped', record_id))
@@ -556,7 +602,7 @@ class Database:
         """全 PCL を、指定された順番のデータで原子的に置き換える。"""
         with self.connection:
             self.connection.execute('DELETE FROM global_data_records')
-            self.connection.executemany('INSERT INTO global_data_records(position, name, enabled, execution_group, execution_status, data_json) VALUES (?, ?, ?, ?, ?, ?)', ((position, record['name'], int(bool(record.get('enabled', True))), str(record.get('execution_group', '1')), 'not_run' if record.get('enabled', True) else 'skipped', json.dumps(record['data'], ensure_ascii=False)) for position, record in enumerate(records, 1)))
+            self.connection.executemany('INSERT INTO global_data_records(position, name, summary, enabled, execution_group, execution_status, data_json) VALUES (?, ?, ?, ?, ?, ?, ?)', ((position, record['name'], str(record.get('summary', '')).strip(), int(bool(record.get('enabled', True))), str(record.get('execution_group', '1')), 'not_run' if record.get('enabled', True) else 'skipped', json.dumps(record['data'], ensure_ascii=False)) for position, record in enumerate(records, 1)))
 
     def prepare_data_record_statuses(self) -> None:
         self.connection.execute("UPDATE global_data_records SET execution_status=CASE WHEN enabled=1 THEN 'waiting' ELSE 'skipped' END")

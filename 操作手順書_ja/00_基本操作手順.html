@@ -5,7 +5,7 @@
 <h1>WebFlowManager 基本操作手順</h1>
 <p class="sub">フローとイベントを登録し、共通データを準備して実行するまでの基本手順です。初めて操作する方は、①から③まで順番に進めてください。</p>
 
-<div class="note"><b>操作前の確認：</b>対象サイトへのログインが必要な場合は、先にメイン画面の <span class="button">ログイン状態</span> から認証状態を保存してください。初回確認では、設定メニューの「Chrome を表示」を有効にします。</div>
+<div class="note"><b>操作前の確認：</b>対象サイトへのログインが必要な場合は、左側メニューの「環境」から <span class="button">ログイン状態</span> を選択し、右側画面で認証状態を保存してください。初回確認では、左下の <span class="button">設定</span> を選択し、右側画面で「実行時に Chrome を表示」を有効にします。</div>
 <div class="flow-summary"><b>このページの流れ</b><span>① フロー・イベント</span><span>② 共通データ</span><span>③ 実行・結果確認</span></div>
 
 <h2>① フローとイベントを登録する</h2>
@@ -47,26 +47,26 @@
   <div class="legend">左側で実行1回分のデータを選び、右側で各項目の値を登録します。A〜E は操作エリアを示します。</div>
   <div class="callout-key"><span><b>A</b> データ一覧</span><span><b>B</b> Json・Excel</span><span><b>C</b> 階層データ</span><span><b>D</b> リスト追加</span><span><b>E</b> 同期・保存</span></div>
 </div>
-<div class="step"><b>手順 1</b>　メイン画面上部の <span class="button">共通データ</span> を押します。</div>
+<div class="step"><b>手順 1</b>　左側メニューの「データ」から <span class="button">共通データ</span> を選択します。</div>
 <div class="step"><b>手順 2</b>　左側の <span class="button">データ追加</span> を押し、データ名を入力します。例：<code>PCL_001</code></div>
 <div class="step"><b>手順 3</b>　追加したデータを左側で選択します。</div>
 <div class="step"><b>手順 4</b>　右側の「値」列で編集する項目をダブルクリックし、値を入力して確定します。</div>
-<div class="step"><b>手順 5</b>　list にデータを追加する場合は対象の list 行を選択し、<span class="button">完全なブランチを追加</span> を押してから、追加された各項目の値を編集します。</div>
+<div class="step"><b>手順 5</b>　list にデータを追加する場合は対象の list 行を選択し、<span class="button">構造付き項目を追加</span> を押してから、追加された各項目の値を編集します。</div>
 <div class="step"><b>手順 6</b>　入力が完了したら <span class="button">現在のデータを保存</span> を押します。</div>
-<div class="step"><b>手順 7</b>　左側一覧の「今回実行」が「実行」になっていることを確認します。「スキップ」の場合は対象データを選択し、<span class="button">実行/スキップ</span> を押します。</div>
+<div class="step"><b>手順 7</b>　必要に応じて左側一覧の「概要」をダブルクリックして説明を入力します。「今回実行」と実行グループは実行管理画面で設定します。</div>
 <div class="step"><b>手順 8</b>　複数データを登録する場合は、データ追加または複製を使用して同じ操作を繰り返します。</div>
 <div class="success"><b>完了確認：</b>必要なデータだけが「実行」、使用しないデータが「スキップ」になっていることを確認します。</div>
 
-<div class="warning"><b>項目が表示されない場合：</b>メイン画面の <span class="button">共通データ構造</span> で項目を先に作成し、共通データ画面の <span class="button">全構造を同期</span> を実行してください。</div>
+<div class="warning"><b>項目が表示されない場合：</b>左側メニューの「データ」から <span class="button">データ構造</span> を選択して項目を先に作成し、共通データ画面の <span class="button">全構造を同期</span> を実行してください。</div>
 <div class="danger"><b>Excel 読込の注意：</b>現在データへの追加ではなく、全データの置き換えです。必要なデータは先に Excel または Json で出力してください。</div>
 
 <h2>③ 登録内容を実行する</h2>
 <div class="step"><b>手順 1</b>　メイン画面で、実行するフローとイベントが「有効」になっていることを確認します。</div>
 <div class="step"><b>手順 2</b>　共通データごとの処理を開始するフローを選び、<span class="button">データ開始に設定</span> を押します。開始位置より前のフローは前処理として1回だけ実行されます。</div>
 <div class="step"><b>手順 3</b>　<span class="button">共通データ</span> を開き、今回使用するデータだけが「実行」、使用しないデータが「スキップ」になっていることを確認します。</div>
-<div class="step"><b>手順 4</b>　ログインが必要な場合は、メイン画面の <span class="button">ログイン状態</span> で使用する状態を選択し、保存します。</div>
-<div class="step"><b>手順 5</b>　初回は設定メニューで「Chrome を表示」を有効にします。</div>
-<div class="step"><b>手順 6</b>　画面上部の <span class="button">▶ 順番に実行</span> を押します。変数入力画面が表示された場合は必要な値を入力して開始します。</div>
+<div class="step"><b>手順 4</b>　ログインが必要な場合は、左側メニューの「環境」から <span class="button">ログイン状態</span> を選択し、右側画面で使用する状態を保存します。</div>
+<div class="step"><b>手順 5</b>　初回は左下の <span class="button">設定</span> を選択し、右側画面で「実行時に Chrome を表示」を有効にします。</div>
+<div class="step"><b>手順 6</b>　左側メニューの「実行」から <span class="button">実行管理</span> を選択し、画面右上の <span class="button">▶ 順番に実行</span> を押します。変数入力画面が表示された場合は必要な値を入力して開始します。</div>
 <div class="step"><b>手順 7</b>　「実行状況」タブで、現在実行中のフロー、イベント、共通データと状態を確認します。</div>
 <div class="step"><b>手順 8</b>　完了後、「実行ログ」タブを開き、失敗、スキップ、エラーメッセージがないことを確認します。</div>
 <div class="step"><b>手順 9</b>　失敗した場合は対象イベントを修正し、共通データを1件だけ「実行」にして再確認します。</div>

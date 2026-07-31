@@ -140,9 +140,9 @@ def write_records_excel(path: str | Path, schema: dict[str, Any], records: list[
         values = [str(sheet.cell(row, index).value or '') for row in range(1, sheet.max_row + 1)]
         sheet.column_dimensions[get_column_letter(index)].width = min(max(len(header) + 2, *(len(value) + 2 for value in values)), 45)
     settings_sheet = workbook.create_sheet(tr('msg.0243'))
-    settings_sheet.append([tr('msg.0242'), tr('msg.0244'), tr('msg.0245')])
+    settings_sheet.append([tr('msg.0242'), tr('msg.0517'), tr('msg.0244'), tr('msg.0245')])
     for record in records:
-        settings_sheet.append([record['name'], bool(record.get('enabled', True)), str(record.get('execution_group', '1'))])
+        settings_sheet.append([record['name'], str(record.get('summary', '')), bool(record.get('enabled', True)), str(record.get('execution_group', '1'))])
     for current_sheet in workbook.worksheets:
         for row in current_sheet.iter_rows():
             for cell in row:
@@ -195,19 +195,23 @@ def read_records_excel(path: str | Path, schema: dict[str, Any]) -> list[dict[st
         grouped.append((current_name, current_rows))
     if not grouped:
         raise ValueError('msg.0247')
-    execution_settings: list[tuple[bool, str]] = []
+    execution_settings: list[tuple[str, bool, str]] = []
     settings_names = {tr_language('msg.0243', language) for language in SUPPORTED_LANGUAGES}
     # 出力時と現在の UI 言語が異なっても設定シートを認識する。
     settings_name = next((name for name in workbook.sheetnames if name in settings_names), None)
     if settings_name is not None:
         settings_sheet = workbook[settings_name]
+        has_summary_column = settings_sheet.max_column >= 4
         for row in settings_sheet.iter_rows(min_row=2, values_only=True):
-            enabled_value = row[1] if len(row) > 1 else True
+            summary = str(row[1] if has_summary_column and len(row) > 1 and row[1] is not None else '')
+            enabled_index = 2 if has_summary_column else 1
+            group_index = 3 if has_summary_column else 2
+            enabled_value = row[enabled_index] if len(row) > enabled_index else True
             enabled_words = {tr_language('msg.0037', language).lower() for language in SUPPORTED_LANGUAGES}
             enabled_words.add(tr('msg.0248').lower())
             enabled = enabled_value if isinstance(enabled_value, bool) else str(enabled_value).lower() in {'true', '1', 'yes', *enabled_words}
-            group = str(row[2] if len(row) > 2 and row[2] not in (None, '') else '1').strip()
-            execution_settings.append((enabled, group))
+            group = str(row[group_index] if len(row) > group_index and row[group_index] not in (None, '') else '1').strip()
+            execution_settings.append((summary, enabled, group))
     owners = scalar_list_owners(schema)
     list_paths = sorted({owner for value in owners.values() for owner in value}, key=lambda value: (value.count('.'), value))
     anchors = {list_path: [column for column in columns if owners[column] and owners[column][-1] == list_path] for list_path in list_paths}
@@ -254,8 +258,8 @@ def read_records_excel(path: str | Path, schema: dict[str, Any]) -> list[dict[st
             for path_name, value in values.items():
                 if value is not None:
                     assign(data, path_name, value, counters)
-        setting = execution_settings[len(result)] if len(result) < len(execution_settings) else (True, '1')
-        result.append({'name': name, 'enabled': setting[0], 'execution_group': setting[1], 'data': normalize_record(schema, data)})
+        setting = execution_settings[len(result)] if len(result) < len(execution_settings) else ('', True, '1')
+        result.append({'name': name, 'summary': setting[0], 'enabled': setting[1], 'execution_group': setting[2], 'data': normalize_record(schema, data)})
     return result
 
 def default_value(node: dict[str, Any]) -> Any:
@@ -308,35 +312,33 @@ class FieldDialog(tk.Toplevel):
     def __init__(self, parent: tk.Misc, node: dict[str, Any] | None=None) -> None:
         super().__init__(parent)
         self.title('msg.0249')
-        self.geometry('460x210')
+        self.geometry('500x220')
         self.resizable(False, False)
         self.result: dict[str, Any] | None = None
         self.name = tk.StringVar(value=(node or {}).get('name', ''))
         self.kind = tk.StringVar(value=(node or {}).get('type', 'text'))
-        self.rowconfigure(1, weight=1)
+        self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
-        ttk.Separator(self, style='DialogFooter.TSeparator').grid(row=0, column=0, sticky='ew')
-        # 長い入力欄はラベルより視覚的な重みが大きいため、フッター操作は中央のまま
-        # フォームだけを少し左へ寄せて見た目の中心を合わせる。
-        main = ttk.Frame(self, padding=(28, 14, 68, 10))
-        main.grid(row=1, column=0, sticky='nsew')
-        body = ttk.Frame(main)
-        body.pack(fill='x', expand=True)
+        main = ttk.Frame(self, padding=(18, 16))
+        main.grid(row=0, column=0, sticky='nsew')
+        body = ttk.Frame(main, padding=(20, 16), style='DialogCard.TFrame')
+        body.pack(fill='both', expand=True)
         body.columnconfigure(1, weight=1)
-        body.columnconfigure(0, minsize=72)
-        ttk.Label(body, text='msg.0250').grid(row=0, column=0, padx=(0, 12), pady=(4, 7), sticky='e')
+        body.columnconfigure(0, minsize=88)
+        ttk.Label(body, text='msg.0250', style='DialogCard.TLabel').grid(row=0, column=0, padx=(0, 12), pady=(4, 7), sticky='w')
         ttk.Entry(body, textvariable=self.name, style='Dialog.TEntry').grid(row=0, column=1, pady=(4, 7), sticky='ew')
-        ttk.Label(body, text='msg.0251').grid(row=1, column=0, padx=(0, 12), pady=(7, 4), sticky='e')
+        ttk.Label(body, text='msg.0251', style='DialogCard.TLabel').grid(row=1, column=0, padx=(0, 12), pady=(7, 4), sticky='w')
         ttk.Combobox(body, textvariable=self.kind, values=TYPES, state='readonly', style='Dialog.TCombobox').grid(row=1, column=1, pady=(7, 4), sticky='ew')
         ttk.Separator(self, style='DialogFooter.TSeparator').grid(row=2, column=0, sticky='ew')
         buttons = ttk.Frame(self, style='DialogFooter.TFrame', padding=(14, 10))
         buttons.grid(row=3, column=0, sticky='ew')
         button_group = ttk.Frame(buttons, style='DialogFooter.TFrame')
         button_group.pack(side='right')
-        ttk.Button(button_group, text='msg.0144', command=self._save, style='Primary.TButton', width=14).grid(row=0, column=0, padx=(0, 5), sticky='ew')
-        ttk.Button(button_group, text='msg.0145', command=self.destroy, style='Secondary.TButton', width=14).grid(row=0, column=1, padx=(5, 0), sticky='ew')
-        button_group.columnconfigure(0, weight=1, uniform='field_footer_action')
-        button_group.columnconfigure(1, weight=1, uniform='field_footer_action')
+        ttk.Button(button_group, text='msg.0144', command=self._save, style='MessagePrimary.TButton').grid(row=0, column=0, padx=(0, 5), sticky='nsew')
+        ttk.Button(button_group, text='msg.0145', command=self.destroy, style='MessageSecondary.TButton').grid(row=0, column=1, padx=(5, 0), sticky='nsew')
+        button_group.columnconfigure(0, minsize=112, uniform='field_footer_action')
+        button_group.columnconfigure(1, minsize=112, uniform='field_footer_action')
+        button_group.rowconfigure(0, minsize=34)
         self.transient(parent)
         self.grab_set()
         self.protocol('WM_DELETE_WINDOW', self.destroy)
@@ -354,15 +356,26 @@ class FieldDialog(tk.Toplevel):
 class SchemaDesignerDialog(tk.Toplevel):
     """PCL 全体で共有するデータ構造を編集する。"""
 
-    def __init__(self, parent: tk.Misc, db: Database, workflow_id: int, workflow_name: str) -> None:
-        super().__init__(parent)
+    def __init__(self, parent: tk.Misc, db: Database, workflow_id: int, workflow_name: str,
+                 embedded: bool=False) -> None:
+        self.embedded = embedded
+        if embedded:
+            ttk.Frame.__init__(self, parent, style='Page.TFrame')
+        else:
+            super().__init__(parent)
         self.db, self.workflow_id = (db, workflow_id)
         self.schema = copy.deepcopy(db.get_data_schema(workflow_id))
         self.node_by_item: dict[str, tuple[dict[str, Any], dict[str, Any] | None]] = {}
-        self.title(f'msg.0255{workflow_name}')
-        self.geometry('720x560')
-        ttk.Label(self, text='msg.0256', style='Section.TLabel').pack(anchor='w', padx=10, pady=10)
-        tree_frame = ttk.Frame(self)
+        if not embedded:
+            self.title(f'msg.0255{workflow_name}')
+            self.geometry('720x560')
+        if not embedded:
+            ttk.Label(self, text='msg.0256', style='Section.TLabel').pack(anchor='w', padx=10, pady=10)
+        tree_frame = ttk.Frame(
+            self,
+            padding=(12, 10) if embedded else 0,
+            style='EmbeddedCard.TFrame' if embedded else 'TFrame',
+        )
         self.tree = ttk.Treeview(tree_frame, columns=('type', 'path'), show='tree headings')
         self.tree.column('#0', width=180)
         self.tree.column('type', width=90)
@@ -380,9 +393,9 @@ class SchemaDesignerDialog(tk.Toplevel):
         xscroll.grid(row=1, column=0, sticky='ew')
         tree_frame.rowconfigure(0, weight=1)
         tree_frame.columnconfigure(0, weight=1)
-        tree_frame.pack(fill='both', expand=True, padx=10)
-        buttons = ttk.Frame(self)
-        buttons.pack(fill='x', padx=10, pady=10)
+        tree_frame.pack(fill='both', expand=True, padx=10, pady=(6, 8))
+        buttons = ttk.Frame(self, padding=(8, 6), style='EmbeddedCard.TFrame' if embedded else 'TFrame')
+        buttons.pack(fill='x', padx=10, pady=(0, 10))
         button_specs = (
             ('msg.0259', self._add, 'Action.TButton', 0, 0, 1),
             ('msg.0484', self._add_child, 'Action.TButton', 0, 1, 1),
@@ -392,10 +405,12 @@ class SchemaDesignerDialog(tk.Toplevel):
             ('msg.0012', lambda: self._move(1), 'TButton', 1, 1, 1),
             ('msg.0262', self._export_json, 'TButton', 1, 2, 1),
             ('msg.0263', self._import_json, 'TButton', 1, 3, 1),
-            ('msg.0264', self._save, 'Primary.TButton', 2, 3, 1),
+            ('msg.0144' if embedded else 'msg.0264', self._save, 'Primary.TButton', 2, 3, 1),
         )
         action_buttons: list[ttk.Button] = []
         for text, command, button_style, row, column, columnspan in button_specs:
+            if embedded and button_style == 'TButton':
+                button_style = 'Secondary.TButton'
             button = ttk.Button(buttons, text=text, command=command, style=button_style)
             button.grid(row=row, column=column, columnspan=columnspan, padx=3, pady=3, sticky='ew')
             action_buttons.append(button)
@@ -410,7 +425,8 @@ class SchemaDesignerDialog(tk.Toplevel):
         self.tree.bind('<B1-Motion>', self._drag_motion, add='+')
         self.tree.bind('<ButtonRelease-1>', self._drag_end, add='+')
         self._refresh()
-        self.transient(parent)
+        if not embedded:
+            self.transient(parent)
 
     def _refresh(self, selected_node: dict[str, Any] | None=None) -> None:
         root_open = True
@@ -656,7 +672,10 @@ class SchemaDesignerDialog(tk.Toplevel):
         for record in self.db.list_data_records(self.workflow_id):
             synchronized = normalize_record(self.schema, record['data'])
             self.db.update_data_record(record['id'], record['name'], synchronized)
-        self.destroy()
+        if self.embedded:
+            messagebox.showinfo('msg.0306', 'msg.0504', parent=self)
+        else:
+            self.destroy()
 
     def _export_json(self) -> None:
         path = filedialog.asksaveasfilename(parent=self, defaultextension='.json', filetypes=(('Json', '*.json'),))
@@ -732,12 +751,18 @@ class DataPathDialog(tk.Toplevel):
 class HierarchicalDataDialog(tk.Toplevel):
     """PCL レコードと、その入れ子データおよび実行設定を編集する。"""
 
-    def __init__(self, parent: tk.Misc, db: Database, workflow_id: int, workflow_name: str) -> None:
-        super().__init__(parent)
+    def __init__(self, parent: tk.Misc, db: Database, workflow_id: int, workflow_name: str,
+                 embedded: bool=False) -> None:
+        self.embedded = embedded
+        if embedded:
+            ttk.Frame.__init__(self, parent, style='Page.TFrame')
+        else:
+            super().__init__(parent)
         self.db, self.workflow_id = (db, workflow_id)
         self.schema = db.get_data_schema(workflow_id)
         self.current_id: int | None = None
         self.current_name = ''
+        self.current_summary = ''
         self.current_data: dict[str, Any] = {}
         self.meta: dict[str, dict[str, Any]] = {}
         self.view_identity: dict[str, str] = {}
@@ -745,52 +770,72 @@ class HierarchicalDataDialog(tk.Toplevel):
         self.force_select_identity: str | None = None
         self.record_sort_column: str | None = None
         self.record_sort_descending = False
-        self.title(f'msg.0285{workflow_name}')
-        self.geometry('1050x650')
+        if not embedded:
+            self.title(f'msg.0285{workflow_name}')
+            self.geometry('1050x650')
         pane = ttk.Panedwindow(self, orient='horizontal')
         pane.pack(fill='both', expand=True, padx=10, pady=10)
-        left, right = (ttk.Frame(pane), ttk.Frame(pane))
-        pane.add(left, weight=1)
-        pane.add(right, weight=3)
-        pcl_header = ttk.Frame(left)
+        if embedded:
+            left_shell = ttk.Frame(pane, style='EmbeddedCard.TFrame')
+            right_shell = ttk.Frame(pane, style='EmbeddedCard.TFrame')
+            left = ttk.Frame(left_shell, padding=(14, 12), style='EmbeddedCardBody.TFrame')
+            right = ttk.Frame(right_shell, padding=(14, 12), style='EmbeddedCardBody.TFrame')
+            left.pack(fill='both', expand=True, padx=1, pady=1)
+            right.pack(fill='both', expand=True, padx=1, pady=1)
+        else:
+            left_shell, right_shell = (ttk.Frame(pane), ttk.Frame(pane))
+            left, right = left_shell, right_shell
+        pane.add(left_shell, weight=1)
+        pane.add(right_shell, weight=3)
+        pcl_header = ttk.Frame(left, style='EmbeddedCardBody.TFrame' if embedded else 'TFrame')
         pcl_header.pack(fill='x')
-        ttk.Label(pcl_header, text='msg.0286', style='Section.TLabel').pack(side='left')
-        self.session_limit = tk.StringVar(value=str(self.db.get_pcl_session_limit()))
-        session_spinbox = ttk.Spinbox(pcl_header, from_=1, to=20, width=4, textvariable=self.session_limit, command=self._save_session_limit)
-        session_spinbox.pack(side='right')
-        ttk.Label(pcl_header, text='msg.0287').pack(side='right', padx=(12, 2))
-        session_spinbox.bind('<Return>', self._save_session_limit)
-        session_spinbox.bind('<FocusOut>', self._save_session_limit)
-        records_frame, self.records = scrollable_tree(left, columns=('name', 'enabled', 'group'), show='headings')
-        self.record_heading_keys = {'name': 'msg.0218', 'enabled': 'msg.0244', 'group': 'msg.0245'}
+        ttk.Label(
+            pcl_header,
+            text='msg.0286',
+            style='EmbeddedCardTitle.TLabel' if embedded else 'Section.TLabel',
+        ).pack(side='left')
+        records_frame, self.records = scrollable_tree(left, columns=('name', 'summary'), show='headings')
+        self.record_heading_keys = {'name': 'msg.0524', 'summary': 'msg.0517'}
         self._update_record_headings()
         self.records.column('name', width=140, minwidth=100, stretch=True)
-        self.records.column('enabled', width=90, minwidth=80, anchor='center', stretch=False)
-        self.records.column('group', width=110, minwidth=100, anchor='center', stretch=False)
-        self.records.tag_configure('disabled', foreground='#A0A0A0')
+        self.records.column('summary', width=180, minwidth=120, stretch=True)
         records_frame.pack(fill='both', expand=True, pady=5)
         self.records.bind('<<TreeviewSelect>>', self._select_record)
         self.records.bind('<Double-1>', self._record_double_click)
-        lb = ttk.Frame(left)
+        self.records.bind('<Motion>', self._record_column_motion)
+        self.records.bind('<Leave>', lambda _event: self.records.configure(cursor=''))
+        lb = ttk.Frame(left, style='EmbeddedCardBody.TFrame' if embedded else 'TFrame')
         lb.pack(fill='x')
-        record_buttons = (('msg.0289', self._add_record), ('msg.0290', self._copy_record), ('msg.0009', self._rename_record), ('msg.0010', self._delete_record), ('msg.0291', self._toggle_record_enabled), ('msg.0292', self._set_record_group))
+        record_buttons = (('msg.0289', self._add_record), ('msg.0290', self._copy_record), ('msg.0009', self._rename_record), ('msg.0010', self._delete_record))
         for index, (text, command) in enumerate(record_buttons):
-            button_style = 'Danger.TButton' if command == self._delete_record else 'TButton'
-            ttk.Button(lb, text=text, command=command, style=button_style).grid(row=index // 3, column=index % 3, padx=2, pady=2, sticky='ew')
-        for column in range(3):
+            button_style = (
+                'Danger.TButton'
+                if command == self._delete_record
+                else 'Secondary.TButton' if embedded else 'TButton'
+            )
+            ttk.Button(lb, text=text, command=command, style=button_style).grid(row=index // 2, column=index % 2, padx=2, pady=2, sticky='ew')
+        for column in range(2):
             lb.columnconfigure(column, weight=1)
-        io_buttons = ttk.Frame(left)
+        io_buttons = ttk.Frame(left, style='EmbeddedCardBody.TFrame' if embedded else 'TFrame')
         io_buttons.pack(fill='x', pady=(12, 0))
         ttk.Separator(io_buttons).pack(fill='x', pady=(0, 8))
-        ttk.Label(io_buttons, text='msg.0351', style='Subtle.TLabel').pack(anchor='w', pady=(0, 5))
+        ttk.Label(
+            io_buttons,
+            text='msg.0351',
+            style='EmbeddedCardSubtle.TLabel' if embedded else 'Subtle.TLabel',
+        ).pack(anchor='w', pady=(0, 5))
         io_actions = (('msg.0263', self._import_json), ('msg.0262', self._export_json), ('msg.0293', self._import_excel), ('msg.0294', self._export_excel))
-        io_grid = ttk.Frame(io_buttons)
+        io_grid = ttk.Frame(io_buttons, style='EmbeddedCardBody.TFrame' if embedded else 'TFrame')
         io_grid.pack(fill='x')
         for index, (text, command) in enumerate(io_actions):
             ttk.Button(io_grid, text=text, command=command, style='Toolbar.TButton').grid(row=index // 2, column=index % 2, padx=2, pady=2, sticky='ew')
         for column in range(2):
             io_grid.columnconfigure(column, weight=1, uniform='pcl_io')
-        ttk.Label(right, text='msg.0295', style='Section.TLabel').pack(anchor='w')
+        ttk.Label(
+            right,
+            text='msg.0295',
+            style='EmbeddedCardTitle.TLabel' if embedded else 'Section.TLabel',
+        ).pack(anchor='w')
         tree_frame, self.tree = scrollable_tree(right, columns=('type', 'value', 'path'), show='tree headings')
         self.tree.heading('#0', text='msg.0296')
         self.tree.heading('type', text='msg.0257')
@@ -804,26 +849,33 @@ class HierarchicalDataDialog(tk.Toplevel):
         self.tree.bind('<Double-1>', self._edit_value)
         self.tree.bind('<Motion>', self._value_column_motion)
         self.tree.bind('<Leave>', lambda _event: self.tree.configure(cursor=''))
-        rb = ttk.Frame(right)
+        rb = ttk.Frame(right, style='EmbeddedCardBody.TFrame' if embedded else 'TFrame')
         rb.pack(fill='x')
-        ttk.Button(rb, text='msg.0298', command=lambda: self._add_list_item(False)).pack(side='left', padx=3)
-        ttk.Button(rb, text='msg.0299', command=lambda: self._add_list_item(True)).pack(side='left', padx=3)
+        standard_style = 'Secondary.TButton' if embedded else 'TButton'
+        ttk.Button(rb, text='msg.0298', command=lambda: self._add_list_item(False), style=standard_style).pack(side='left', padx=3)
+        ttk.Button(rb, text='msg.0299', command=lambda: self._add_list_item(True), style=standard_style).pack(side='left', padx=3)
         ttk.Button(rb, text='msg.0300', command=self._delete_list_item, style='Danger.TButton').pack(side='left', padx=3)
-        ttk.Button(rb, text='msg.0301', command=self._sync_all_records).pack(side='left', padx=3)
+        ttk.Button(rb, text='msg.0301', command=self._sync_all_records, style=standard_style).pack(side='left', padx=3)
         ttk.Button(rb, text='msg.0302', command=lambda: self._save_record(show_message=True), style='Primary.TButton').pack(side='right', padx=3)
         self._sync_all_records(show_message=False)
         self._refresh_records()
-        self.transient(parent)
+        if not embedded:
+            self.transient(parent)
 
     def _refresh_records(self, select_id: int | None=None) -> None:
         self.records.delete(*self.records.get_children())
         rows = self.db.list_data_records(self.workflow_id)
+        if select_id is None and rows:
+            select_id = rows[0]['id']
         if self.record_sort_column:
             rows.sort(key=self._record_sort_key, reverse=self.record_sort_descending)
         for row in rows:
-            item = self.records.insert('', 'end', iid=str(row['id']), values=(row['name'], 'msg.0248' if row['enabled'] else 'msg.0309', row['execution_group']), tags=() if row['enabled'] else ('disabled',))
+            item = self.records.insert('', 'end', iid=str(row['id']), values=(row['name'], row['summary']))
             if row['id'] == select_id:
                 self.records.selection_set(item)
+                self.records.focus(item)
+        if select_id is not None and self.records.exists(str(select_id)):
+            self._select_record()
 
     @staticmethod
     def _natural_sort_key(value: Any) -> tuple[tuple[int, Any], ...]:
@@ -833,10 +885,8 @@ class HierarchicalDataDialog(tk.Toplevel):
     def _record_sort_key(self, row: dict[str, Any]) -> Any:
         if self.record_sort_column == 'name':
             return self._natural_sort_key(row['name'])
-        if self.record_sort_column == 'enabled':
-            return int(row['enabled'])
-        if self.record_sort_column == 'group':
-            return self._natural_sort_key(row['execution_group'])
+        if self.record_sort_column == 'summary':
+            return self._natural_sort_key(row['summary'])
         return 0
 
     def _update_record_headings(self) -> None:
@@ -858,13 +908,6 @@ class HierarchicalDataDialog(tk.Toplevel):
         self._update_record_headings()
         self._refresh_records(selected_id)
 
-    def _save_session_limit(self, _event: object=None) -> None:
-        try:
-            limit = int(self.session_limit.get())
-            self.db.set_pcl_session_limit(limit)
-        except (TypeError, ValueError):
-            self.session_limit.set(str(self.db.get_pcl_session_limit()))
-
     def _toggle_record_enabled(self) -> None:
         selection = self.records.selection()
         if not selection:
@@ -876,25 +919,46 @@ class HierarchicalDataDialog(tk.Toplevel):
         self._refresh_records(record_id)
 
     def _record_double_click(self, event: tk.Event) -> str | None:
-        # 実行列は有効/無効を反転し、グループ列は名前入力を開く。
+        # データ名と概要はダブルクリックで編集する。
         column = self.records.identify_column(event.x)
         if self.records.identify_region(event.x, event.y) == 'heading':
-            column_name = {'#1': 'name', '#2': 'enabled', '#3': 'group'}.get(column)
+            column_name = {'#1': 'name', '#2': 'summary'}.get(column)
             if column_name:
                 self._sort_records(column_name)
             return 'break'
-        if column not in {'#2', '#3'}:
+        if column not in {'#1', '#2'}:
             return None
         item = self.records.identify_row(event.y)
         if not item:
             return None
         self.records.selection_set(item)
         self.records.focus(item)
-        if column == '#2':
-            self._toggle_record_enabled()
+        self._select_record()
+        if column == '#1':
+            self._rename_record()
         else:
-            self._set_record_group()
+            self._edit_record_summary()
         return 'break'
+
+    def _record_column_motion(self, event: tk.Event) -> None:
+        editable = (
+            self.records.identify_region(event.x, event.y) == 'cell'
+            and bool(self.records.identify_row(event.y))
+            and self.records.identify_column(event.x) in {'#1', '#2'}
+        )
+        self.records.configure(cursor='hand2' if editable else '')
+
+    def _edit_record_summary(self) -> None:
+        if self.current_id is None:
+            return
+        summary = simpledialog.askstring(
+            'msg.0518', 'msg.0519', initialvalue=self.current_summary, parent=self,
+        )
+        if summary is None:
+            return
+        self.current_summary = summary.strip()
+        self.db.set_data_record_summary(self.current_id, self.current_summary)
+        self._refresh_records(self.current_id)
 
     def _set_record_group(self) -> None:
         selection = self.records.selection()
@@ -918,7 +982,7 @@ class HierarchicalDataDialog(tk.Toplevel):
         if not selection:
             return
         row = next((row for row in self.db.list_data_records(self.workflow_id) if row['id'] == int(selection[0])))
-        self.current_id, self.current_name = (row['id'], row['name'])
+        self.current_id, self.current_name, self.current_summary = (row['id'], row['name'], row['summary'])
         self.current_data = normalize_record(self.schema, row['data'])
         self.db.update_data_record(self.current_id, self.current_name, self.current_data)
         self._render()
@@ -1019,7 +1083,7 @@ class HierarchicalDataDialog(tk.Toplevel):
             return
         self._save_record()
         name = self._unique_name(f'{self.current_name}{tr("msg.0322")}')
-        record_id = self.db.add_data_record(self.workflow_id, name, copy.deepcopy(self.current_data))
+        record_id = self.db.add_data_record(self.workflow_id, name, copy.deepcopy(self.current_data), self.current_summary)
         self._refresh_records(record_id)
         self._select_record()
 
@@ -1027,6 +1091,7 @@ class HierarchicalDataDialog(tk.Toplevel):
         if self.current_id is not None and messagebox.askyesno('msg.0046', 'msg.0323', parent=self):
             self.db.delete_data_record(self.workflow_id, self.current_id)
             self.current_id = None
+            self.current_summary = ''
             self.tree.delete(*self.tree.get_children())
             self._refresh_records()
 
@@ -1127,7 +1192,7 @@ class HierarchicalDataDialog(tk.Toplevel):
         path = filedialog.asksaveasfilename(parent=self, defaultextension='.json', filetypes=(('Json', '*.json'),))
         if not path:
             return
-        payload = {'version': 1, 'type': 'web-flow-data', 'records': [{'name': row['name'], 'enabled': row['enabled'], 'execution_group': row['execution_group'], 'data': row['data']} for row in records]}
+        payload = {'version': 1, 'type': 'web-flow-data', 'records': [{'name': row['name'], 'summary': row['summary'], 'enabled': row['enabled'], 'execution_group': row['execution_group'], 'data': row['data']} for row in records]}
         Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
         messagebox.showinfo('msg.0269', f'msg.0334{len(records)}msg.0335{path}', parent=self)
 
@@ -1140,7 +1205,7 @@ class HierarchicalDataDialog(tk.Toplevel):
             records = payload.get('records') if isinstance(payload, dict) else None
             if not isinstance(records, list):
                 raise ValueError('msg.0336')
-            checked: list[tuple[str, bool, str, dict[str, Any]]] = []
+            checked: list[tuple[str, str, bool, str, dict[str, Any]]] = []
             for index, record in enumerate(records, 1):
                 if not isinstance(record, dict) or not isinstance(record.get('name'), str) or (not isinstance(record.get('data'), dict)):
                     raise ValueError(f'msg.0103{index}msg.0337')
@@ -1150,12 +1215,13 @@ class HierarchicalDataDialog(tk.Toplevel):
                 group = str(record.get('execution_group', '1')).strip()
                 if not group:
                     raise ValueError(f'msg.0103{index}msg.0339')
-                checked.append((record['name'].strip() or f'Data {index}', enabled, group, normalize_record(self.schema, record['data'])))
+                summary = str(record.get('summary', '')).strip()
+                checked.append((record['name'].strip() or f'Data {index}', summary, enabled, group, normalize_record(self.schema, record['data'])))
         except (OSError, json.JSONDecodeError, ValueError) as error:
             messagebox.showerror('msg.0057', str(error), parent=self)
             return
-        for name, enabled, group, data in checked:
-            record_id = self.db.add_data_record(self.workflow_id, self._unique_name(name), data)
+        for name, summary, enabled, group, data in checked:
+            record_id = self.db.add_data_record(self.workflow_id, self._unique_name(name), data, summary)
             self.db.set_data_record_enabled(record_id, enabled)
             self.db.set_data_record_group(record_id, group)
         self._refresh_records()
@@ -1197,6 +1263,7 @@ class HierarchicalDataDialog(tk.Toplevel):
             return
         self.current_id = None
         self.current_name = ''
+        self.current_summary = ''
         self.current_data = {}
         self.db.replace_data_records(records)
         self._refresh_records()

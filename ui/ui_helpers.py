@@ -14,10 +14,19 @@ class AutoScrollbar(ttk.Scrollbar):
             self.grid()
         super().set(first, last)
 
-def scrollable_tree(parent: Any, **tree_options: Any) -> tuple[ttk.Frame, ttk.Treeview]:
+def scrollable_tree(parent: Any, **tree_options: Any) -> tuple[tk.Frame, ttk.Treeview]:
     """縦横スクロール対応の Treeview と、その外枠をまとめて作成する。"""
     # 各画面で grid 設定を重複させず、スクロール挙動を統一する。
-    frame = ttk.Frame(parent)
+    # Treeview の選択背景や自動スクロールバーに上書きされない固定外枠を使う。
+    # ttk のテーマ境界は Windows の表示倍率によって一部が欠ける場合がある。
+    frame = tk.Frame(
+        parent,
+        background='#D4D4D4',
+        highlightbackground='#D4D4D4',
+        highlightcolor='#D4D4D4',
+        highlightthickness=1,
+        bd=0,
+    )
     tree = ttk.Treeview(frame, **tree_options)
     yscroll = AutoScrollbar(frame, orient='vertical', command=tree.yview)
     xscroll = AutoScrollbar(frame, orient='horizontal', command=tree.xview)
