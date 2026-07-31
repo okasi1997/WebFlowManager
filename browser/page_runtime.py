@@ -17,6 +17,22 @@ HEADLESS_WIDTH = 1920
 HEADLESS_HEIGHT = 1080
 
 
+def close_browser_context(context: Any) -> None:
+    """Close a context while treating an already-closed browser as success."""
+    if context is None:
+        return
+    try:
+        context.close()
+    except Exception as error:
+        message = str(error).casefold()
+        already_closed = (
+            'target page, context or browser has been closed' in message
+            or 'browser has been closed' in message
+        )
+        if not already_closed:
+            raise
+
+
 def browser_args(visible: bool) -> list[str]:
     """表示モードに応じた Chrome 起動引数を返す。"""
     if visible:
@@ -53,14 +69,15 @@ def launch_persistent_chrome(
     if visible:
         options['ignore_default_args'] = BROWSER_IGNORED_DEFAULT_ARGS
     last_error: Exception | None = None
-    for attempt in range(3):
+    retry_delays = (0.5, 1.0, 1.5, 2.0)
+    for attempt in range(len(retry_delays) + 1):
         try:
             return playwright.chromium.launch_persistent_context(**options)
         except Exception as error:
             last_error = error
-            if attempt < 2:
+            if attempt < len(retry_delays):
                 # 前回終了直後は Chrome がプロファイルロックを解放するまで少し待つ。
-                time.sleep(0.25 * (attempt + 1))
+                time.sleep(retry_delays[attempt])
     assert last_error is not None
     raise last_error
 

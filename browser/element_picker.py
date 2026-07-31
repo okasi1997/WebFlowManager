@@ -4,11 +4,11 @@ import queue
 import tempfile
 import threading
 import uuid
-from concurrent.futures import Future
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from browser.page_runtime import active_page, bring_page_to_front, is_topmost, launch_persistent_chrome, locators_in_frames, page_frames, restore_storage_state
+from browser.page_runtime import active_page, bring_page_to_front, close_browser_context, is_topmost, launch_persistent_chrome, locators_in_frames, page_frames, restore_storage_state
 from browser.picker_scripts import picker_script
 from browser.profile_runtime import persistent_profile_dir
 from i18n import tr
@@ -110,8 +110,7 @@ class DebugBrowserSession:
         def dispose() -> None:
             nonlocal context, page, temporary_profile
             try:
-                if context is not None:
-                    context.close()
+                close_browser_context(context)
             finally:
                 context = page = None
                 if temporary_profile is not None:
@@ -121,9 +120,14 @@ class DebugBrowserSession:
         def ensure_page(target_url: str='') -> tuple[Any, Any]:
             nonlocal context, page, temporary_profile
             if context is not None and page is not None:
-                page = active_page(page)
-                if not page.is_closed():
-                    return context, page
+                try:
+                    page = active_page(page)
+                    if not page.is_closed():
+                        return context, page
+                except Exception:
+                    # Chrome may have been closed outside the application.
+                    # Clear the stale Playwright handles before relaunching.
+                    dispose()
             state_path = self.storage_state_getter()
             last_error: Exception | None = None
             for attempt in range(2):
@@ -174,10 +178,10 @@ class DebugBrowserSession:
             except Exception as error:
                 future.set_exception(error)
 
-    def _submit(self, task: Callable[[], Any]) -> Any:
+    def _submit(self, task: Callable[[], Any], timeout: float | None=None) -> Any:
         future: Future[Any] = Future()
         self._tasks.put((task, future))
-        return future.result()
+        return future.result(timeout=timeout)
 
     def open(self, target_url: str='') -> None:
         self._cancel_requested.clear()
@@ -276,7 +280,10 @@ class DebugBrowserSession:
     def close_browser(self) -> None:
         self._cancel_requested.set()
         # ワーカー初期化前に _dispose を参照すると競合するため実行時に解決する。
-        self._submit(lambda: self._dispose())
+        try:
+            self._submit(lambda: self._dispose(), timeout=10)
+        except FutureTimeoutError as error:
+            raise RuntimeError('msg.0562') from error
 
     def shutdown(self) -> None:
         self._cancel_requested.set()

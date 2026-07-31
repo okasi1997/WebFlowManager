@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import queue
 import threading
-from concurrent.futures import Future
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import Any, Callable
-from browser.page_runtime import active_page, launch_persistent_chrome, restore_storage_state
+from browser.page_runtime import active_page, close_browser_context, launch_persistent_chrome, restore_storage_state
 from browser.profile_runtime import persistent_profile_dir
 
 
@@ -34,8 +34,7 @@ class AuthBrowserSession:
         def close() -> None:
             nonlocal context, page
             try:
-                if context is not None:
-                    context.close()
+                close_browser_context(context)
             finally:
                 context = page = None
 
@@ -102,10 +101,10 @@ class AuthBrowserSession:
             except Exception as error:
                 future.set_exception(error)
 
-    def _submit(self, task: Callable[[], Any]) -> Any:
+    def _submit(self, task: Callable[[], Any], timeout: float | None=None) -> Any:
         future: Future[Any] = Future()
         self._tasks.put((task, future))
-        return future.result()
+        return future.result(timeout=timeout)
 
     def open(self, state_path: Path | None, url: str) -> None:
         self._submit(lambda: self._open_browser(state_path, url))
@@ -119,7 +118,10 @@ class AuthBrowserSession:
 
     def close_browser(self) -> None:
         # アプリ起動直後でも未生成の属性を呼出し側スレッドで参照しない。
-        self._submit(lambda: self._close_browser())
+        try:
+            self._submit(lambda: self._close_browser(), timeout=10)
+        except FutureTimeoutError as error:
+            raise RuntimeError('msg.0562') from error
 
     def shutdown(self) -> None:
         future: Future[Any] = Future()

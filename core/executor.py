@@ -1,14 +1,16 @@
 """Playwright を使用して、登録済みイベントを順番に実行する。"""
 from __future__ import annotations
 import re
+import sys
 import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from browser.page_runtime import active_page, browser_args, browser_context_options, is_topmost, launch_persistent_chrome, locators_in_frames, open_pages, restore_storage_state, settle_new_page
+from browser.page_runtime import active_page, browser_args, browser_context_options, close_browser_context, is_topmost, launch_persistent_chrome, locators_in_frames, open_pages, restore_storage_state, settle_new_page
 from browser.profile_runtime import persistent_profile_dir
 from core.conditions import decode_guard, evaluate_guard
+from core.settings import SELECT_FIRST_VALUE
 from i18n import tr
 VARIABLE_PATTERN = re.compile('\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}')
 DATA_REFERENCE_PATTERN = re.compile(r'\$\{data:([^{}]+)\}')
@@ -95,16 +97,40 @@ class WorkflowExecutor:
                     if on_step_success:
                         on_step_success(step, token)
             finally:
-                if context is not None and output_state_path is not None:
-                    output_state_path.parent.mkdir(parents=True, exist_ok=True)
+                active_error = sys.exc_info()[1]
+                cleanup_error: Exception | None = None
+                if active_error is not None and browser_visible and context is not None:
+                    self.logger('msg.0564')
+                    while True:
+                        try:
+                            pages = open_pages(context)
+                            if not pages:
+                                break
+                            pages[-1].wait_for_timeout(250)
+                        except Exception:
+                            break
                 try:
                     if context is not None and output_state_path is not None:
+                        output_state_path.parent.mkdir(parents=True, exist_ok=True)
                         context.storage_state(path=str(output_state_path))
-                finally:
-                    if context is not None:
-                        context.close()
+                except Exception as error:
+                    cleanup_error = error
+                try:
+                    close_browser_context(context)
+                except Exception as error:
+                    cleanup_error = cleanup_error or error
+                try:
                     if temporary_profile is not None:
                         temporary_profile.cleanup()
+                except Exception as error:
+                    cleanup_error = cleanup_error or error
+                if cleanup_error is not None:
+                    if active_error is None:
+                        raise cleanup_error
+                    try:
+                        self.logger(f'Browser cleanup failed: {cleanup_error}')
+                    except Exception:
+                        pass
 
     @staticmethod
     def _browser_args(browser_visible: bool) -> list[str]:
@@ -237,7 +263,15 @@ class WorkflowExecutor:
                     loop_context,
                 )
             prefix = self._event_log_prefix(log_prefix, event, loop_progress)
-            self.logger(f"{prefix}msg.0191{event['name']}" + (f' ← {data_path}' if data_path else ''))
+            try:
+                detail = self._event_log_detail(effective, variables)
+            except ValueError:
+                detail = action
+            self.logger(
+                f"{prefix}msg.0191{event['name']}"
+                + (f' | {detail}' if detail else '')
+                + (f' <- {data_path}' if data_path else '')
+            )
             try:
                 captured = self._execute_event(page, effective, variables, artifact_dir)
                 if action == 'get_text' and data_path:
@@ -247,8 +281,8 @@ class WorkflowExecutor:
                 safe_trace = re.sub('[^A-Za-z0-9_-]', '_', trace)
                 screenshot = artifact_dir / f"error_{safe_trace}_{event['id']}.png"
                 page.screenshot(path=str(screenshot), full_page=True)
-                self.logger(f'msg.0192{error}')
-                self.logger(f'msg.0193{screenshot}')
+                self.logger(f'{prefix}msg.0192{error}')
+                self.logger(f'{prefix}msg.0193{screenshot}')
                 failure_action = str(event.get('failure_action', 'none'))
                 if failure_action == 'refresh':
                     self.logger(f'{prefix}msg.0430')
@@ -273,6 +307,38 @@ class WorkflowExecutor:
     def _event_log_prefix(log_prefix: str, event: dict[str, Any], loop_progress: list[str]) -> str:
         loops = ''.join((f'msg.0196{progress}]' for progress in loop_progress))
         return f"{log_prefix}msg.0197{event.get('position', '?')}]{loops}"
+
+    @staticmethod
+    def _event_log_detail(event: dict[str, Any], variables: dict[str, str]) -> str:
+        """Return effective operation parameters as one compact log fragment."""
+        action = str(event.get('action', ''))
+        selector_type = str(event.get('selector_type', 'none'))
+        selector = substitute(str(event.get('selector', '')), variables)
+        value = substitute(str(event.get('value', '')), variables)
+
+        def clean(text: str) -> str:
+            return ' '.join(text.splitlines())
+
+        parts = [action]
+        if selector_type != 'none' and selector:
+            parts.append(f'selector[{selector_type}]="{clean(selector)}"')
+        if action == 'goto':
+            parts.append(f'url="{clean(value)}"')
+        elif action == 'fill':
+            parts.append(f'value="{clean(value)}"')
+        elif action == 'select':
+            parts.append('index=0' if value == SELECT_FIRST_VALUE else f'value="{clean(value)}"')
+        elif action == 'press':
+            parts.append(f'key="{clean(value)}"')
+        elif action == 'upload_file':
+            parts.append(f'file="{clean(value)}"')
+        elif action == 'pause':
+            parts.append(f'ms={clean(value)}')
+        elif action == 'get_text' and value:
+            parts.append(f'output={clean(value)}')
+        elif action == 'screenshot' and value:
+            parts.append(f'file="{clean(value)}"')
+        return ' '.join(parts)
 
     @staticmethod
     def _matching_loop_end(events: list[dict[str, Any]], start: int) -> int:
@@ -409,6 +475,8 @@ class WorkflowExecutor:
                 break
             page.wait_for_timeout(100)
         visible = [item for item in all_matches if item.is_visible()]
+        if len(visible) == 1:
+            visible[0].scroll_into_view_if_needed(timeout=max(1, timeout))
         actionable = [item for item in visible if is_topmost(item)]
         if len(actionable) != 1:
             raise RuntimeError(f'msg.0204{len(all_matches)}msg.0205{len(visible)}msg.0206{len(actionable)}msg.0073')
@@ -431,7 +499,11 @@ class WorkflowExecutor:
         elif action == 'fill':
             self._event_locator(page, event, selector, fallback_selector, timeout).fill(value)
         elif action == 'select':
-            self._event_locator(page, event, selector, fallback_selector, timeout).select_option(value)
+            locator = self._event_locator(page, event, selector, fallback_selector, timeout)
+            if value == SELECT_FIRST_VALUE:
+                locator.select_option(index=0)
+            else:
+                locator.select_option(value)
         elif action == 'wait':
             self._event_locator(page, event, selector, fallback_selector, timeout)
         elif action == 'press':
@@ -464,15 +536,15 @@ class WorkflowExecutor:
     def _event_locator(self, page: Any, event: dict[str, Any], selector: str, fallback_selector: str, timeout: int=10000) -> Any:
         try:
             return self._unique_locator(page, event['selector_type'], selector, timeout)
-        except RuntimeError as primary_error:
+        except RuntimeError:
             fallback_type = str(event.get('fallback_selector_type', 'none'))
             if fallback_type == 'none' or not fallback_selector:
                 raise
-            self.logger(f'msg.0212{fallback_type}')
+            self.logger(f'msg.0212{fallback_type}: "{fallback_selector}"')
             try:
                 return self._unique_locator(page, fallback_type, fallback_selector, timeout)
             except Exception as fallback_error:
-                raise RuntimeError(f'msg.0213{primary_error}msg.0214{fallback_error}') from fallback_error
+                raise RuntimeError(f'msg.0565{fallback_error}') from fallback_error
 
     def _file_input_locator(self, page: Any, event: dict[str, Any], selector: str, fallback_selector: str, timeout: int=10000) -> Any:
         """非表示の場合もある file input を可視性判定なしで一意に取得する。"""

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 DEFAULT_START_URL = 'https://github.com/?locale=ja'
+SELECT_FIRST_VALUE = '__WEBFLOW_SELECT_FIRST__'
 
 SUPPORTED_ACTIONS = (
     'goto',

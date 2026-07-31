@@ -6,10 +6,11 @@ from pathlib import Path
 
 from browser.auth_session import AuthBrowserSession
 from browser.element_picker import DebugBrowserSession
-from browser.page_runtime import BROWSER_ARGS, BROWSER_IGNORED_DEFAULT_ARGS, active_page, is_topmost, launch_persistent_chrome, locators_in_frames, restore_storage_state, settle_new_page
+from browser.page_runtime import BROWSER_ARGS, BROWSER_IGNORED_DEFAULT_ARGS, active_page, close_browser_context, is_topmost, launch_persistent_chrome, locators_in_frames, restore_storage_state, settle_new_page
 from browser.picker_scripts import picker_script
 from browser.profile_runtime import persistent_profile_dir
 from core.executor import WorkflowExecutor
+from core.settings import SELECT_FIRST_VALUE
 
 
 class FakeFrame:
@@ -82,11 +83,133 @@ class FakeLocator:
 
 
 class PageRuntimeTests(unittest.TestCase):
+    def test_event_log_details_include_effective_operation_values(self) -> None:
+        self.assertEqual(
+            WorkflowExecutor._event_log_detail(
+                {
+                    'action': 'fill',
+                    'selector_type': 'css',
+                    'selector': '#account',
+                    'value': '${name}',
+                },
+                {'name': 'Alice'},
+            ),
+            'fill selector[css]="#account" value="Alice"',
+        )
+        self.assertEqual(
+            WorkflowExecutor._event_log_detail(
+                {
+                    'action': 'goto',
+                    'selector_type': 'none',
+                    'selector': '',
+                    'value': 'https://example.com/${id}',
+                },
+                {'id': '42'},
+            ),
+            'goto url="https://example.com/42"',
+        )
+
+    def test_unique_offscreen_element_is_scrolled_before_topmost_check(self) -> None:
+        class Context:
+            pages = []
+
+        class Page:
+            context = Context()
+
+            def is_closed(self):
+                return False
+
+            def wait_for_timeout(self, _milliseconds):
+                pass
+
+        class Locator(FakeLocator):
+            scrolled = False
+
+            def is_visible(self):
+                return True
+
+            def scroll_into_view_if_needed(self, timeout):
+                self.scrolled = True
+
+            def evaluate(self, script):
+                self.script = script
+                return self.scrolled
+
+        page = Page()
+        page.context.pages = [page]
+        locator = Locator()
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        executor._locators = lambda _page, _selector_type, _selector: [
+            type('Collection', (), {
+                'count': lambda self: 1,
+                'nth': lambda self, _index: locator,
+            })()
+        ]
+
+        self.assertIs(executor._unique_locator(page, 'css', '#target', 100), locator)
+        self.assertTrue(locator.scrolled)
+
+    def test_select_can_choose_the_first_option(self) -> None:
+        class Context:
+            pages = []
+
+        class Page:
+            context = Context()
+
+            def is_closed(self):
+                return False
+
+            def set_default_timeout(self, _timeout):
+                pass
+
+        class Locator:
+            selected = None
+
+            def select_option(self, *args, **kwargs):
+                self.selected = (args, kwargs)
+
+        page = Page()
+        page.context.pages = [page]
+        locator = Locator()
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        executor._event_locator = lambda *_args: locator
+        executor._execute_event(
+            page,
+            {
+                'action': 'select',
+                'selector': '#items',
+                'fallback_selector': '',
+                'value': SELECT_FIRST_VALUE,
+                'timeout_ms': 100,
+            },
+            {},
+            Path('.'),
+        )
+
+        self.assertEqual(locator.selected, ((), {'index': 0}))
+
+    def test_closing_an_already_closed_browser_is_idempotent(self) -> None:
+        class ClosedContext:
+            def close(self) -> None:
+                raise RuntimeError(
+                    'BrowserContext.close: Target page, context or browser has been closed'
+                )
+
+        close_browser_context(ClosedContext())
+
+    def test_browser_close_still_reports_unexpected_errors(self) -> None:
+        class BrokenContext:
+            def close(self) -> None:
+                raise RuntimeError('profile cleanup failed')
+
+        with self.assertRaisesRegex(RuntimeError, 'profile cleanup failed'):
+            close_browser_context(BrokenContext())
+
     def test_browser_close_methods_resolve_worker_callbacks_lazily(self) -> None:
         auth = AuthBrowserSession.__new__(AuthBrowserSession)
         auth_closed = []
 
-        def auth_submit(task):
+        def auth_submit(task, timeout=None):
             auth._close_browser = lambda: auth_closed.append(True)
             return task()
 
@@ -102,7 +225,7 @@ class PageRuntimeTests(unittest.TestCase):
         )()
         debug_closed = []
 
-        def debug_submit(task):
+        def debug_submit(task, timeout=None):
             debug._dispose = lambda: debug_closed.append(True)
             return task()
 

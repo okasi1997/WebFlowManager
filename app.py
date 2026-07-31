@@ -74,6 +74,7 @@ class FlowManagerApp:
         self.root.bind_class('TCombobox', '<<ComboboxSelected>>', self._clear_combobox_text_selection, add='+')
         self.current_workflow_id: int | None = None
         self.running = False
+        self.execution_starting = False
         self.executing_tasks: dict[str, tuple[dict[str, object], dict[str, object] | None]] = {}
         self.execution_task_states: dict[str, tuple[dict[str, object], dict[str, object] | None, str]] = {}
         self.open_dialogs: dict[str, tk.Toplevel] = {}
@@ -1469,7 +1470,7 @@ class FlowManagerApp:
 
     def _clear_execution_results(self) -> None:
         """画面上の実行結果とログを初期状態へ戻す。"""
-        if self.running:
+        if self.running or self.execution_starting:
             return
         self.executing_tasks.clear()
         self.execution_task_states.clear()
@@ -2065,7 +2066,7 @@ class FlowManagerApp:
     def _run_workflow(self) -> None:
         # DB の内容はワーカースレッドへ渡す前にスナップショット化する。
         # 実行中に画面側で編集されても、今回の実行計画は変化させない。
-        if self.running:
+        if self.running or self.execution_starting:
             return
         self._show_page('execution')
         self._select_execution_tab('status')
@@ -2114,11 +2115,21 @@ class FlowManagerApp:
             return
         # 永続 Chrome プロファイルは一つのブラウザープロセスだけが使用できる。
         # 実行処理へ渡す前に対話操作用セッションを閉じる。
+        self.execution_starting = True
+        close_errors: list[Exception] = []
         try:
-            self.debug_browser.close_browser()
-            self.auth_browser.close_browser()
-        except Exception as error:
-            messagebox.showerror('msg.0065', str(error))
+            for browser_session in (self.debug_browser, self.auth_browser):
+                try:
+                    browser_session.close_browser()
+                except Exception as error:
+                    close_errors.append(error)
+        finally:
+            self.execution_starting = False
+        if close_errors:
+            messagebox.showerror(
+                'msg.0561',
+                '\n'.join(tr(str(error)) for error in close_errors),
+            )
             return
         self.running = True
         self.run_button.config(state='disabled')
@@ -2151,21 +2162,12 @@ class FlowManagerApp:
         def worker() -> None:
             # 前処理は同期実行し、ログイン状態と取得変数を確定してから各組を開始する。
             try:
-                state: dict[str, int] = {}
-
                 def step_start(step: dict[str, object]) -> int:
                     self._show_executing_step(step, None)
                     if step['phase'] == 'pcl' and step.get('record'):
                         self.db.set_data_record_status(step['record']['id'], 'running')
                     if step['phase'] == 'once':
                         self._log(f"msg.0074{step['name']}")
-                    else:
-                        group = str(step.get('group', '1'))
-                        if step['pcl_index'] != state.get(group, -1):
-                            pcl_name = step['record']['name']
-                            self._log(f"msg.0075{group} | msg.0446 [{step['pcl_index']}/{len(structured_records)}]: {pcl_name}")
-                            state[group] = step['pcl_index']
-                        self._log(f"msg.0076{step['name']}")
                     return self.db.create_run(step['id'])
 
                 def step_success(_step: dict[str, object], run_id: int) -> None:
@@ -2209,11 +2211,10 @@ class FlowManagerApp:
                             try:
                                 future.result()
                                 self._log(f'msg.0081{group}msg.0082')
-                            except Exception as error:
-                                failures.append(f'msg.0083{group}: {error}')
-                                self._log(f'msg.0081{group}msg.0084{error}')
+                            except Exception:
+                                failures.append(str(group))
                     if failures:
-                        raise RuntimeError('；'.join(failures))
+                        raise RuntimeError(', '.join(failures))
                 self._log('msg.0085')
             except Exception as error:
                 self._log(f'msg.0086{error}')
@@ -2359,6 +2360,10 @@ class FlowManagerApp:
             with self._log_file_lock:
                 with log_path.open('a', encoding='utf-8', newline='') as log_file:
                     log_file.write(file_text)
+                try:
+                    print(file_text.rstrip(), flush=True)
+                except (OSError, RuntimeError):
+                    pass
         except OSError:
             # ファイルログの失敗でワークフロー実行や画面ログを中断させない。
             pass

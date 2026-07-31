@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable
 from core.conditions import OPERATORS, decode_guard, summarize_guard
+from core.settings import SELECT_FIRST_VALUE
 from i18n import tr
 from ui.ui_helpers import AutoScrollbar
 
@@ -429,10 +430,14 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         self.field_labels: dict[str, ttk.Label] = {}
         event = event or {}
         self.guard = decode_guard(event.get('guard', event.get('guard_json', '')))
+        self.select_first = tk.BooleanVar(
+            value=str(event.get('value', '')) == SELECT_FIRST_VALUE,
+        )
         self.failure_action_labels = {'stop': tr('msg.0432'), 'continue': tr('msg.0433'), 'refresh': tr('msg.0425'), 'goto': tr('msg.0426')}
         stored_failure_action = str(event.get('failure_action', 'none'))
         failure_key = 'continue' if stored_failure_action == 'none' and event.get('continue_on_error', 0) else ('stop' if stored_failure_action == 'none' else stored_failure_action)
-        self.values = {'name': tk.StringVar(value=str(event.get('name', ''))), 'action': tk.StringVar(value=str(event.get('action', 'click' if 'click' in actions else actions[0]))), 'selector_type': tk.StringVar(value=str(event.get('selector_type', 'role' if 'role' in selector_types else selector_types[0]))), 'selector': tk.StringVar(value=str(event.get('selector', ''))), 'fallback_selector_type': tk.StringVar(value=str(event.get('fallback_selector_type', 'none'))), 'fallback_selector': tk.StringVar(value=str(event.get('fallback_selector', ''))), 'value': tk.StringVar(value=str(event.get('value', ''))), 'timeout_ms': tk.StringVar(value=str(event.get('timeout_ms', default_timeout_ms))), 'enabled': tk.BooleanVar(value=bool(event.get('enabled', 1))), 'failure_action': tk.StringVar(value=self.failure_action_labels.get(failure_key, self.failure_action_labels['stop'])), 'failure_target': tk.StringVar(value=str(event.get('failure_target', ''))), 'data_path': tk.StringVar(value=str(event.get('data_path', ''))), 'target_url': tk.StringVar(value=default_url)}
+        initial_value = '' if self.select_first.get() else str(event.get('value', ''))
+        self.values = {'name': tk.StringVar(value=str(event.get('name', ''))), 'action': tk.StringVar(value=str(event.get('action', 'click' if 'click' in actions else actions[0]))), 'selector_type': tk.StringVar(value=str(event.get('selector_type', 'role' if 'role' in selector_types else selector_types[0]))), 'selector': tk.StringVar(value=str(event.get('selector', ''))), 'fallback_selector_type': tk.StringVar(value=str(event.get('fallback_selector_type', 'none'))), 'fallback_selector': tk.StringVar(value=str(event.get('fallback_selector', ''))), 'value': tk.StringVar(value=initial_value), 'timeout_ms': tk.StringVar(value=str(event.get('timeout_ms', default_timeout_ms))), 'enabled': tk.BooleanVar(value=bool(event.get('enabled', 1))), 'failure_action': tk.StringVar(value=self.failure_action_labels.get(failure_key, self.failure_action_labels['stop'])), 'failure_target': tk.StringVar(value=str(event.get('failure_target', ''))), 'data_path': tk.StringVar(value=str(event.get('data_path', ''))), 'target_url': tk.StringVar(value=default_url)}
 
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
@@ -520,6 +525,14 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
             style='DialogInline.TButton',
         )
         self.value_data_reference_button.grid(row=2, column=3, padx=(8, 10), pady=5, sticky='ew')
+        self.select_first_check = ttk.Checkbutton(
+            operation,
+            text='msg.0563',
+            variable=self.select_first,
+            command=self._update_action_fields,
+            style='DialogCard.TCheckbutton',
+        )
+        self.select_first_check.grid(row=2, column=3, padx=(8, 10), pady=5, sticky='w')
         ttk.Label(operation, text='msg.0033', width=18, anchor='w', style='DialogCard.TLabel').grid(row=3, column=0, padx=(10, 8), pady=5, sticky='w')
         self.data_path_entry = ttk.Entry(operation, textvariable=self.values['data_path'], width=24, state='readonly', style='Dialog.TEntry')
         self.data_path_entry.grid(row=3, column=1, columnspan=3, padx=(0, 10), pady=5, sticky='ew')
@@ -692,10 +705,11 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         value_actions = {'goto', 'fill', 'select', 'press', 'get_text', 'screenshot', 'pause', 'retry_start', 'upload_file'}
         timeout_actions = {'goto', 'click', 'fill', 'select', 'wait', 'press', 'get_text', 'pause', 'upload_file'}
         data_actions = {'fill', 'select', 'get_text', 'loop_start', 'upload_file'}
+        select_first = action == 'select' and self.select_first.get()
         can_locate = action in locator_actions
         self._set_field_enabled('selector_type', can_locate)
         self._set_field_enabled('selector', can_locate)
-        self._set_field_enabled('value', action in value_actions)
+        self._set_field_enabled('value', action in value_actions and not select_first)
         self._set_field_enabled('timeout_ms', action in timeout_actions)
         for widget in (self.target_url_entry, self.pick_button, self.test_button, self.verify_event_button):
             widget.configure(state='normal' if can_locate else 'disabled')
@@ -705,19 +719,25 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         can_execute_to_event = self.execute_to_event is not None and can_locate
         self.execute_to_event_button.configure(state='normal' if can_execute_to_event else 'disabled')
         self.close_debug_button.configure(state='normal' if can_locate else 'disabled')
-        can_link_data = action in data_actions
+        can_link_data = action in data_actions and not select_first
         self.data_path_entry.configure(state='readonly' if can_link_data else 'disabled')
         for widget in (self.data_choose_button, self.data_clear_button):
             widget.configure(state='normal' if can_link_data else 'disabled')
         self.data_path_label.state(['!disabled'] if can_link_data else ['disabled'])
         self.guard_button.configure(state='disabled' if action in {'loop_start', 'loop_end', 'retry_start', 'retry_end'} else 'normal')
         if action == 'upload_file':
+            self.select_first_check.grid_remove()
             self.value_data_reference_button.grid_remove()
             self.file_choose_button.grid()
             self.file_choose_button.configure(state='normal')
         else:
             self.file_choose_button.grid_remove()
-            self.value_data_reference_button.grid()
+            if action == 'select':
+                self.value_data_reference_button.grid_remove()
+                self.select_first_check.grid()
+            else:
+                self.select_first_check.grid_remove()
+                self.value_data_reference_button.grid()
             self.value_data_reference_button.configure(
                 state='normal' if action in {'goto', 'fill', 'select', 'press', 'screenshot'} else 'disabled'
             )
@@ -877,7 +897,11 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
             'selector': self.values['selector'].get().strip(),
             'fallback_selector_type': self.values['fallback_selector_type'].get(),
             'fallback_selector': self.values['fallback_selector'].get().strip(),
-            'value': self.values['value'].get(),
+            'value': (
+                SELECT_FIRST_VALUE
+                if self.values['action'].get() == 'select' and self.select_first.get()
+                else self.values['value'].get()
+            ),
             'timeout_ms': self.values['timeout_ms'].get(),
         }
 
@@ -922,6 +946,9 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
             messagebox.showerror('msg.0159', 'msg.0429', parent=self)
             return
         self.result = {'name': name, 'action': self.values['action'].get(), 'selector_type': self.values['selector_type'].get(), 'selector': self.values['selector'].get().strip(), 'fallback_selector_type': self.values['fallback_selector_type'].get(), 'fallback_selector': self.values['fallback_selector'].get().strip(), 'value': self.values['value'].get(), 'timeout_ms': timeout, 'enabled': int(self.values['enabled'].get()), 'continue_on_error': continue_on_error, 'failure_action': failure_action, 'failure_target': failure_target if failure_action == 'goto' else '', 'data_path': self.values['data_path'].get(), 'guard': self.guard}
+        if self.result['action'] == 'select' and self.select_first.get():
+            self.result['value'] = SELECT_FIRST_VALUE
+            self.result['data_path'] = ''
         action = self.result['action']
         locator_actions = {'click', 'fill', 'select', 'wait', 'press', 'get_text', 'upload_file'}
         value_actions = {'goto', 'fill', 'select', 'press', 'get_text', 'screenshot', 'pause', 'retry_start', 'upload_file'}
