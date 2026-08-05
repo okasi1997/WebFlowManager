@@ -14,6 +14,7 @@ from core.settings import SELECT_FIRST_VALUE
 from i18n import tr
 VARIABLE_PATTERN = re.compile('\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}')
 DATA_REFERENCE_PATTERN = re.compile(r'\$\{data:([^{}]+)\}')
+SALESFORCE_SPINNER_SELECTOR = '.slds-spinner, lightning-spinner'
 
 def find_variables(events: list[dict[str, Any]]) -> list[str]:
     """外部入力が必要な変数だけを抽出する。get_text の生成変数は除外する。"""
@@ -51,8 +52,7 @@ class WorkflowExecutor:
         except ImportError as error:
             raise RuntimeError('Playwright is not installed. Run: pip install -r requirements.txt') from error
         safe_session = re.sub('[^A-Za-z0-9_-]', '_', session_name)
-        artifact_dir = self.project_dir / 'artifacts' / (datetime.now().strftime('%Y%m%d_%H%M%S_%f') + f'_{safe_session}')
-        artifact_dir.mkdir(parents=True, exist_ok=True)
+        artifact_dir = self.project_dir / 'artifacts' / datetime.now().strftime('%Y%m%d_%H%M%S')
         state_path = self.project_dir / 'data' / 'browser_state.json' if storage_state_path is False else storage_state_path
         shared_session = session_name in {'batch', 'preamble'}
         output_state_path = state_path if shared_session else (state_path.parent / f'{state_path.stem}_{safe_session}.json' if state_path is not None else None)
@@ -144,11 +144,13 @@ class WorkflowExecutor:
         enabled = [event for event in events if event.get('enabled', 1)][start_index:]
         self._execute_sequence(page, enabled, variables, artifact_dir, root_data, {}, trace, log_prefix, [], on_event_start)
 
-    def _execute_sequence(self, page: Any, events: list[dict[str, Any]], variables: dict[str, str], artifact_dir: Path, root_data: dict[str, Any] | None, loop_context: dict[str, Any], trace: str, log_prefix: str='', loop_progress: list[str] | None=None, on_event_start: Callable[[dict[str, Any]], None] | None=None) -> None:
+    def _execute_sequence(self, page: Any, events: list[dict[str, Any]], variables: dict[str, str], artifact_dir: Path, root_data: dict[str, Any] | None, loop_context: dict[str, Any], trace: str, log_prefix: str='', loop_progress: list[str] | None=None, on_event_start: Callable[[dict[str, Any]], None] | None=None, deadline: float | None=None) -> None:
         # loop/retry は境界イベントを検出し、内側の配列を再帰的に実行する。
         loop_progress = loop_progress or []
         index = 0
         while index < len(events):
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError('msg.0576')
             page = active_page(page)
             event = events[index]
             action = event['action']
@@ -174,19 +176,29 @@ class WorkflowExecutor:
                         iterations.append((nested_context, [*loop_progress, f'{item_number}/{len(items)}'], f'{trace}_{item_number}'))
                 retry_text = str(event.get('value', '')).strip()
                 try:
-                    retry_count = int(retry_text) if retry_text else 0
-                    if retry_count < 0:
+                    retry_count = int(retry_text) if retry_text else int(event.get('retry_count', 0))
+                    retry_interval_ms = int(event.get('retry_interval_ms', 0))
+                    group_timeout_ms = int(event.get('timeout_ms', 10000))
+                    if retry_count < 0 or retry_interval_ms < 0 or group_timeout_ms <= 0:
                         raise ValueError
                 except ValueError as error:
-                    raise ValueError(f"group '{event['name']}' requires a non-negative retry count") from error
+                    raise ValueError(f"group '{event['name']}' has invalid execution control values") from error
                 for nested_context, progress, nested_trace in iterations:
                     for attempt in range(1, retry_count + 2):
+                        group_deadline = time.monotonic() + group_timeout_ms / 1000
+                        if deadline is not None:
+                            group_deadline = min(group_deadline, deadline)
                         try:
-                            self._execute_sequence(page, events[index + 1:end], variables, artifact_dir, root_data, nested_context, f'{nested_trace}_retry_{attempt}', log_prefix, progress, on_event_start)
+                            self._execute_sequence(page, events[index + 1:end], variables, artifact_dir, root_data, nested_context, f'{nested_trace}_retry_{attempt}', log_prefix, progress, on_event_start, group_deadline)
                             break
-                        except Exception:
+                        except Exception as error:
                             if attempt > retry_count:
                                 raise
+                            group_prefix = self._event_log_prefix(log_prefix, event, progress)
+                            self.logger(f'{group_prefix}msg.0568{attempt}/{retry_count + 1}msg.0569{error}')
+                            if retry_interval_ms:
+                                self.logger(f'{group_prefix}msg.0570{retry_interval_ms} ms')
+                                page.wait_for_timeout(retry_interval_ms)
                 index = end + 1
                 continue
             if action == 'group_end':
@@ -211,7 +223,7 @@ class WorkflowExecutor:
                     self.logger(f'{self._event_log_prefix(log_prefix, event, progress)}msg.0182{path} [{item_number}/{len(items)}]')
                     nested_context = dict(loop_context)
                     nested_context[path] = item
-                    self._execute_sequence(page, events[index + 1:end], variables, artifact_dir, root_data, nested_context, f'{trace}_{item_number}', log_prefix, progress, on_event_start)
+                    self._execute_sequence(page, events[index + 1:end], variables, artifact_dir, root_data, nested_context, f'{trace}_{item_number}', log_prefix, progress, on_event_start, deadline)
                 index = end + 1
                 continue
             if action == 'loop_end':
@@ -234,7 +246,7 @@ class WorkflowExecutor:
                     retry_prefix = self._event_log_prefix(log_prefix, event, loop_progress)
                     self.logger(f'{retry_prefix}msg.0186{attempt}/{total_attempts}]')
                     try:
-                        self._execute_sequence(page, events[index + 1:end], variables, artifact_dir, root_data, loop_context, f'{trace}_retry_{attempt}', log_prefix, loop_progress, on_event_start)
+                        self._execute_sequence(page, events[index + 1:end], variables, artifact_dir, root_data, loop_context, f'{trace}_retry_{attempt}', log_prefix, loop_progress, on_event_start, deadline)
                         break
                     except Exception:
                         if attempt >= total_attempts:
@@ -253,6 +265,9 @@ class WorkflowExecutor:
             if on_event_start:
                 on_event_start(event)
             effective = dict(event)
+            if deadline is not None:
+                remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
+                effective['timeout_ms'] = min(int(effective.get('timeout_ms', 10000)), remaining_ms)
             data_path = str(event.get('data_path', ''))
             if data_path and event.get('action') != 'get_text':
                 effective['value'] = str(self._resolve_data(root_data, data_path, loop_context))
@@ -273,15 +288,39 @@ class WorkflowExecutor:
                 + (f' <- {data_path}' if data_path else '')
             )
             try:
-                captured = self._execute_event(page, effective, variables, artifact_dir)
+                retry_count = max(0, int(event.get('retry_count', 0)))
+                retry_interval_ms = max(0, int(event.get('retry_interval_ms', 0)))
+                captured = None
+                for attempt in range(1, retry_count + 2):
+                    try:
+                        self._wait_for_salesforce_spinner_if_present(page, int(effective.get('timeout_ms', 10000)), prefix)
+                        captured = self._execute_event(page, effective, variables, artifact_dir)
+                        self._wait_for_salesforce_spinner_if_present(page, int(effective.get('timeout_ms', 10000)), prefix)
+                        if deadline is not None and time.monotonic() >= deadline:
+                            raise TimeoutError('msg.0576')
+                        break
+                    except Exception as attempt_error:
+                        if attempt > retry_count:
+                            raise
+                        self.logger(f'{prefix}msg.0568{attempt}/{retry_count + 1}msg.0569{attempt_error}')
+                        if retry_interval_ms:
+                            self.logger(f'{prefix}msg.0570{retry_interval_ms} ms')
+                            page.wait_for_timeout(retry_interval_ms)
                 if action == 'get_text' and data_path:
                     self._assign_data(root_data, data_path, loop_context, captured)
             except Exception as error:
-                page = active_page(page)
+                try:
+                    page = active_page(page)
+                    failure_url = str(page.url)
+                except Exception:
+                    failure_url = ''
                 safe_trace = re.sub('[^A-Za-z0-9_-]', '_', trace)
                 screenshot = artifact_dir / f"error_{safe_trace}_{event['id']}.png"
+                artifact_dir.mkdir(parents=True, exist_ok=True)
                 page.screenshot(path=str(screenshot), full_page=True)
                 self.logger(f'{prefix}msg.0192{error}')
+                if failure_url:
+                    self.logger(f'{prefix}Failure URL: {failure_url}')
                 self.logger(f'{prefix}msg.0193{screenshot}')
                 failure_action = str(event.get('failure_action', 'none'))
                 if failure_action == 'refresh':
@@ -506,6 +545,8 @@ class WorkflowExecutor:
                 locator.select_option(value)
         elif action == 'wait':
             self._event_locator(page, event, selector, fallback_selector, timeout)
+        elif action == 'wait_hidden':
+            self._wait_until_hidden(page, event['selector_type'], selector, timeout)
         elif action == 'press':
             self._event_locator(page, event, selector, fallback_selector, timeout).press(value)
         elif action == 'upload_file':
@@ -527,11 +568,42 @@ class WorkflowExecutor:
             return captured
         elif action == 'screenshot':
             filename = value or f"screenshot_{event['id']}.png"
+            artifact_dir.mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(artifact_dir / filename), full_page=True)
         elif action == 'pause':
             page.wait_for_timeout(int(value or timeout))
         else:
             raise ValueError(f'Unsupported action: {action}')
+
+    def _wait_until_hidden(self, page: Any, selector_type: str, selector: str, timeout: int=10000) -> None:
+        """Wait until every matching element in the page and its frames is hidden or detached."""
+        deadline = time.monotonic() + timeout / 1000
+        while True:
+            page = active_page(page)
+            visible_count = self._visible_locator_count(page, selector_type, selector)
+            if visible_count == 0:
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f'msg.0566{visible_count}msg.0567')
+            page.wait_for_timeout(100)
+
+    def _wait_for_salesforce_spinner_if_present(self, page: Any, timeout: int, prefix: str='') -> None:
+        """Apply the common Salesforce loading guard without delaying pages that have no spinner."""
+        page = active_page(page)
+        visible_count = self._visible_locator_count(page, 'css', SALESFORCE_SPINNER_SELECTOR)
+        if visible_count == 0:
+            return
+        self.logger(f'{prefix}msg.0574{visible_count}msg.0567')
+        self._wait_until_hidden(page, 'css', SALESFORCE_SPINNER_SELECTOR, timeout)
+
+    def _visible_locator_count(self, page: Any, selector_type: str, selector: str) -> int:
+        locators = self._locators(page, selector_type, selector)
+        return sum(
+            1
+            for locator in locators
+            for index in range(locator.count())
+            if locator.nth(index).is_visible()
+        )
 
     def _event_locator(self, page: Any, event: dict[str, Any], selector: str, fallback_selector: str, timeout: int=10000) -> Any:
         try:

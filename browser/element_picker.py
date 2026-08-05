@@ -239,10 +239,7 @@ class DebugBrowserSession:
             _context, page = self._ensure_page(target_url)
             page = active_page(page)
             bring_page_to_front(page)
-            artifact_dir = self.project_dir / 'artifacts' / (
-                datetime.now().strftime('%Y%m%d_%H%M%S_%f') + '_verify'
-            )
-            artifact_dir.mkdir(parents=True, exist_ok=True)
+            artifact_dir = self.project_dir / 'artifacts' / datetime.now().strftime('%Y%m%d_%H%M%S')
             executor = WorkflowExecutor(
                 self.project_dir,
                 lambda message: self._log_sink(message, 'WorkflowExecutor'),
@@ -257,8 +254,7 @@ class DebugBrowserSession:
             _context, page = self._ensure_page(target_url)
             page = active_page(page)
             page.goto(target_url or self.start_url, wait_until='domcontentloaded')
-            artifact_dir = self.project_dir / 'artifacts' / (datetime.now().strftime('%Y%m%d_%H%M%S_%f') + '_debug')
-            artifact_dir.mkdir(parents=True, exist_ok=True)
+            artifact_dir = self.project_dir / 'artifacts' / datetime.now().strftime('%Y%m%d_%H%M%S')
             executor = WorkflowExecutor(self.project_dir, lambda message: self._log_sink(message, 'WorkflowExecutor'))
 
             def pause_at_target(event: dict[str, Any]) -> None:

@@ -63,6 +63,7 @@ def launch_persistent_chrome(
         'user_data_dir': str(user_data_dir),
         'channel': 'chrome',
         'headless': not visible,
+        'ignore_https_errors': True,
         'args': browser_args(visible),
         **browser_context_options(visible),
     }

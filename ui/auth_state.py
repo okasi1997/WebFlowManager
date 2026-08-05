@@ -15,6 +15,7 @@ from i18n import tr
 
 DEFAULT_PROFILE = 'default'
 NO_PROFILE = 'none'
+GENERATED_GROUP_STATE_SUFFIX = re.compile(r'_group_[A-Za-z0-9_-]+$')
 
 
 def profile_path(project_dir: Path, profile: str) -> Path | None:
@@ -211,7 +212,14 @@ class AuthStateDialog(tk.Toplevel):
 
     def _profiles(self) -> list[str]:
         folder = self.project_dir / 'data' / 'browser_states'
-        custom = sorted((path.stem for path in folder.glob('*.json')), key=str.casefold) if folder.exists() else []
+        custom = sorted(
+            (
+                path.stem
+                for path in folder.glob('*.json')
+                if not GENERATED_GROUP_STATE_SUFFIX.search(path.stem)
+            ),
+            key=str.casefold,
+        ) if folder.exists() else []
         return [DEFAULT_PROFILE, NO_PROFILE, *custom]
 
     def _refresh_profiles(self, selected: str | None=None, apply: bool=False) -> None:

@@ -287,7 +287,7 @@ class EventGroupDialog(_GuardEditorMixin, tk.Toplevel):
     def __init__(self, parent: tk.Misc, choose_data_path: Callable[[str], str | None], event: dict[str, Any] | None=None) -> None:
         super().__init__(parent)
         self.title('msg.0408')
-        self.geometry('700x400')
+        self.geometry('700x480')
         self.resizable(False, False)
         self.result: dict[str, Any] | None = None
         self.choose_data_path = choose_data_path
@@ -298,7 +298,10 @@ class EventGroupDialog(_GuardEditorMixin, tk.Toplevel):
         self.retry_enabled = tk.BooleanVar(value=bool(event.get('retry_enabled', action == 'retry_start' or str(event.get('value', '')).strip())))
         self.name = tk.StringVar(value=str(event.get('name', '')))
         self.data_path = tk.StringVar(value=str(event.get('data_path', '')))
-        self.retry_count = tk.StringVar(value=str(event.get('value', '3') or '3'))
+        stored_retry = str(event.get('value', '')).strip()
+        self.timeout_ms = tk.StringVar(value=str(event.get('timeout_ms', 600000)))
+        self.retry_count = tk.StringVar(value=stored_retry or str(event.get('retry_count', 3)))
+        self.retry_interval_ms = tk.StringVar(value=str(event.get('retry_interval_ms', 0)))
         self.enabled = tk.BooleanVar(value=bool(event.get('enabled', 1)))
 
         self.rowconfigure(0, weight=1)
@@ -316,39 +319,50 @@ class EventGroupDialog(_GuardEditorMixin, tk.Toplevel):
             card_body.pack(fill='x')
             return card_body
 
-        body = add_card('msg.0366')
-        body.columnconfigure(0, minsize=104)
-        body.columnconfigure(1, weight=1)
-        body.columnconfigure(3, weight=0, minsize=120)
-        ttk.Label(body, text='msg.0409', style='DialogCard.TLabel').grid(row=0, column=0, padx=(8, 10), pady=6, sticky='w')
-        self.name_entry = ttk.Entry(body, textvariable=self.name, style='Dialog.TEntry')
-        self.name_entry.grid(row=0, column=1, columnspan=2, padx=(0, 8), pady=6, sticky='ew')
-        ttk.Checkbutton(body, text='msg.0006', variable=self.enabled, style='DialogCard.TCheckbutton').grid(row=0, column=3, padx=(8, 8), pady=7, sticky='w')
-        ttk.Label(body, text='msg.0410', style='DialogCard.TLabel').grid(row=1, column=0, padx=(8, 10), pady=6, sticky='w')
-        mode_row = ttk.Frame(body, style='DialogCardBody.TFrame')
+        basic = add_card('msg.0366')
+        basic.columnconfigure(0, minsize=104)
+        basic.columnconfigure(1, weight=1)
+        basic.columnconfigure(3, weight=0, minsize=120)
+        ttk.Label(basic, text='msg.0409', width=18, anchor='w', style='DialogCard.TLabel').grid(row=0, column=0, padx=(8, 10), pady=5, sticky='w')
+        self.name_entry = ttk.Entry(basic, textvariable=self.name, style='Dialog.TEntry')
+        self.name_entry.grid(row=0, column=1, columnspan=2, padx=(0, 8), pady=5, sticky='ew')
+        ttk.Checkbutton(basic, text='msg.0006', variable=self.enabled, style='DialogCard.TCheckbutton').grid(row=0, column=3, padx=(8, 8), pady=5, sticky='w')
+        ttk.Label(basic, text='msg.0410', width=18, anchor='w', style='DialogCard.TLabel').grid(row=1, column=0, padx=(8, 10), pady=5, sticky='w')
+        mode_row = ttk.Frame(basic, style='DialogCardBody.TFrame')
         mode_row.grid(row=1, column=1, columnspan=3, padx=(0, 8), pady=6, sticky='w')
         ttk.Checkbutton(mode_row, text='msg.0416', variable=self.loop_enabled, command=self._update_fields, style='DialogCard.TCheckbutton').pack(side='left', padx=(0, 24))
         ttk.Checkbutton(mode_row, text='msg.0417', variable=self.retry_enabled, command=self._update_fields, style='DialogCard.TCheckbutton').pack(side='left')
-        self.path_label = ttk.Label(body, text='msg.0033', style='DialogCard.TLabel')
+        self.path_label = ttk.Label(basic, text='msg.0033', width=18, anchor='w', style='DialogCard.TLabel')
         self.path_label.grid(row=2, column=0, padx=(8, 10), pady=6, sticky='w')
-        self.path_entry = ttk.Entry(body, textvariable=self.data_path, state='readonly', style='Dialog.TEntry')
+        self.path_entry = ttk.Entry(basic, textvariable=self.data_path, state='readonly', style='Dialog.TEntry')
         self.path_entry.grid(row=2, column=1, columnspan=2, padx=(0, 8), pady=6, sticky='ew')
-        self.path_button = ttk.Button(body, text='msg.0140', command=self._choose_path, style='DialogInline.TButton')
+        self.path_button = ttk.Button(basic, text='msg.0140', command=self._choose_path, style='DialogInline.TButton')
         self.path_button.grid(row=2, column=3, padx=(8, 8), pady=6, sticky='ew')
-        self.retry_label = ttk.Label(body, text='msg.0411', style='DialogCard.TLabel')
-        self.retry_label.grid(row=3, column=0, padx=(8, 10), pady=6, sticky='w')
-        self.retry_entry = ttk.Entry(body, textvariable=self.retry_count, style='Dialog.TEntry')
-        self.retry_entry.grid(row=3, column=1, columnspan=2, padx=(0, 8), pady=6, sticky='ew')
-        ttk.Label(body, text='msg.0405', style='DialogCard.TLabel').grid(row=4, column=0, padx=(8, 10), pady=6, sticky='w')
+        execution = add_card('msg.0502')
+        execution.columnconfigure(0, minsize=104)
+        execution.columnconfigure(1, weight=1)
+        execution.columnconfigure(3, weight=0, minsize=120)
+        ttk.Label(execution, text='msg.0134', width=18, anchor='w', style='DialogCard.TLabel').grid(row=0, column=0, padx=(8, 10), pady=5, sticky='w')
+        self.timeout_entry = ttk.Entry(execution, textvariable=self.timeout_ms, style='Dialog.TEntry')
+        self.timeout_entry.grid(row=0, column=1, columnspan=2, padx=(0, 8), pady=5, sticky='ew')
+        self.retry_label = ttk.Label(execution, text='msg.0572', width=18, anchor='w', style='DialogCard.TLabel')
+        self.retry_label.grid(row=1, column=0, padx=(8, 10), pady=5, sticky='w')
+        self.retry_entry = ttk.Entry(execution, textvariable=self.retry_count, style='Dialog.TEntry')
+        self.retry_entry.grid(row=1, column=1, columnspan=2, padx=(0, 8), pady=5, sticky='ew')
+        self.retry_interval_label = ttk.Label(execution, text='msg.0573', width=18, anchor='w', style='DialogCard.TLabel')
+        self.retry_interval_label.grid(row=2, column=0, padx=(8, 10), pady=5, sticky='w')
+        self.retry_interval_entry = ttk.Entry(execution, textvariable=self.retry_interval_ms, style='Dialog.TEntry')
+        self.retry_interval_entry.grid(row=2, column=1, columnspan=2, padx=(0, 8), pady=5, sticky='ew')
+        ttk.Label(execution, text='msg.0405', width=18, anchor='w', style='DialogCard.TLabel').grid(row=3, column=0, padx=(8, 10), pady=5, sticky='w')
         self.guard_summary_var = tk.StringVar(value=self._guard_summary())
         self.guard_summary = ttk.Entry(
-            body,
+            execution,
             textvariable=self.guard_summary_var,
             state='disabled',
             style='Dialog.TEntry',
         )
-        self.guard_summary.grid(row=4, column=1, columnspan=2, padx=(0, 8), pady=6, sticky='ew')
-        ttk.Button(body, text='msg.0403', command=self._edit_guard, style='DialogInline.TButton').grid(row=4, column=3, padx=(8, 8), pady=6, sticky='ew')
+        self.guard_summary.grid(row=3, column=1, columnspan=2, padx=(0, 8), pady=5, sticky='ew')
+        ttk.Button(execution, text='msg.0403', command=self._edit_guard, style='DialogInline.TButton').grid(row=3, column=3, padx=(8, 8), pady=5, sticky='ew')
 
         ttk.Separator(self, style='DialogFooter.TSeparator').grid(row=1, column=0, sticky='ew')
         buttons = ttk.Frame(self, style='DialogFooter.TFrame', padding=(14, 10))
@@ -372,8 +386,10 @@ class EventGroupDialog(_GuardEditorMixin, tk.Toplevel):
         self.path_entry.configure(state='readonly' if loop else 'disabled')
         self.path_button.configure(state='normal' if loop else 'disabled')
         self.retry_entry.configure(state='normal' if retry else 'disabled')
+        self.retry_interval_entry.configure(state='normal' if retry else 'disabled')
         self.path_label.state(['!disabled'] if loop else ['disabled'])
         self.retry_label.state(['!disabled'] if retry else ['disabled'])
+        self.retry_interval_label.state(['!disabled'] if retry else ['disabled'])
 
     def _choose_path(self) -> None:
         path = self.choose_data_path('loop_start')
@@ -390,18 +406,22 @@ class EventGroupDialog(_GuardEditorMixin, tk.Toplevel):
         if is_loop and not self.data_path.get().strip():
             messagebox.showerror('msg.0159', 'msg.0412', parent=self)
             return
-        if is_retry:
-            try:
-                if int(self.retry_count.get()) < 0:
-                    raise ValueError
-            except ValueError:
-                messagebox.showerror('msg.0159', 'msg.0162', parent=self)
-                return
+        try:
+            timeout_ms = int(self.timeout_ms.get())
+            retry_count = int(self.retry_count.get()) if is_retry else 0
+            retry_interval_ms = int(self.retry_interval_ms.get()) if is_retry else 0
+            if timeout_ms <= 0 or retry_count < 0 or retry_interval_ms < 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror('msg.0159', 'msg.0575', parent=self)
+            return
         action = 'group_start'
         self.result = {'name': name, 'action': action, 'selector_type': 'none', 'selector': '',
                        'fallback_selector_type': 'none', 'fallback_selector': '',
-                       'value': self.retry_count.get() if is_retry else '',
-                       'timeout_ms': 10000, 'enabled': int(self.enabled.get()),
+                       'value': str(retry_count) if is_retry else '',
+                       'timeout_ms': timeout_ms, 'retry_count': retry_count if is_retry else 0,
+                       'retry_interval_ms': retry_interval_ms if is_retry else 0,
+                       'enabled': int(self.enabled.get()),
                        'continue_on_error': 0,
                        'data_path': self.data_path.get().strip() if is_loop else '',
                        'loop_enabled': int(is_loop), 'retry_enabled': int(is_retry),
@@ -437,7 +457,7 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         stored_failure_action = str(event.get('failure_action', 'none'))
         failure_key = 'continue' if stored_failure_action == 'none' and event.get('continue_on_error', 0) else ('stop' if stored_failure_action == 'none' else stored_failure_action)
         initial_value = '' if self.select_first.get() else str(event.get('value', ''))
-        self.values = {'name': tk.StringVar(value=str(event.get('name', ''))), 'action': tk.StringVar(value=str(event.get('action', 'click' if 'click' in actions else actions[0]))), 'selector_type': tk.StringVar(value=str(event.get('selector_type', 'role' if 'role' in selector_types else selector_types[0]))), 'selector': tk.StringVar(value=str(event.get('selector', ''))), 'fallback_selector_type': tk.StringVar(value=str(event.get('fallback_selector_type', 'none'))), 'fallback_selector': tk.StringVar(value=str(event.get('fallback_selector', ''))), 'value': tk.StringVar(value=initial_value), 'timeout_ms': tk.StringVar(value=str(event.get('timeout_ms', default_timeout_ms))), 'enabled': tk.BooleanVar(value=bool(event.get('enabled', 1))), 'failure_action': tk.StringVar(value=self.failure_action_labels.get(failure_key, self.failure_action_labels['stop'])), 'failure_target': tk.StringVar(value=str(event.get('failure_target', ''))), 'data_path': tk.StringVar(value=str(event.get('data_path', ''))), 'target_url': tk.StringVar(value=default_url)}
+        self.values = {'name': tk.StringVar(value=str(event.get('name', ''))), 'action': tk.StringVar(value=str(event.get('action', 'click' if 'click' in actions else actions[0]))), 'selector_type': tk.StringVar(value=str(event.get('selector_type', 'role' if 'role' in selector_types else selector_types[0]))), 'selector': tk.StringVar(value=str(event.get('selector', ''))), 'fallback_selector_type': tk.StringVar(value=str(event.get('fallback_selector_type', 'none'))), 'fallback_selector': tk.StringVar(value=str(event.get('fallback_selector', ''))), 'value': tk.StringVar(value=initial_value), 'timeout_ms': tk.StringVar(value=str(event.get('timeout_ms', default_timeout_ms))), 'retry_count': tk.StringVar(value=str(event.get('retry_count', 0))), 'retry_interval_ms': tk.StringVar(value=str(event.get('retry_interval_ms', 0))), 'enabled': tk.BooleanVar(value=bool(event.get('enabled', 1))), 'failure_action': tk.StringVar(value=self.failure_action_labels.get(failure_key, self.failure_action_labels['stop'])), 'failure_target': tk.StringVar(value=str(event.get('failure_target', ''))), 'data_path': tk.StringVar(value=str(event.get('data_path', ''))), 'target_url': tk.StringVar(value=default_url)}
 
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
@@ -454,10 +474,13 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         canvas.configure(yscrollcommand=content_scrollbar.set)
         canvas.grid(row=0, column=0, sticky='nsew')
         content_scrollbar.grid(row=0, column=0, sticky='ns')
-        content = ttk.Frame(canvas, padding=(14, 12))
+        content = ttk.Frame(canvas, padding=(14, 10))
         content_window = canvas.create_window((0, 0), window=content, anchor='nw')
         content.bind('<Configure>', lambda _event: canvas.configure(scrollregion=canvas.bbox('all')))
-        canvas.bind('<Configure>', lambda event: canvas.itemconfigure(content_window, width=event.width, height=event.height))
+        # Keep the content as tall as its widgets require.  Forcing the canvas
+        # window height to the viewport clipped the lower execution controls
+        # instead of making them reachable through the vertical scrollbar.
+        canvas.bind('<Configure>', lambda event: canvas.itemconfigure(content_window, width=event.width))
 
         def scroll_content(event: tk.Event) -> str:
             canvas.yview_scroll(int(-event.delta / 120), 'units')
@@ -494,13 +517,13 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
                 section, text=label, width=18, anchor='w',
                 style='DialogCard.TLabel',
             )
-            field_label.grid(row=row, column=0, padx=(10, 8), pady=5, sticky='w')
+            field_label.grid(row=row, column=0, padx=(10, 8), pady=4, sticky='w')
             self.field_labels[key] = field_label
             if choices is not None:
                 widget = ttk.Combobox(section, textvariable=self.values[key], values=choices, state='readonly', style='Dialog.TCombobox')
             else:
                 widget = ttk.Entry(section, textvariable=self.values[key], width=48, style='Dialog.TEntry')
-            widget.grid(row=row, column=1, columnspan=columnspan, padx=(0, 10), pady=5, sticky='ew')
+            widget.grid(row=row, column=1, columnspan=columnspan, padx=(0, 10), pady=4, sticky='ew')
             self.field_widgets[key] = widget
             section.columnconfigure(1, weight=1)
 
@@ -571,26 +594,30 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         execution.columnconfigure(1, weight=1)
         execution.columnconfigure(3, weight=0, minsize=120)
         add_field(execution, 0, 'msg.0134', 'timeout_ms', columnspan=2)
-        ttk.Label(execution, text='msg.0405', width=18, anchor='w', style='DialogCard.TLabel').grid(row=1, column=0, padx=(10, 8), pady=5, sticky='w')
+        add_field(execution, 1, 'msg.0572', 'retry_count', columnspan=2)
+        add_field(execution, 2, 'msg.0573', 'retry_interval_ms', columnspan=2)
+        ttk.Label(execution, text='msg.0405', width=18, anchor='w', style='DialogCard.TLabel').grid(row=3, column=0, padx=(10, 8), pady=5, sticky='w')
         self.guard_button = ttk.Button(execution, text='msg.0403', command=self._edit_guard, style='DialogInline.TButton')
-        self.guard_button.grid(row=1, column=3, padx=(8, 10), pady=5, sticky='ew')
+        self.guard_button.grid(row=3, column=3, padx=(8, 10), pady=5, sticky='ew')
         self.guard_summary_var = tk.StringVar(value=self._guard_summary())
         self.guard_summary = ttk.Entry(
             execution, textvariable=self.guard_summary_var,
             state='disabled', style='Dialog.TEntry',
         )
-        self.guard_summary.grid(row=1, column=1, columnspan=2, padx=(0, 10), pady=5, sticky='ew')
-        ttk.Label(execution, text='msg.0427', width=18, anchor='w', style='DialogCard.TLabel').grid(row=2, column=0, padx=(10, 8), pady=5, sticky='w')
+        self.guard_summary.grid(row=3, column=1, columnspan=2, padx=(0, 10), pady=5, sticky='ew')
+        ttk.Label(execution, text='msg.0427', width=18, anchor='w', style='DialogCard.TLabel').grid(row=4, column=0, padx=(10, 8), pady=5, sticky='w')
         self.failure_action_box = ttk.Combobox(execution, textvariable=self.values['failure_action'], values=tuple(self.failure_action_labels.values()), state='readonly', width=18, style='Dialog.TCombobox')
-        self.failure_action_box.grid(row=2, column=1, columnspan=2, padx=(0, 10), pady=5, sticky='ew')
+        self.failure_action_box.grid(row=4, column=1, columnspan=2, padx=(0, 10), pady=5, sticky='ew')
         self.failure_target_label = ttk.Label(execution, text='msg.0428', width=18, anchor='w', style='DialogCard.TLabel')
-        self.failure_target_label.grid(row=3, column=0, padx=(10, 8), pady=5, sticky='w')
+        self.failure_target_label.grid(row=5, column=0, padx=(10, 8), pady=5, sticky='w')
         self.failure_target_entry = ttk.Entry(execution, textvariable=self.values['failure_target'], style='Dialog.TEntry')
-        self.failure_target_entry.grid(row=3, column=1, columnspan=2, padx=(0, 10), pady=5, sticky='ew')
+        self.failure_target_entry.grid(row=5, column=1, columnspan=2, padx=(0, 10), pady=5, sticky='ew')
         self.failure_action_box.bind('<<ComboboxSelected>>', self._update_failure_fields)
-        execution.rounded_card.set_stretch(True)
-        execution.rounded_card.pack_configure(fill='both', expand=True)
-        execution.pack_configure(fill='both', expand=True)
+        # Let this card request the height required by all execution fields.
+        # Stretching it to the remaining column height clips lower rows when
+        # the dialog is shorter than the complete form.
+        execution.rounded_card.pack_configure(fill='x', expand=False)
+        execution.pack_configure(fill='x', expand=False)
 
         page_actions = add_section(right_column, 'msg.0439')
         url_row = ttk.Frame(page_actions, style='DialogCardBody.TFrame')
@@ -701,9 +728,9 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         # locator や値が不要な操作では入力欄を無効化し、誤設定を防ぐ。
         # retry/loop の旧境界イベントでは失敗時動作を設定しない。
         action = self.values['action'].get()
-        locator_actions = {'click', 'fill', 'select', 'wait', 'press', 'get_text', 'upload_file'}
+        locator_actions = {'click', 'fill', 'select', 'wait', 'wait_hidden', 'press', 'get_text', 'upload_file'}
         value_actions = {'goto', 'fill', 'select', 'press', 'get_text', 'screenshot', 'pause', 'retry_start', 'upload_file'}
-        timeout_actions = {'goto', 'click', 'fill', 'select', 'wait', 'press', 'get_text', 'pause', 'upload_file'}
+        timeout_actions = {'goto', 'click', 'fill', 'select', 'wait', 'wait_hidden', 'press', 'get_text', 'pause', 'upload_file'}
         data_actions = {'fill', 'select', 'get_text', 'loop_start', 'upload_file'}
         select_first = action == 'select' and self.select_first.get()
         can_locate = action in locator_actions
@@ -711,6 +738,12 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         self._set_field_enabled('selector', can_locate)
         self._set_field_enabled('value', action in value_actions and not select_first)
         self._set_field_enabled('timeout_ms', action in timeout_actions)
+        structural = action in {'loop_start', 'loop_end', 'retry_start', 'retry_end', 'group_start', 'group_end'}
+        self._set_field_enabled('retry_count', not structural)
+        self._set_field_enabled('retry_interval_ms', not structural)
+        if action == 'wait_hidden' and not self.values['selector'].get().strip():
+            self.values['selector_type'].set('css')
+            self.values['selector'].set('.slds-spinner, lightning-spinner')
         for widget in (self.target_url_entry, self.pick_button, self.test_button, self.verify_event_button):
             widget.configure(state='normal' if can_locate else 'disabled')
         self.target_url_label.state(['!disabled'] if can_locate else ['disabled'])
@@ -930,6 +963,14 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         except ValueError:
             messagebox.showerror('msg.0159', 'msg.0161', parent=self)
             return
+        try:
+            event_retry_count = int(self.values['retry_count'].get())
+            event_retry_interval_ms = int(self.values['retry_interval_ms'].get())
+            if event_retry_count < 0 or event_retry_interval_ms < 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror('msg.0159', 'msg.0571', parent=self)
+            return
         if self.values['action'].get() == 'retry_start':
             try:
                 retry_count = int(self.values['value'].get().strip())
@@ -945,12 +986,12 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         if failure_action == 'goto' and not failure_target.startswith(('http://', 'https://')):
             messagebox.showerror('msg.0159', 'msg.0429', parent=self)
             return
-        self.result = {'name': name, 'action': self.values['action'].get(), 'selector_type': self.values['selector_type'].get(), 'selector': self.values['selector'].get().strip(), 'fallback_selector_type': self.values['fallback_selector_type'].get(), 'fallback_selector': self.values['fallback_selector'].get().strip(), 'value': self.values['value'].get(), 'timeout_ms': timeout, 'enabled': int(self.values['enabled'].get()), 'continue_on_error': continue_on_error, 'failure_action': failure_action, 'failure_target': failure_target if failure_action == 'goto' else '', 'data_path': self.values['data_path'].get(), 'guard': self.guard}
+        self.result = {'name': name, 'action': self.values['action'].get(), 'selector_type': self.values['selector_type'].get(), 'selector': self.values['selector'].get().strip(), 'fallback_selector_type': self.values['fallback_selector_type'].get(), 'fallback_selector': self.values['fallback_selector'].get().strip(), 'value': self.values['value'].get(), 'timeout_ms': timeout, 'retry_count': event_retry_count, 'retry_interval_ms': event_retry_interval_ms, 'enabled': int(self.values['enabled'].get()), 'continue_on_error': continue_on_error, 'failure_action': failure_action, 'failure_target': failure_target if failure_action == 'goto' else '', 'data_path': self.values['data_path'].get(), 'guard': self.guard}
         if self.result['action'] == 'select' and self.select_first.get():
             self.result['value'] = SELECT_FIRST_VALUE
             self.result['data_path'] = ''
         action = self.result['action']
-        locator_actions = {'click', 'fill', 'select', 'wait', 'press', 'get_text', 'upload_file'}
+        locator_actions = {'click', 'fill', 'select', 'wait', 'wait_hidden', 'press', 'get_text', 'upload_file'}
         value_actions = {'goto', 'fill', 'select', 'press', 'get_text', 'screenshot', 'pause', 'retry_start', 'upload_file'}
         data_actions = {'fill', 'select', 'get_text', 'loop_start', 'upload_file'}
         if action not in locator_actions:
@@ -963,8 +1004,10 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
             messagebox.showerror('msg.0159', 'msg.0420', parent=self)
             self.result = None
             return
-        if action in {'loop_start', 'loop_end', 'retry_start', 'retry_end'}:
+        if action in {'loop_start', 'loop_end', 'retry_start', 'retry_end', 'group_start', 'group_end'}:
             self.result['continue_on_error'] = 0
+            self.result['retry_count'] = 0
+            self.result['retry_interval_ms'] = 0
             self.result['guard'] = {'logic': 'all', 'rules': []}
         if self.result['action'] == 'get_text' and self.result['value'].strip() and (not re.fullmatch('[A-Za-z_][A-Za-z0-9_]*', self.result['value'].strip())):
             messagebox.showerror('msg.0159', 'msg.0163', parent=self)

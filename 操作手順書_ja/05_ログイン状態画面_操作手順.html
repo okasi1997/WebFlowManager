@@ -5,9 +5,8 @@
 <h1>ログイン状態画面 操作手順</h1>
 <p class="sub">ログイン後の専用 Chrome プロファイルを保存し、要素選択と自動実行でも同じ状態を使用します。</p>
 <div class="figure">
-  <img src="images/05_auth.png" alt="ログイン状態画面">
-  <div class="legend">画像内の A〜D は手順番号ではなく、操作エリアを示します。</div>
-  <div class="callout-key"><span><b>A</b> 状態と URL</span><span><b>B</b> 認証ブラウザーを開く</span><span><b>C</b> 現在の状態を保存</span><span><b>D</b> 選択を確定</span></div>
+  <img src="images/05_auth_20260805.png" alt="ログイン状態画面">
+  <div class="legend">埋め込み式ログイン状態画面です。左側で状態を選択し、右側で認証ブラウザーを操作します。</div>
 </div>
 <div class="note"><b>操作前の確認：</b>認証用 Chrome を開いたまま状態を切り替えないでください。新しい状態を作る場合は、用途が分かる名前を付けます。</div>
 <h2>ボタンの説明</h2>
@@ -16,10 +15,7 @@
 <tr class="danger-row"><td>削除</td><td>選択中の保存済み状態を削除します。</td><td>default と none は削除できません。</td></tr>
 <tr><td>認証ブラウザーを開く</td><td>選択状態を使って認証用 Chrome を開きます。</td><td>開いた後、手動でログインします。</td></tr>
 <tr><td>現在の状態を保存</td><td>Chrome の Cookie と localStorage を状態ファイルにも出力します。</td><td>サイト権限などは専用 Chrome プロファイルへ自動保存されます。none には保存できません。</td></tr>
-<tr><td>ブラウザー状態を確認</td><td>保存した状態でページを開き、ログイン済みか確認します。</td><td>使用する状態を先に選びます。</td></tr>
 <tr><td>認証ブラウザーを閉じる</td><td>認証作業用 Chrome を閉じます。</td><td>状態を保存した後に押します。</td></tr>
-<tr><td>保存</td><td>選択したログイン状態を実行時の設定として確定します。</td><td>最後に必ず押します。</td></tr>
-<tr><td>キャンセル</td><td>選択変更を確定せず閉じます。</td><td>作成済み状態ファイルは残る場合があります。</td></tr>
 </tbody></table>
 <h2>ログイン状態を保存する</h2>
 <div class="step"><b>手順 1</b>　<span class="button">新規</span> を押し、半角英数字などで名前を入力します。</div>
@@ -27,10 +23,12 @@
 <div class="step"><b>手順 3</b>　<span class="button">認証ブラウザーを開く</span> を押します。</div>
 <div class="step"><b>手順 4</b>　Chrome でログインと二段階認証などを完了します。内蔵ページの証明書やサイト権限を許可する場合は、その URL をトップレベルのタブで開いて操作します。</div>
 <div class="step"><b>手順 5</b>　画面に戻り、<span class="button">現在の状態を保存</span> を押して完了表示を確認します。</div>
-<div class="step"><b>手順 6</b>　<span class="button">ブラウザー状態を確認</span> を押し、ログイン済みページと内蔵ページが開くことを確認します。</div>
-<div class="step"><b>手順 7</b>　<span class="button">認証ブラウザーを閉じる</span> を押し、最後に右下の <span class="button">保存</span> を押します。</div>
-<div class="success"><b>完了確認：</b>もう一度「ブラウザー状態を確認」を実行し、パスワード入力なしで対象ページが開くことを確認します。</div>
+<div class="step"><b>手順 6</b>　<span class="button">認証ブラウザーを閉じる</span> を押します。</div>
+<div class="step"><b>手順 7</b>　もう一度 <span class="button">認証ブラウザーを開く</span> を押し、パスワード入力なしでログイン済みページが開くことを確認します。</div>
+<div class="success"><b>完了確認：</b>状態一覧で対象に「使用中」と表示され、再度ブラウザーを開いてログイン状態が復元されれば完了です。埋め込み画面では、一覧で選択した時点で実行設定へ反映されます。</div>
 <div class="note"><b>default と none：</b>default は既定の保存済み状態、none は保存状態を使わず新しいセッションを使う設定です。</div>
+<div class="note"><b>URL の初期値：</b>URL 欄は設定画面の「既定の開始 URL」で初期化されます。認証ブラウザーはこの欄の URL を開きます。正式なフロー実行はこの URL へ自動移動せず、各フローの <code>goto</code> イベントに従います。</div>
+<div class="note"><b>並列実行用の状態：</b><code>名前_group_1.json</code> などは実行グループごとに自動生成されますが、ログイン状態一覧には表示されません。異なる group が同じ Chrome プロファイルを同時使用しないための内部ファイルです。</div>
 <div class="warning"><b>ログインが切れた場合：</b>セッション期限切れや追加認証が原因です。同じ状態を選び、認証ブラウザーで再ログインしてから「現在の状態を保存」をやり直してください。</div>
 <div class="note"><b>別タブで認証した場合：</b>ログイン中に新しいタブが開いた場合、状態確認と保存は最後に開いたタブを対象にします。保存前に目的のログイン済み画面を表示してください。</div>
 <div class="note"><b>専用 Chrome プロファイル：</b>認証、要素選択、順序実行は同じプロファイルを順番に使用します。同じプロファイルを使う前のブラウザーは自動的に閉じられます。アプリ終了時に、現在のプロファイルを削除するか確認されます。</div>

@@ -83,6 +83,185 @@ class FakeLocator:
 
 
 class PageRuntimeTests(unittest.TestCase):
+    def test_event_group_timeout_limits_one_attempt(self) -> None:
+        class Context:
+            pages = []
+
+        class Page:
+            context = Context()
+            url = 'https://example.com/'
+
+            def is_closed(self):
+                return False
+
+            def wait_for_timeout(self, milliseconds):
+                __import__('time').sleep(max(0.05, milliseconds / 1000))
+
+            def set_default_timeout(self, _timeout):
+                pass
+
+            def screenshot(self, **_kwargs):
+                pass
+
+        page = Page()
+        page.context.pages = [page]
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        executor._wait_for_salesforce_spinner_if_present = lambda *_args: None
+        events = [
+            {'id': 1, 'position': 1, 'name': 'group', 'action': 'group_start',
+             'value': '', 'timeout_ms': 1, 'retry_count': 0,
+             'retry_interval_ms': 0, 'enabled': 1},
+            {'id': 2, 'position': 2, 'name': 'pause', 'action': 'pause',
+             'selector_type': 'none', 'selector': '', 'value': '10',
+             'timeout_ms': 1000, 'enabled': 1, 'continue_on_error': 0},
+            {'id': 3, 'position': 3, 'name': 'group', 'action': 'group_end',
+             'enabled': 1},
+        ]
+
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(TimeoutError, 'msg.0576'):
+                executor._execute_sequence(
+                    page, events, {}, Path(folder), None, {}, 'timeout-test',
+                )
+
+    def test_event_group_retry_uses_interval_and_retries_inner_sequence(self) -> None:
+        class Context:
+            pages = []
+
+        class Page:
+            context = Context()
+            url = 'https://example.com/'
+
+            def __init__(self):
+                self.waits = []
+
+            def is_closed(self):
+                return False
+
+            def wait_for_timeout(self, milliseconds):
+                self.waits.append(milliseconds)
+
+            def screenshot(self, **_kwargs):
+                pass
+
+        page = Page()
+        page.context.pages = [page]
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        executor._wait_for_salesforce_spinner_if_present = lambda *_args: None
+        attempts = []
+
+        def execute(*_args):
+            attempts.append(True)
+            if len(attempts) < 3:
+                raise RuntimeError('temporary')
+
+        executor._execute_event = execute
+        events = [
+            {'id': 1, 'position': 1, 'name': 'group', 'action': 'group_start',
+             'value': '2', 'timeout_ms': 10000, 'retry_count': 2,
+             'retry_interval_ms': 750, 'enabled': 1},
+            {'id': 2, 'position': 2, 'name': 'save', 'action': 'click',
+             'selector_type': 'css', 'selector': '#save', 'value': '',
+             'timeout_ms': 1000, 'enabled': 1, 'continue_on_error': 0},
+            {'id': 3, 'position': 3, 'name': 'group', 'action': 'group_end',
+             'enabled': 1},
+        ]
+
+        with tempfile.TemporaryDirectory() as folder:
+            executor._execute_sequence(
+                page, events, {}, Path(folder), None, {}, 'group-test',
+            )
+
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(page.waits, [750, 750])
+
+    def test_single_event_retry_uses_configured_interval(self) -> None:
+        class Context:
+            pages = []
+
+        class Page:
+            context = Context()
+
+            def __init__(self):
+                self.waits = []
+
+            def is_closed(self):
+                return False
+
+            def wait_for_timeout(self, milliseconds):
+                self.waits.append(milliseconds)
+
+        page = Page()
+        page.context.pages = [page]
+        messages = []
+        executor = WorkflowExecutor(Path('.'), messages.append)
+        attempts = []
+        spinner_checks = []
+        executor._wait_for_salesforce_spinner_if_present = (
+            lambda *_args: spinner_checks.append(True)
+        )
+
+        def execute(*_args):
+            attempts.append(True)
+            if len(attempts) < 3:
+                raise RuntimeError('temporary')
+
+        executor._execute_event = execute
+        executor._execute_sequence(
+            page,
+            [{
+                'id': 1, 'position': 1, 'name': 'retry me', 'action': 'click',
+                'selector_type': 'css', 'selector': '#save', 'value': '',
+                'enabled': 1, 'retry_count': 2, 'retry_interval_ms': 750,
+            }],
+            {}, Path('.'), None, {}, 'test',
+        )
+
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(page.waits, [750, 750])
+        self.assertEqual(len(spinner_checks), 4)
+        self.assertEqual(sum('イベント再試行' in message for message in messages), 2)
+
+    def test_wait_hidden_waits_until_all_matching_elements_are_hidden(self) -> None:
+        class Context:
+            pages = []
+
+        class Element:
+            def __init__(self, page):
+                self.page = page
+
+            def is_visible(self):
+                return self.page.polls < 3
+
+        class Collection:
+            def __init__(self, page):
+                self.element = Element(page)
+
+            def count(self):
+                return 1
+
+            def nth(self, _index):
+                return self.element
+
+        class Page:
+            context = Context()
+            polls = 0
+
+            def is_closed(self):
+                return False
+
+            def wait_for_timeout(self, _milliseconds):
+                self.polls += 1
+
+        page = Page()
+        page.context.pages = [page]
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        executor._locators = lambda *_args: [Collection(page)]
+
+        executor._wait_until_hidden(page, 'css', '.slds-spinner', 1000)
+
+        self.assertEqual(page.polls, 3)
+
     def test_event_log_details_include_effective_operation_values(self) -> None:
         self.assertEqual(
             WorkflowExecutor._event_log_detail(

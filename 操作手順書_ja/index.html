@@ -55,7 +55,7 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
   <div class="tag">全体フロー</div>
   <h1>Web フロー管理<br>全体操作手順</h1>
   <p class="lead">プログラムの準備、業務フローの登録、共通データの作成、実行、結果確認、バックアップまでの一連の流れを説明します。</p>
-  <div class="meta">対象プログラム：WebFlowManager<br>表示言語：日本語<br>更新日：2026年7月24日</div>
+  <div class="meta">対象プログラム：WebFlowManager<br>表示言語：日本語<br>更新日：2026年8月5日</div>
 </section>
 
 <h2>1. 全体の流れ</h2>
@@ -76,7 +76,7 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
 <tr><td>業務フロー</td><td>目的ごとに分けた処理単位</td><td>ログイン、データ入力、結果確認</td></tr>
 <tr><td>イベント</td><td>ブラウザーで行う一つの操作</td><td>ページを開く、入力する、ボタンを押す</td></tr>
 <tr><td>共通データ</td><td>実行ごとに異なる値の一式</td><td>案件番号、氏名、プラン、数量</td></tr>
-<tr><td>データ開始</td><td>共通データごとの繰り返しを開始する位置</td><td>ログイン後の申込登録フロー</td></tr>
+<tr><td>実行グループ</td><td>同じ group は逐次、異なる group は並列で処理する単位</td><td>グループ1、グループ2</td></tr>
 </tbody>
 </table>
 
@@ -107,20 +107,20 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
 <div class="step"><b>手順 1</b>　左メニューの「設定」で、言語、フォント、文字サイズ、開始 URL、Chrome 表示を確認します。</div>
 <div class="step"><b>手順 2</b>　ログインが必要なサイトでは、使用するログイン状態を準備します。</div>
 <div class="note"><span class="label">Chrome 表示：</span>フローの作成中や動作確認中は表示を有効にします。動作が安定した後は、必要に応じて非表示で実行します。</div>
-<h3>picker の開始 URL を変更する</h3>
-<p>picker が最初に開く既定 URL は、アプリの設定画面で変更できます。</p>
+<h3>既定の開始 URL を変更する</h3>
+<p>要素選択用ブラウザーと認証ブラウザーが最初に開く URL は、アプリの設定画面で変更できます。</p>
 <div class="step"><b>手順 1</b>　左メニュー最下部の「設定」を開きます。</div>
 <div class="step"><b>手順 2</b>　「ブラウザー設定」の「既定の開始 URL」に <code>http://</code> または <code>https://</code> で始まる URL を入力します。</div>
-<div class="step"><b>手順 3</b>　「開始 URL を保存」を押し、ログイン状態画面またはイベント編集画面から開始ページを確認します。</div>
-<div class="note"><span class="label">旧設定：</span>旧バージョンの <code>settings.json</code> は初回のみ自動移行され、以降は不要です。</div>
+<div class="step"><b>手順 3</b>　<span class="button">実行設定を保存</span> を押し、ログイン状態画面またはイベント編集画面から開始ページを確認します。</div>
+<div class="note"><span class="label">正式実行：</span>既定の開始 URL へ自動的に移動するものではありません。正式実行で開くページは、フロー内の <code>goto</code> イベントで指定します。</div>
 
 <h2>3. 業務をフローに分ける</h2>
-<p>実際のブラウザー操作を、目的ごとの業務フローへ分けます。後から順番変更や再利用がしやすい大きさにします。</p>
+<p>実際のブラウザー操作を、目的ごとの業務フローへ分けます。</p>
 <h3>構成例</h3>
 <table>
 <thead><tr><th>順番</th><th>業務フロー</th><th>実行回数</th></tr></thead>
 <tbody>
-<tr><td>1</td><td>ログイン</td><td>バッチ全体で1回</td></tr>
+<tr><td>1</td><td>ログインまたは開始ページへ移動</td><td>共通データごと</td></tr>
 <tr><td>2</td><td>基本情報</td><td>共通データごと</td></tr>
 <tr><td>3</td><td>プラン登録</td><td>共通データごと</td></tr>
 <tr><td>4</td><td>登録結果確認</td><td>共通データごと</td></tr>
@@ -128,14 +128,14 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
 </table>
 <div class="step"><b>手順 1</b>　必要な業務フローを作成します。</div>
 <div class="step"><b>手順 2</b>　実際の操作順と同じ順番に並べます。</div>
-<div class="step"><b>手順 3</b>　共通データごとの処理を始める最初のフローを「データ開始」に設定します。</div>
-<div class="warning"><span class="label">データ開始より前：</span>前処理として1回だけ実行されます。この区間では共通データの値や共通データに基づく実行条件を使用できません。</div>
+<div class="step"><b>手順 3</b>　各共通データで必要な初期ページ移動やログイン確認も、フローの先頭側へ配置します。</div>
+<div class="note"><span class="label">実行回数：</span>現在は、すべての有効な業務フローが各「今回実行」データに対して順番に実行されます。「データ開始」は正式実行の前処理境界にはなりません。</div>
 
 <h2>4. イベントを登録する</h2>
 <p>各業務フローに、実際のブラウザー操作と同じ順番でイベントを登録します。</p>
 <div class="step"><b>手順 1</b>　対象の業務フローを選び、イベントを追加します。</div>
 <div class="step"><b>手順 2</b>　ページ移動、クリック、入力、選択などの操作種別を設定します。</div>
-<div class="step"><b>手順 3</b>　対象要素が必要な操作では、デバッグページを開いてページ上から要素を選択します。</div>
+<div class="step"><b>手順 3</b>　対象要素が必要な操作では、イベント編集画面の「画面から選択」を押し、Chrome 上で要素を選択します。</div>
 <div class="step"><b>手順 4</b>　現在ページで検証し、対象要素を1件だけ検出できることを確認します。</div>
 <div class="step"><b>手順 5</b>　固定値を入力するか、共通データのフィールドをリンクします。</div>
 <div class="step"><b>手順 6</b>　必要に応じて実行条件と失敗時の動作を設定し、保存します。</div>
@@ -151,8 +151,8 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
 
 <h2>5. 共通データを準備する</h2>
 <p>案件ごとに異なる値を使う場合は、先にデータ構造を定義し、その構造に沿って値を登録します。</p>
-<div class="step"><b>手順 1</b>　「共通データ構造」で必要な項目と型を定義します。</div>
-<div class="step"><b>手順 2</b>　構造を保存し、「共通データ」を開きます。</div>
+<div class="step"><b>手順 1</b>　「データ構造」で必要な項目と型を定義します。</div>
+<div class="step"><b>手順 2</b>　構造を保存し、「データ管理」を開きます。</div>
 <div class="step"><b>手順 3</b>　データを追加し、項目ごとの値を入力します。</div>
 <div class="step"><b>手順 4</b>　必要なデータ件数分、追加または複製して値を整えます。</div>
 <div class="step"><b>手順 5</b>　各データの「今回実行」と実行グループを確認します。</div>
@@ -171,8 +171,8 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
 <div class="step"><b>手順 1</b>　「ログイン状態」を開き、保存する状態を新規作成または選択します。</div>
 <div class="step"><b>手順 2</b>　認証ブラウザーを開き、サイトへログインします。</div>
 <div class="step"><b>手順 3</b>　ログイン完了後、現在の状態を保存します。</div>
-<div class="step"><b>手順 4</b>　ブラウザー状態を確認し、ログイン済みページが開くことを確認します。</div>
-<div class="step"><b>手順 5</b>　実行時に使用する状態として保存します。</div>
+<div class="step"><b>手順 4</b>　認証ブラウザーを閉じて再度開き、ログイン済みページが復元されることを確認します。</div>
+<div class="step"><b>手順 5</b>　状態一覧で対象に「使用中」と表示されていることを確認します。選択はその時点で実行設定へ反映されます。</div>
 <div class="danger"><span class="label">取扱注意：</span>保存したログイン状態には Cookie などの認証情報が含まれます。第三者へ送付しないでください。</div>
 
 <h2>7. 動作確認を行う</h2>
@@ -181,7 +181,7 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
   <li>Chrome 表示が有効になっている。</li>
   <li>確認用の共通データ1件だけが「今回実行」になっている。</li>
   <li>業務フローとイベントの有効／無効が正しい。</li>
-  <li>データ開始位置が正しい。</li>
+  <li>各データで実行される全フローの順番が正しい。</li>
   <li>各 locator の検出結果が1件になっている。</li>
   <li>使用するログイン状態でログインできる。</li>
 </ul>
@@ -201,8 +201,8 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
 <h2>9. 結果を確認する</h2>
 <div class="step"><b>手順 1</b>　「実行状況」で全データの処理が終了したことを確認します。</div>
 <div class="step"><b>手順 2</b>　「実行ログ」で失敗、再試行、条件によるスキップを確認します。</div>
-<div class="step"><b>手順 3</b>　失敗した場合は、ログに表示された業務フロー、イベント、データ名を確認します。</div>
-<div class="step"><b>手順 4</b>　必要に応じて <code>artifacts/</code> 内のエラー画像を確認します。</div>
+<div class="step"><b>手順 3</b>　失敗した場合は、ログに表示された業務フロー、イベント、データ名と <code>Failure URL</code> を確認します。</div>
+<div class="step"><b>手順 4</b>　必要に応じて <code>artifacts/yyyyMMdd_HHmmss/</code> 内のエラー画像を確認します。画像がない実行ではフォルダーは作成されません。</div>
 <div class="step"><b>手順 5</b>　原因を修正し、失敗したデータだけを「今回実行」にして再実行します。</div>
 
 <h3>主な確認ポイント</h3>
@@ -215,6 +215,7 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
 <tr><td>新しいタブを操作できない</td><td>リンクを通常の click イベントで実行し、新しいタブが表示された後の操作を次のイベントへ登録します。iframe 内の要素は通常どおり選択・検証できます。</td></tr>
 <tr><td>スキップ</td><td>有効／無効、「今回実行」、実行条件を確認します。</td></tr>
 <tr><td>ログイン画面へ戻る</td><td>保存済みログイン状態の期限を確認し、必要なら再保存します。</td></tr>
+<tr><td>スクリーンショットが一部だけ</td><td>外側ページは全体を撮影しますが、iframe や要素内の独立したスクロール領域は表示部分だけになる場合があります。</td></tr>
 </tbody>
 </table>
 
@@ -224,9 +225,9 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
 <thead><tr><th>対象</th><th>バックアップ方法</th><th>復元時の注意</th></tr></thead>
 <tbody>
 <tr><td>全業務フロー</td><td>「全フロー Json を出力」</td><td>読込時に現在の全フローを置き換えます。</td></tr>
-<tr><td>共通データ構造</td><td>構造画面の「Json 出力」</td><td>読込後、既存データが新しい構造へ同期されます。</td></tr>
-<tr><td>共通データ</td><td>「Json 出力」または「Excel 出力」</td><td>JSON は追加、Excel は完全置換です。</td></tr>
-<tr><td>ログイン状態</td><td><code>data/browser_state.json</code> と <code>data/browser_states/</code></td><td>認証情報を含むため、安全な場所で管理します。</td></tr>
+<tr><td>データ構造</td><td>データ構造画面の「Json 出力」</td><td>読込後、既存データが新しい構造へ同期されます。</td></tr>
+<tr><td>データ管理</td><td>「Json 出力」または「Excel 出力」</td><td>JSON は追加、Excel は完全置換です。</td></tr>
+<tr><td>ログイン状態</td><td><code>data/browser_state.json</code>、<code>data/browser_states/</code>、<code>data/chrome_profiles/</code></td><td>認証情報を含むため、安全な場所で管理します。<code>_group_*</code> は並列実行用の内部状態で、画面一覧には表示されません。</td></tr>
 </tbody>
 </table>
 <h3>変更時の推奨順序</h3>
@@ -243,9 +244,11 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
   <li><a href="00_基本操作手順.html">基本操作手順</a></li>
   <li><a href="01_メイン画面_操作手順.html">メイン画面 操作手順</a></li>
   <li><a href="02_イベント編集画面_操作手順.html">イベント編集画面 操作手順</a></li>
-  <li><a href="03_共通データ構造画面_操作手順.html">共通データ構造画面 操作手順</a></li>
-  <li><a href="04_共通データ管理画面_操作手順.html">共通データ管理画面 操作手順</a></li>
+  <li><a href="03_データ構造画面_操作手順.html">データ構造画面 操作手順</a></li>
+  <li><a href="04_データ管理画面_操作手順.html">データ管理画面 操作手順</a></li>
   <li><a href="05_ログイン状態画面_操作手順.html">ログイン状態画面 操作手順</a></li>
+  <li><a href="06_実行管理画面_操作手順.html">実行管理画面 操作手順</a></li>
+  <li><a href="07_設定画面_操作手順.html">設定画面 操作手順</a></li>
 </ul>
 <p class="small">本書は全体の使用順序を説明する文書です。各画面のボタン操作は、画面別操作手順に分けて記載しています。</p>
 
