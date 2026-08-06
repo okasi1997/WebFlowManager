@@ -312,9 +312,6 @@ class AuthStateDialog(tk.Toplevel):
             return
         self._background(lambda: self.session.save(path), lambda result: f'msg.0479{result}')
 
-    def _check(self) -> None:
-        self._background(self.session.status, lambda result: f'msg.0480{result[0]} | {result[1]} | Cookie: {result[2]}')
-
     def _close_browser(self) -> None:
         self._background(self.session.close_browser, lambda _result: 'msg.0481')
 

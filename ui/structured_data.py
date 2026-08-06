@@ -993,16 +993,6 @@ class HierarchicalDataDialog(tk.Toplevel):
         self._update_record_headings()
         self._refresh_records(selected_id)
 
-    def _toggle_record_enabled(self) -> None:
-        selection = self.records.selection()
-        if not selection:
-            messagebox.showinfo('msg.0310', 'msg.0311', parent=self)
-            return
-        record_id = int(selection[0])
-        row = next((row for row in self.db.list_data_records(self.workflow_id) if row['id'] == record_id))
-        self.db.set_data_record_enabled(record_id, not row['enabled'])
-        self._refresh_records(record_id)
-
     def _record_double_click(self, event: tk.Event) -> str | None:
         # データ名と概要はダブルクリックで編集する。
         column = self.records.identify_column(event.x)
@@ -1044,23 +1034,6 @@ class HierarchicalDataDialog(tk.Toplevel):
         self.current_summary = summary.strip()
         self.db.set_data_record_summary(self.current_id, self.current_summary)
         self._refresh_records(self.current_id)
-
-    def _set_record_group(self) -> None:
-        selection = self.records.selection()
-        if not selection:
-            messagebox.showinfo('msg.0310', 'msg.0312', parent=self)
-            return
-        record_id = int(selection[0])
-        row = next((row for row in self.db.list_data_records() if row['id'] == record_id))
-        group = simpledialog.askstring('msg.0313', 'msg.0314', initialvalue=row['execution_group'], parent=self)
-        if group is None:
-            return
-        try:
-            self.db.set_data_record_group(record_id, group)
-        except ValueError as error:
-            messagebox.showerror('msg.0315', str(error), parent=self)
-            return
-        self._refresh_records(record_id)
 
     def _select_record(self, _event: object=None) -> None:
         if self._restoring_record_selection:

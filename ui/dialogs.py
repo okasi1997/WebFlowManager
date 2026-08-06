@@ -445,7 +445,6 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         self.close_debug = close_debug
         self.execute_to_event = execute_to_event
         self.choose_data_path = choose_data_path
-        self.default_url = default_url
         self.field_widgets: dict[str, tk.Widget] = {}
         self.field_labels: dict[str, ttk.Label] = {}
         event = event or {}

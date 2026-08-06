@@ -1677,13 +1677,6 @@ class FlowManagerApp:
             self.event_tree.delete(*self.event_tree.get_children())
             self._refresh_workflows()
 
-    def _move_workflow(self, direction: int) -> None:
-        if self.current_workflow_id is None:
-            return
-        workflow_id = self.current_workflow_id
-        self.db.move_workflow(workflow_id, direction)
-        self._refresh_workflows(workflow_id)
-
     def _toggle_workflow(self) -> None:
         if self.current_workflow_id is None:
             return

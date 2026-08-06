@@ -225,17 +225,6 @@ class Database:
             for position, workflow_id in enumerate(workflow_ids, 1):
                 self.connection.execute('UPDATE workflows SET position=? WHERE id=?', (position, workflow_id))
 
-    def move_workflow(self, workflow_id: int, direction: int) -> None:
-        ids = [row['id'] for row in self.list_workflows()]
-        if workflow_id not in ids:
-            return
-        old = ids.index(workflow_id)
-        new = old + direction
-        if new < 0 or new >= len(ids):
-            return
-        ids[old], ids[new] = (ids[new], ids[old])
-        self.reorder_workflows(ids)
-
     def _normalize_workflow_positions(self) -> None:
         for position, row in enumerate(self.list_workflows(), 1):
             self.connection.execute('UPDATE workflows SET position=? WHERE id=?', (position, row['id']))
