@@ -81,6 +81,35 @@ class SchemaDesignerOrderingTests(unittest.TestCase):
         self.assertIs(parent, root)
         self.assertEqual(index, 3)
 
+    def test_move_down_leaves_container_at_lower_edge(self) -> None:
+        container = {'name': 'output', 'type': 'object', 'children': [self.first]}
+        root = {'name': 'Data', 'type': 'object', 'children': [container, self.second]}
+        result = SchemaDesignerDialog._move_node(root, self.first, container, 1)
+        self.assertEqual(result, 'moved')
+        self.assertEqual(container['children'], [])
+        self.assertEqual(root['children'], [container, self.first, self.second])
+
+    def test_move_up_leaves_container_at_upper_edge(self) -> None:
+        container = {'name': 'output', 'type': 'object', 'children': [self.first]}
+        root = {'name': 'Data', 'type': 'object', 'children': [self.second, container]}
+        result = SchemaDesignerDialog._move_node(root, self.first, container, -1)
+        self.assertEqual(result, 'moved')
+        self.assertEqual(root['children'], [self.second, self.first, container])
+
+    def test_move_at_root_edge_is_blocked(self) -> None:
+        root = {'name': 'Data', 'type': 'object', 'children': [self.first]}
+        result = SchemaDesignerDialog._move_node(root, self.first, root, 1)
+        self.assertEqual(result, 'blocked')
+        self.assertEqual(root['children'], [self.first])
+
+    def test_move_out_rejects_duplicate_name(self) -> None:
+        duplicate = {'name': 'first', 'type': 'number'}
+        container = {'name': 'output', 'type': 'object', 'children': [self.first]}
+        root = {'name': 'Data', 'type': 'object', 'children': [container, duplicate]}
+        result = SchemaDesignerDialog._move_node(root, self.first, container, 1)
+        self.assertEqual(result, 'duplicate')
+        self.assertEqual(container['children'], [self.first])
+
     def test_legacy_list_root_is_loaded_as_object(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             database = Database(Path(folder) / 'test.db')

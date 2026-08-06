@@ -430,8 +430,16 @@ class SchemaDesignerDialog(tk.Toplevel):
 
     def _refresh(self, selected_node: dict[str, Any] | None=None) -> None:
         root_open = True
-        if getattr(self, 'schema_root_item', '') and self.tree.exists(self.schema_root_item):
+        open_nodes: set[int] = set()
+        had_tree = bool(
+            getattr(self, 'schema_root_item', '')
+            and self.tree.exists(self.schema_root_item)
+        )
+        if had_tree:
             root_open = bool(self.tree.item(self.schema_root_item, 'open'))
+        for item, (node, _parent) in self.node_by_item.items():
+            if self.tree.exists(item) and bool(self.tree.item(item, 'open')):
+                open_nodes.add(id(node))
         self.tree.delete(*self.tree.get_children())
         self.node_by_item.clear()
         root = self.tree.insert('', 'end', text='msg.0489', values=('object', ''), open=root_open)
@@ -441,7 +449,13 @@ class SchemaDesignerDialog(tk.Toplevel):
         def add(parent_item: str, parent_node: dict[str, Any], prefix: str) -> None:
             for node in parent_node.get('children', []):
                 path = f"{prefix}.{node['name']}" if prefix else node['name']
-                item = self.tree.insert(parent_item, 'end', text=node['name'], values=(node['type'], path), open=True)
+                item = self.tree.insert(
+                    parent_item,
+                    'end',
+                    text=node['name'],
+                    values=(node['type'], path),
+                    open=(not had_tree or id(node) in open_nodes),
+                )
                 self.node_by_item[item] = (node, parent_node)
                 if node is selected_node:
                     self.tree.selection_set(item)
@@ -556,12 +570,45 @@ class SchemaDesignerDialog(tk.Toplevel):
         selected = self._selected()
         if not selected or selected[1] is None:
             return
-        children = selected[1]['children']
-        index = children.index(selected[0])
+        result = self._move_node(self.schema, selected[0], selected[1], direction)
+        if result == 'duplicate':
+            messagebox.showerror('msg.0265', 'msg.0266', parent=self)
+        elif result == 'moved':
+            self._refresh(selected[0])
+
+    @classmethod
+    def _find_parent(cls, root: dict[str, Any], target: dict[str, Any]) -> dict[str, Any] | None:
+        for child in root.get('children', []):
+            if child is target:
+                return root
+            found = cls._find_parent(child, target)
+            if found is not None:
+                return found
+        return None
+
+    @classmethod
+    def _move_node(cls, schema: dict[str, Any], node: dict[str, Any],
+                   parent: dict[str, Any], direction: int) -> str:
+        """Move like flow events: swap siblings, then leave the parent at an edge."""
+        children = parent.get('children', [])
+        if node not in children or direction not in (-1, 1):
+            return 'blocked'
+        index = children.index(node)
         target = index + direction
         if 0 <= target < len(children):
-            children[index], children[target] = (children[target], children[index])
-            self._refresh(selected[0])
+            children[index], children[target] = children[target], children[index]
+            return 'moved'
+
+        grandparent = cls._find_parent(schema, parent)
+        if grandparent is None:
+            return 'blocked'
+        destination = grandparent.setdefault('children', [])
+        if any(child is not node and child['name'] == node['name'] for child in destination):
+            return 'duplicate'
+        parent_index = destination.index(parent)
+        children.pop(index)
+        destination.insert(parent_index if direction < 0 else parent_index + 1, node)
+        return 'moved'
 
     @staticmethod
     def _reorder(children: list[dict[str, Any]], node: dict[str, Any], target: dict[str, Any], after: bool) -> bool:

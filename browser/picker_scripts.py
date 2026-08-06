@@ -89,6 +89,35 @@ _PICKER_SCRIPT = r"""
   const xpathCandidate = (element) => {
     const root = element.getRootNode();
     if (root instanceof ShadowRoot) return '';
+    const tag = element.tagName.toLowerCase();
+    const unique = (xpath) => xpathCount(xpath) === 1 ? xpath : '';
+
+    // Prefer short, human-readable selectors. Attribute order intentionally
+    // puts application-owned identifiers before accessibility/display text.
+    const id = element.getAttribute('id');
+    if (id && !/\d{4,}/.test(id)) {
+      const candidate = unique(`//*[@id=${xpathLiteral(id)}]`);
+      if (candidate) return candidate;
+    }
+    for (const attr of [
+      'data-target-selection-name', 'data-id', 'name',
+      'aria-label', 'placeholder', 'title'
+    ]) {
+      const value = element.getAttribute(attr);
+      if (!value) continue;
+      const candidate = unique(`//${tag}[@${attr}=${xpathLiteral(value)}]`);
+      if (candidate) return candidate;
+    }
+    const exactText = (element.innerText || '').trim().replace(/\s+/g, ' ');
+    if (exactText && exactText.length <= 120) {
+      const candidate = unique(
+        `//${tag}[normalize-space(.)=${xpathLiteral(exactText)}]`
+      );
+      if (candidate) return candidate;
+    }
+
+    // No concise selector was unique: fall back to an ID-anchored or absolute
+    // structural path so selection still succeeds on ambiguous pages.
     const segment = (node) => {
       const nodeTag = node.tagName.toLowerCase();
       if (!node.parentElement) return `${nodeTag}[1]`;
@@ -100,9 +129,9 @@ _PICKER_SCRIPT = r"""
     const parts = [];
     let current = element;
     while (current && current.nodeType === Node.ELEMENT_NODE) {
-      const id = current.getAttribute('id');
-      if (id && !/\d{4,}/.test(id)) {
-        const anchor = `//*[@id=${xpathLiteral(id)}]`;
+      const currentId = current.getAttribute('id');
+      if (currentId && !/\d{4,}/.test(currentId)) {
+        const anchor = `//*[@id=${xpathLiteral(currentId)}]`;
         if (xpathCount(anchor) === 1) {
           return parts.length ? `${anchor}/${parts.join('/')}` : anchor;
         }
