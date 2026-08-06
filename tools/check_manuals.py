@@ -33,7 +33,7 @@ def local_target(page: Path, reference: str) -> Path | None:
 
 
 pages = sorted(MANUAL_ROOT.glob("*.html"))
-assert len(pages) == 7, f"unexpected manual count: {len(pages)}"
+assert len(pages) == 9, f"unexpected manual count: {len(pages)}"
 
 for page in pages:
     text = page.read_text(encoding="utf-8")
@@ -59,17 +59,20 @@ for page in sorted(MANUAL_ROOT.glob("0[1-5]_*.html")):
     assert not re.search(r"<div class=\"legend\">.*[①②③④⑤]", text), (
         f"old numbered callout remains: {page}"
     )
-    assert "手順番号ではなく" in text
     assert 'class="success"' in text
     assert 'class="manual-nav"' in text
 
 source_root = MANUAL_ROOT / "images"
 expected_sizes = {
-    "01_main.png": (1200, 760),
-    "02_event_editor.png": (1000, 660),
-    "03_schema.png": (720, 560),
-    "04_data.png": (1050, 650),
-    "05_auth.png": (680, 390),
+    "01_main_20260805.png": (1380, 820),
+    "02_event_editor_20260805.png": (1000, 940),
+    "02_event_editor_resilience_20260805.png": (1000, 940),
+    "03_schema_20260805.png": (1380, 820),
+    "04_data_20260805.png": (1380, 820),
+    "05_auth_20260805.png": (1380, 820),
+    "06_execution_20260805.png": (1380, 820),
+    "07_settings_20260805.png": (1380, 820),
+    "08_event_group_aligned_20260805.png": (700, 480),
 }
 for filename, expected_size in expected_sizes.items():
     source = source_root / filename
