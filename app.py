@@ -85,6 +85,9 @@ class FlowManagerApp:
             lambda: profile_path(self.project_dir, self.db.get_auth_profile()))
         self.auth_browser = AuthBrowserSession(self.project_dir, lambda message: self._log(message, 'AuthBrowserSession'))
         self.drag_source: dict[str, str | None] = {'workflow': None, 'event': None}
+        self.drag_start_points: dict[str, tuple[int, int] | None] = {'workflow': None, 'event': None}
+        self.drag_active: dict[str, bool] = {'workflow': False, 'event': False}
+        self.current_page_name: str | None = None
         try:
             self._build_ui()
         except Exception:
@@ -1175,7 +1178,14 @@ class FlowManagerApp:
         page = self.page_frames.get(page_name)
         if page is None:
             return
+        if page_name == self.current_page_name:
+            return
+        if self.current_page_name == 'schema' and not self.schema_view.confirm_pending_changes():
+            return
+        if self.current_page_name == 'data' and not self.data_view.confirm_pending_changes():
+            return
         page.lift()
+        self.current_page_name = page_name
         selected_key = page_name
         for key, button in self.sidebar_buttons.items():
             selected = key == selected_key
@@ -1941,14 +1951,26 @@ class FlowManagerApp:
         tree.bind('<ButtonRelease-1>', lambda event: self._drag_end(event, tree, kind), add='+')
 
     def _drag_start(self, event: tk.Event, tree: ttk.Treeview, kind: str) -> None:
+        self.drag_source[kind] = None
+        self.drag_start_points[kind] = None
+        self.drag_active[kind] = False
         if tree.identify_region(event.x, event.y) not in ('tree', 'cell'):
-            self.drag_source[kind] = None
             return
-        self.drag_source[kind] = tree.identify_row(event.y) or None
+        if tree.identify_element(event.x, event.y) == 'Treeitem.indicator':
+            return
+        source = tree.identify_row(event.y) or None
+        self.drag_source[kind] = source
+        if source:
+            self.drag_start_points[kind] = (event.x, event.y)
 
     def _drag_motion(self, event: tk.Event, tree: ttk.Treeview, kind: str) -> None:
-        if not self.drag_source[kind]:
+        start = self.drag_start_points[kind]
+        if not self.drag_source[kind] or start is None:
             return
+        if not self.drag_active[kind]:
+            if max(abs(event.x - start[0]), abs(event.y - start[1])) < 6:
+                return
+            self.drag_active[kind] = True
         target = tree.identify_row(event.y)
         if target:
             tree.configure(cursor='hand2')
@@ -1957,6 +1979,11 @@ class FlowManagerApp:
         tree.configure(cursor='')
         source = self.drag_source[kind]
         self.drag_source[kind] = None
+        was_active = self.drag_active[kind]
+        self.drag_start_points[kind] = None
+        self.drag_active[kind] = False
+        if not was_active:
+            return
         target = tree.identify_row(event.y)
         if not source:
             return
@@ -2534,6 +2561,10 @@ class FlowManagerApp:
         self.execution_status.config(text='msg.0559')
 
     def _close(self) -> None:
+        if not self.schema_view.confirm_pending_changes():
+            return
+        if not self.data_view.confirm_pending_changes():
+            return
         if self.running and (not messagebox.askyesno('msg.0094', 'msg.0095')):
             return
         self.debug_browser.shutdown()

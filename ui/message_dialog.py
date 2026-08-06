@@ -18,14 +18,17 @@ class AppMessageDialog(tk.Toplevel):
             message: str,
             kind: str,
             confirm: bool,
+            cancelable: bool=False,
     ) -> None:
         super().__init__(parent)
         self.withdraw()
         self.title(title)
         self.resizable(False, False)
         self.transient(parent.winfo_toplevel())
-        self.result = False
-        self.protocol('WM_DELETE_WINDOW', self._cancel)
+        self.result: bool | None = None if cancelable else False
+        self.cancelable = cancelable
+        self.protocol('WM_DELETE_WINDOW', self._close_window)
+        self.bind('<Escape>', lambda _event: self._close_window())
 
         body = ttk.Frame(self, padding=(30, 26, 30, 24), style='DialogCardBody.TFrame')
         body.pack(fill='both', expand=True)
@@ -63,11 +66,20 @@ class AppMessageDialog(tk.Toplevel):
             ttk.Button(
                 buttons,
                 text='msg.0038',
-                command=self._cancel,
+                command=self._reject,
                 style='MessageSecondary.TButton',
             ).grid(row=0, column=1, sticky='nsew')
+            if cancelable:
+                ttk.Button(
+                    buttons,
+                    text='msg.0145',
+                    command=self._close_window,
+                    style='MessageSecondary.TButton',
+                ).grid(row=0, column=2, sticky='nsew', padx=(10, 0))
             buttons.columnconfigure(0, minsize=112, uniform='message_action')
             buttons.columnconfigure(1, minsize=112, uniform='message_action')
+            if cancelable:
+                buttons.columnconfigure(2, minsize=112, uniform='message_action')
             buttons.rowconfigure(0, minsize=34)
         else:
             ttk.Button(
@@ -96,8 +108,12 @@ class AppMessageDialog(tk.Toplevel):
         self.result = True
         self.destroy()
 
-    def _cancel(self) -> None:
+    def _reject(self) -> None:
         self.result = False
+        self.destroy()
+
+    def _close_window(self) -> None:
+        self.result = None if self.cancelable else False
         self.destroy()
 
 
@@ -114,10 +130,13 @@ def install_app_messageboxes(root: tk.Misc) -> None:
             parent: tk.Misc | None = None,
             kind: str = 'info',
             confirm: bool = False,
+            cancelable: bool = False,
             **_options: Any,
-    ) -> bool:
+    ) -> bool | None:
         owner = parent or root
-        dialog = AppMessageDialog(owner, str(tr(title)), str(tr(message)), kind, confirm)
+        dialog = AppMessageDialog(
+            owner, str(tr(title)), str(tr(message)), kind, confirm, cancelable,
+        )
         dialog.wait_window()
         return dialog.result
 
@@ -126,6 +145,14 @@ def install_app_messageboxes(root: tk.Misc) -> None:
         message,
         kind='question',
         confirm=True,
+        **options,
+    )
+    messagebox.askyesnocancel = lambda title=None, message=None, **options: show_dialog(
+        title,
+        message,
+        kind='question',
+        confirm=True,
+        cancelable=True,
         **options,
     )
     messagebox.showinfo = lambda title=None, message=None, **options: show_dialog(

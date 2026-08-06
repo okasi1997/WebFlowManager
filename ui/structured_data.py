@@ -417,6 +417,8 @@ class SchemaDesignerDialog(tk.Toplevel):
         self.child_add_button = action_buttons[1]
         self.root_locked_buttons = tuple(action_buttons[index] for index in (2, 3, 4, 5))
         self.drag_source_item = ''
+        self.drag_start_point: tuple[int, int] | None = None
+        self.drag_active = False
         for column in range(4):
             buttons.columnconfigure(column, weight=1)
         self.tree.bind('<<TreeviewSelect>>', self._update_action_buttons)
@@ -682,9 +684,16 @@ class SchemaDesignerDialog(tk.Toplevel):
         return not any(child is not source[0] and child['name'] == source[0]['name'] for child in target[1].get('children', []))
 
     def _drag_start(self, event: tk.Event) -> None:
+        self.drag_source_item = ''
+        self.drag_start_point = None
+        self.drag_active = False
+        if self.tree.identify_element(event.x, event.y) == 'Treeitem.indicator':
+            return
         item = self.tree.identify_row(event.y)
         selected = self.node_by_item.get(item)
-        self.drag_source_item = item if selected and selected[1] is not None else ''
+        if selected and selected[1] is not None:
+            self.drag_source_item = item
+            self.drag_start_point = (event.x, event.y)
 
     def _drag_target(self, event: tk.Event) -> tuple[tuple[dict[str, Any], dict[str, Any] | None] | None, str]:
         target_item = self.tree.identify_row(event.y)
@@ -693,6 +702,13 @@ class SchemaDesignerDialog(tk.Toplevel):
         return self.node_by_item.get(target_item), self._drop_mode(target_item, event.y)
 
     def _drag_motion(self, event: tk.Event) -> None:
+        if not self.drag_source_item or self.drag_start_point is None:
+            return
+        if not self.drag_active:
+            start_x, start_y = self.drag_start_point
+            if max(abs(event.x - start_x), abs(event.y - start_y)) < 6:
+                return
+            self.drag_active = True
         source = self.node_by_item.get(self.drag_source_item)
         target, mode = self._drag_target(event)
         allowed = self._valid_drop(source, target, mode)
@@ -701,7 +717,12 @@ class SchemaDesignerDialog(tk.Toplevel):
     def _drag_end(self, event: tk.Event) -> None:
         source_item = self.drag_source_item
         self.drag_source_item = ''
+        was_active = self.drag_active
+        self.drag_start_point = None
+        self.drag_active = False
         self.tree.configure(cursor='')
+        if not was_active:
+            return
         source = self.node_by_item.get(source_item)
         target, mode = self._drag_target(event)
         if not self._valid_drop(source, target, mode):
@@ -723,6 +744,22 @@ class SchemaDesignerDialog(tk.Toplevel):
             messagebox.showinfo('msg.0306', 'msg.0504', parent=self)
         else:
             self.destroy()
+
+    def has_unsaved_changes(self) -> bool:
+        return self.schema != self.db.get_data_schema(self.workflow_id)
+
+    def confirm_pending_changes(self) -> bool:
+        if not self.has_unsaved_changes():
+            return True
+        choice = messagebox.askyesnocancel('msg.0577', 'msg.0578', parent=self)
+        if choice is None:
+            return False
+        if choice:
+            self._save()
+            return not self.has_unsaved_changes()
+        self.schema = copy.deepcopy(self.db.get_data_schema(self.workflow_id))
+        self._refresh()
+        return True
 
     def _export_json(self) -> None:
         path = filedialog.asksaveasfilename(parent=self, defaultextension='.json', filetypes=(('Json', '*.json'),))
@@ -817,6 +854,7 @@ class HierarchicalDataDialog(tk.Toplevel):
         self.force_select_identity: str | None = None
         self.record_sort_column: str | None = None
         self.record_sort_descending = False
+        self._restoring_record_selection = False
         if not embedded:
             self.title(f'msg.0285{workflow_name}')
             self.geometry('1050x650')
@@ -1025,14 +1063,58 @@ class HierarchicalDataDialog(tk.Toplevel):
         self._refresh_records(record_id)
 
     def _select_record(self, _event: object=None) -> None:
+        if self._restoring_record_selection:
+            return
         selection = self.records.selection()
         if not selection:
             return
-        row = next((row for row in self.db.list_data_records(self.workflow_id) if row['id'] == int(selection[0])))
+        target_id = int(selection[0])
+        if self.current_id is not None and target_id != self.current_id and self.has_unsaved_changes():
+            choice = messagebox.askyesnocancel('msg.0577', 'msg.0578', parent=self)
+            if choice is None:
+                self._restore_record_selection()
+                return
+            if choice and not self._save_record():
+                self._restore_record_selection()
+                return
+        row = next((row for row in self.db.list_data_records(self.workflow_id) if row['id'] == target_id))
         self.current_id, self.current_name, self.current_summary = (row['id'], row['name'], row['summary'])
         self.current_data = normalize_record(self.schema, row['data'])
         self.db.update_data_record(self.current_id, self.current_name, self.current_data)
         self._render()
+
+    def _restore_record_selection(self) -> None:
+        self._restoring_record_selection = True
+        if self.current_id is not None and self.records.exists(str(self.current_id)):
+            self.records.selection_set(str(self.current_id))
+            self.records.focus(str(self.current_id))
+        self.after_idle(lambda: setattr(self, '_restoring_record_selection', False))
+
+    def has_unsaved_changes(self) -> bool:
+        if self.current_id is None:
+            return False
+        row = next(
+            (row for row in self.db.list_data_records(self.workflow_id) if row['id'] == self.current_id),
+            None,
+        )
+        return row is not None and normalize_record(self.schema, row['data']) != self.current_data
+
+    def confirm_pending_changes(self) -> bool:
+        if not self.has_unsaved_changes():
+            return True
+        choice = messagebox.askyesnocancel('msg.0577', 'msg.0578', parent=self)
+        if choice is None:
+            return False
+        if choice:
+            return self._save_record()
+        row = next(
+            (row for row in self.db.list_data_records(self.workflow_id) if row['id'] == self.current_id),
+            None,
+        )
+        if row is not None:
+            self.current_data = normalize_record(self.schema, row['data'])
+            self._render()
+        return True
 
     def _render(self) -> None:
         had_previous_view = bool(self.view_identity)
@@ -1091,6 +1173,8 @@ class HierarchicalDataDialog(tk.Toplevel):
         self.force_select_identity = None
 
     def _add_record(self) -> None:
+        if not self.confirm_pending_changes():
+            return
         selected_id = self.current_id
         entered_name = simpledialog.askstring('msg.0289', 'msg.0319', parent=self)
         if entered_name is None:
@@ -1168,7 +1252,6 @@ class HierarchicalDataDialog(tk.Toplevel):
             return
         meta['parent'][meta['key']] = parsed
         self._render()
-        self._save_record()
 
     def _selected_list(self) -> dict[str, Any] | None:
         selection = self.tree.selection()
@@ -1191,7 +1274,6 @@ class HierarchicalDataDialog(tk.Toplevel):
         item = new_list_item(meta['node'], populate_nested_lists=complete)
         meta['value'].append(item)
         self._render()
-        self._save_record()
 
     def _delete_list_item(self) -> None:
         selection = self.tree.selection()
@@ -1201,7 +1283,6 @@ class HierarchicalDataDialog(tk.Toplevel):
             return
         del meta['list'][meta['index']]
         self._render()
-        self._save_record()
 
     def _save_record(self, show_message: bool=False) -> bool:
         if self.current_id is None:
@@ -1211,14 +1292,15 @@ class HierarchicalDataDialog(tk.Toplevel):
         try:
             self.db.update_data_record(self.current_id, self.current_name, self.current_data)
         except Exception as error:
-            if show_message:
-                messagebox.showerror('msg.0159', f'msg.0442{error}', parent=self)
+            messagebox.showerror('msg.0159', f'msg.0442{error}', parent=self)
             return False
         if show_message:
             messagebox.showinfo('msg.0306', 'msg.0441', parent=self)
         return True
 
     def _sync_all_records(self, show_message: bool=True) -> None:
+        if self.has_unsaved_changes() and not self.confirm_pending_changes():
+            return
         records = self.db.list_data_records(self.workflow_id)
         for record in records:
             synchronized = normalize_record(self.schema, record['data'])
