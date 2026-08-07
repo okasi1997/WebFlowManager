@@ -34,6 +34,14 @@ class ElementPicker:
         if info.get('xpath'):
             candidates.append(('xpath', info['xpath']))
         for selector_type, selector in candidates:
+            # Visibility depends on the current scroll position.  A readable
+            # label/text selector that only has one *currently actionable*
+            # match may still refer to several off-screen elements.  Require
+            # DOM-wide uniqueness so execution cannot select a different item
+            # after the viewport changes.
+            matches = self._matches_in_page(page, selector_type, selector)
+            if len(matches) != 1:
+                continue
             actionable = self._actionable_matches_in_page(page, selector_type, selector)
             if len(actionable) == 1:
                 return {'selector_type': selector_type, 'selector': selector, 'fallback_selector_type': 'xpath' if selector_type != 'xpath' and info.get('xpath') else 'none', 'fallback_selector': info.get('xpath', '') if selector_type != 'xpath' else '', 'display': display, 'suggested_action': action, 'match_count': '1'}
@@ -60,6 +68,15 @@ class ElementPicker:
     def _actionable_matches_in_page(cls, page: Any, selector_type: str, selector: str) -> list[Any]:
         locators = locators_in_frames(page, lambda frame: cls._locator(frame, selector_type, selector))
         return [item for locator in locators for item in cls._actionable_matches(locator)]
+
+    @classmethod
+    def _matches_in_page(cls, page: Any, selector_type: str, selector: str) -> list[Any]:
+        locators = locators_in_frames(page, lambda frame: cls._locator(frame, selector_type, selector))
+        return [
+            locator.nth(index)
+            for locator in locators
+            for index in range(locator.count())
+        ]
 
     @staticmethod
     def _visible_matches(locator: Any) -> list[Any]:

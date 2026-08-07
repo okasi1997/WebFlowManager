@@ -15,6 +15,7 @@ from i18n import tr
 VARIABLE_PATTERN = re.compile('\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}')
 DATA_REFERENCE_PATTERN = re.compile(r'\$\{data:([^{}]+)\}')
 SALESFORCE_SPINNER_SELECTOR = '.slds-spinner, lightning-spinner'
+POST_ACTION_SPINNER_CHECKS = {'click', 'select', 'press', 'goto', 'upload_file'}
 
 def find_variables(events: list[dict[str, Any]]) -> list[str]:
     """外部入力が必要な変数だけを抽出する。get_text の生成変数は除外する。"""
@@ -295,7 +296,11 @@ class WorkflowExecutor:
                     try:
                         self._wait_for_salesforce_spinner_if_present(page, int(effective.get('timeout_ms', 10000)), prefix)
                         captured = self._execute_event(page, effective, variables, artifact_dir)
-                        self._wait_for_salesforce_spinner_if_present(page, int(effective.get('timeout_ms', 10000)), prefix)
+                        # Text entry normally does not navigate or start a page
+                        # load. Avoid a second full page/iframe scan for those
+                        # high-frequency form operations.
+                        if action in POST_ACTION_SPINNER_CHECKS:
+                            self._wait_for_salesforce_spinner_if_present(page, int(effective.get('timeout_ms', 10000)), prefix)
                         if deadline is not None and time.monotonic() >= deadline:
                             raise TimeoutError('msg.0576')
                         break
@@ -545,9 +550,12 @@ class WorkflowExecutor:
             if self._is_transient_target_error(error):
                 return self._unique_locator(page, selector_type, selector, max(1, int((deadline - time.monotonic()) * 1000)))
             raise
-        if len(visible) == 1:
+        # Do not let the viewport turn an ambiguous selector into an apparently
+        # unique one. If off-screen duplicates exist, fail the primary lookup
+        # so _event_locator can use the exact saved fallback XPath.
+        if len(all_matches) == 1 and len(visible) == 1:
             visible[0].scroll_into_view_if_needed(timeout=max(1, timeout))
-        actionable = [item for item in visible if is_topmost(item)]
+        actionable = [item for item in visible if is_topmost(item)] if len(all_matches) == 1 else []
         if len(actionable) != 1:
             raise RuntimeError(f'msg.0204{len(all_matches)}msg.0205{len(visible)}msg.0206{len(actionable)}msg.0073')
         return actionable[0]

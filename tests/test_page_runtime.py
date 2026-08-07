@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from browser.auth_session import AuthBrowserSession
-from browser.element_picker import DebugBrowserSession
+from browser.element_picker import DebugBrowserSession, ElementPicker
 from browser.page_runtime import BROWSER_ARGS, BROWSER_IGNORED_DEFAULT_ARGS, active_page, close_browser_context, is_topmost, launch_persistent_chrome, locators_in_frames, restore_storage_state, settle_new_page
 from browser.picker_scripts import picker_script
 from browser.profile_runtime import persistent_profile_dir
@@ -84,6 +84,58 @@ class FakeLocator:
 
 
 class PageRuntimeTests(unittest.TestCase):
+    def test_picker_rejects_selector_with_offscreen_duplicate(self) -> None:
+        picker = ElementPicker()
+        info = {
+            'label': '同じ名前',
+            'xpath': '//form[2]//input[1]',
+            'role': 'textbox',
+        }
+        chosen = object()
+
+        def matches(_page, selector_type, _selector):
+            return [object(), object()] if selector_type == 'label' else [chosen]
+
+        with (
+            patch.object(picker, '_matches_in_page', side_effect=matches),
+            patch.object(picker, '_actionable_matches_in_page', return_value=[chosen]),
+        ):
+            result = picker._choose_unique_locator(object(), info)
+
+        self.assertEqual(result['selector_type'], 'xpath')
+        self.assertEqual(result['selector'], '//form[2]//input[1]')
+
+    def test_fill_skips_redundant_post_action_spinner_scan(self) -> None:
+        class Context:
+            pages = []
+
+        class Page:
+            context = Context()
+
+            def is_closed(self):
+                return False
+
+        page = Page()
+        page.context.pages = [page]
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        spinner_checks = []
+        executor._wait_for_salesforce_spinner_if_present = (
+            lambda *_args: spinner_checks.append(True)
+        )
+        executor._execute_event = lambda *_args: None
+
+        executor._execute_sequence(
+            page,
+            [{
+                'id': 1, 'position': 1, 'name': 'input', 'action': 'fill',
+                'selector_type': 'css', 'selector': '#name', 'value': 'Alice',
+                'enabled': 1,
+            }],
+            {}, Path('.'), None, {}, 'test',
+        )
+
+        self.assertEqual(len(spinner_checks), 1)
+
     def test_locator_lookup_retries_after_dynamic_target_replacement(self) -> None:
         class Page:
             def __init__(self):
@@ -124,6 +176,31 @@ class PageRuntimeTests(unittest.TestCase):
             match = executor._unique_locator(Page(), 'css', '#target', timeout=500)
 
         self.assertIsInstance(match, Match)
+
+    def test_executor_rejects_visible_match_when_offscreen_duplicate_exists(self) -> None:
+        class Page:
+            def __init__(self):
+                self.context = type('Context', (), {})()
+                self.context.pages = [self]
+
+            def is_closed(self):
+                return False
+
+            def wait_for_timeout(self, _milliseconds):
+                pass
+
+        class Match:
+            def __init__(self, visible):
+                self.visible = visible
+
+            def is_visible(self):
+                return self.visible
+
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        executor._locator_matches = lambda *_args: [Match(True), Match(False)]
+
+        with self.assertRaisesRegex(RuntimeError, 'msg.0204'):
+            executor._unique_locator(Page(), 'label', '同じ名前', timeout=10)
 
     def test_event_group_timeout_limits_one_attempt(self) -> None:
         class Context:
