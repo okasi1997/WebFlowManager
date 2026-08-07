@@ -17,7 +17,6 @@ VARIABLE_PATTERN = re.compile('\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}')
 DATA_REFERENCE_PATTERN = re.compile(r'\$\{data:([^{}]+)\}')
 SALESFORCE_SPINNER_SELECTOR = '.slds-spinner, lightning-spinner'
 SPINNER_TRIGGER_ACTIONS = {'click', 'select', 'goto', 'upload_file'}
-SPINNER_APPEARANCE_WINDOW_MS = 250
 
 def find_variables(events: list[dict[str, Any]]) -> list[str]:
     """外部入力が必要な変数だけを抽出する。get_text の生成変数は除外する。"""
@@ -48,6 +47,7 @@ class WorkflowExecutor:
         self.project_dir = project_dir
         self.logger = lambda message: logger(tr(message))
         self._input_frame_cache: tuple[Any, Any] | None = None
+        self._saved_frame_cache: dict[tuple[Any, str], Any] = {}
         self._spinner_observed_frames: set[Any] = set()
 
     def run_batch(self, steps: list[dict[str, Any]], variables: dict[str, str], on_step_start: Callable[[dict[str, Any]], Any] | None=None, on_step_success: Callable[[dict[str, Any], Any], None] | None=None, on_step_failure: Callable[[dict[str, Any], Any, Exception], None] | None=None, on_event_start: Callable[[dict[str, Any], dict[str, Any]], None] | None=None, browser_visible: bool=True, session_name: str='batch', storage_state_path: Path | None | bool=False) -> None:
@@ -310,7 +310,7 @@ class WorkflowExecutor:
                 for attempt in range(1, retry_count + 2):
                     try:
                         spinner_baseline = (
-                            self._prepare_spinner_observers(page)
+                            self._prepare_spinner_observers(page, effective)
                             if self._requires_spinner_check(effective)
                             else {}
                         )
@@ -321,6 +321,7 @@ class WorkflowExecutor:
                                 spinner_baseline,
                                 int(effective.get('timeout_ms', 10000)),
                                 prefix,
+                                effective,
                             )
                         if deadline is not None and time.monotonic() >= deadline:
                             raise TimeoutError('msg.0576')
@@ -548,7 +549,10 @@ class WorkflowExecutor:
             for index in range(locator.count())
         ]
 
-    def _unique_locator(self, page: Any, selector_type: str, selector: str, timeout: int=10000) -> Any:
+    def _unique_locator(
+        self, page: Any, selector_type: str, selector: str,
+        timeout: int=10000, require_actionable: bool=True,
+    ) -> Any:
         deadline = time.monotonic() + timeout / 1000
         all_matches: list[Any] = []
         while time.monotonic() < deadline:
@@ -565,11 +569,17 @@ class WorkflowExecutor:
             if all_matches:
                 break
             page.wait_for_timeout(100)
+        if not require_actionable and len(all_matches) == 1:
+            return all_matches[0]
         try:
             visible = [item for item in all_matches if item.is_visible()]
         except Exception as error:
             if self._is_transient_target_error(error):
-                return self._unique_locator(page, selector_type, selector, max(1, int((deadline - time.monotonic()) * 1000)))
+                return self._unique_locator(
+                    page, selector_type, selector,
+                    max(1, int((deadline - time.monotonic()) * 1000)),
+                    require_actionable,
+                )
             raise
         # 画面内に一件だけ見える場合でも、画面外に同じ要素があれば一意とは扱わない。
         # 主定位を失敗させ、保存済みの正確な予備 XPath を使用できるようにする。
@@ -581,7 +591,7 @@ class WorkflowExecutor:
         return actionable[0]
 
     def _cached_input_locator(self, page: Any, selector_type: str, selector: str, timeout: int) -> Any | None:
-        """連続入力時、直前に確認済みの frame 内だけを高速に検索する。"""
+        """連続した軽量操作時、直前に確認済みの frame 内だけを高速に検索する。"""
         if self._input_frame_cache is None:
             return None
         cached_page, frame = self._input_frame_cache
@@ -593,13 +603,8 @@ class WorkflowExecutor:
             locator = self._locator(frame, selector_type, selector)
             if locator.count() != 1:
                 return None
-            match = locator.nth(0)
-            if not match.is_visible():
-                return None
-            match.scroll_into_view_if_needed(timeout=max(1, timeout))
-            if not is_topmost(match):
-                return None
-            return match
+            # fill() 自身が可視性、スクロール、編集可能性を待機する。
+            return locator.nth(0)
         except Exception:
             self._input_frame_cache = None
             return None
@@ -607,6 +612,15 @@ class WorkflowExecutor:
     def _remember_input_frame(self, page: Any, locator: Any) -> None:
         """Playwright Locator が属する frame を次の連続入力用に保持する。"""
         frame = getattr(locator, '_frame', None)
+        if frame is None:
+            impl_frame = getattr(getattr(locator, '_impl_obj', None), '_frame', None)
+            try:
+                frame = next(
+                    candidate for candidate in active_page(page).frames
+                    if getattr(candidate, '_impl_obj', None) is impl_frame
+                )
+            except (StopIteration, AttributeError):
+                frame = None
         if frame is None:
             self._input_frame_cache = None
             return
@@ -618,10 +632,16 @@ class WorkflowExecutor:
         if not raw_path:
             return None
         try:
+            page = active_page(page)
+            cache_key = (page, raw_path)
+            cached = self._saved_frame_cache.get(cache_key)
+            if cached is not None:
+                if cached in page.frames and not cached.is_detached():
+                    return cached
+                self._saved_frame_cache.pop(cache_key, None)
             selectors = json.loads(raw_path)
             if not isinstance(selectors, list) or not all(isinstance(item, str) for item in selectors):
                 return None
-            page = active_page(page)
             current = page.main_frame
             for selector in selectors:
                 matches = []
@@ -636,13 +656,14 @@ class WorkflowExecutor:
                 if len(matches) != 1:
                     return None
                 current = matches[0]
+            self._saved_frame_cache[cache_key] = current
             return current
-        except (TypeError, ValueError, json.JSONDecodeError):
+        except Exception:
             return None
 
     def _locator_in_saved_frame(
         self, page: Any, event: dict[str, Any], selector_type: str,
-        selector: str, timeout: int,
+        selector: str, timeout: int, require_actionable: bool=True,
     ) -> Any | None:
         """保存済み frame 内で一意かつ操作可能な要素だけを返す。"""
         frame = self._saved_event_frame(page, event)
@@ -653,6 +674,8 @@ class WorkflowExecutor:
             if locator.count() != 1:
                 return None
             match = locator.nth(0)
+            if not require_actionable:
+                return match
             if not match.is_visible():
                 return None
             match.scroll_into_view_if_needed(timeout=max(1, timeout))
@@ -662,6 +685,34 @@ class WorkflowExecutor:
         except Exception:
             return None
 
+    def _fast_event_locator(
+        self, page: Any, event: dict[str, Any], selector: str,
+        fallback_selector: str, timeout: int,
+    ) -> Any:
+        """軽量操作向けに、重複する操作可能性検査を省いて一意な要素を取得する。"""
+        selector_type = event['selector_type']
+        locator = self._locator_in_saved_frame(
+            page, event, selector_type, selector, timeout,
+            require_actionable=False,
+        )
+        fallback_type = str(event.get('fallback_selector_type', 'none'))
+        if locator is None and fallback_type != 'none' and fallback_selector:
+            locator = self._locator_in_saved_frame(
+                page, event, fallback_type, fallback_selector, timeout,
+                require_actionable=False,
+            )
+        if locator is None:
+            locator = self._cached_input_locator(page, selector_type, selector, timeout)
+        if locator is None and fallback_type != 'none' and fallback_selector:
+            locator = self._cached_input_locator(page, fallback_type, fallback_selector, timeout)
+        if locator is None:
+            locator = self._event_locator(
+                page, event, selector, fallback_selector, timeout,
+                require_actionable=False,
+            )
+        self._remember_input_frame(page, locator)
+        return locator
+
     def _execute_event(self, page: Any, event: dict[str, Any], variables: dict[str, str], artifact_dir: Path) -> Any:
         page = active_page(page)
         action = event['action']
@@ -670,27 +721,31 @@ class WorkflowExecutor:
         value = substitute(str(event.get('value', '')), variables)
         timeout = int(event.get('timeout_ms', 10000))
         page.set_default_timeout(timeout)
-        if action != 'fill':
-            # 入力以外の操作後は DOM や frame が変化する可能性がある。
+        lightweight_action = (
+            action in {'fill', 'get_text'}
+            or (action == 'press' and not self._requires_spinner_check(event))
+        )
+        if not lightweight_action:
+            # 画面更新を起こし得る操作後は frame キャッシュを破棄する。
             self._input_frame_cache = None
         if action == 'goto':
             page.goto(value, wait_until='domcontentloaded')
         elif action == 'click':
             previous_pages = set(open_pages(page.context))
-            self._event_locator(page, event, selector, fallback_selector, timeout).click()
+            self._event_locator(
+                page, event, selector, fallback_selector, timeout,
+                require_actionable=False,
+            ).click()
             settle_new_page(page, previous_pages, timeout)
         elif action == 'fill':
-            locator = self._locator_in_saved_frame(
-                page, event, event['selector_type'], selector, timeout,
-            )
-            if locator is None:
-                locator = self._cached_input_locator(page, event['selector_type'], selector, timeout)
-            if locator is None:
-                locator = self._event_locator(page, event, selector, fallback_selector, timeout)
-                self._remember_input_frame(page, locator)
-            locator.fill(value)
+            self._fast_event_locator(
+                page, event, selector, fallback_selector, timeout,
+            ).fill(value)
         elif action == 'select':
-            locator = self._event_locator(page, event, selector, fallback_selector, timeout)
+            locator = self._event_locator(
+                page, event, selector, fallback_selector, timeout,
+                require_actionable=False,
+            )
             if value == SELECT_FIRST_VALUE:
                 locator.select_option(index=0)
             else:
@@ -702,7 +757,17 @@ class WorkflowExecutor:
                 page, event['selector_type'], selector, timeout, event,
             )
         elif action == 'press':
-            self._event_locator(page, event, selector, fallback_selector, timeout).press(value)
+            locator = (
+                self._event_locator(
+                    page, event, selector, fallback_selector, timeout,
+                    require_actionable=False,
+                )
+                if self._requires_spinner_check(event)
+                else self._fast_event_locator(
+                    page, event, selector, fallback_selector, timeout,
+                )
+            )
+            locator.press(value)
         elif action == 'upload_file':
             file_path = Path(value)
             if not file_path.is_absolute():
@@ -715,7 +780,9 @@ class WorkflowExecutor:
             variable_name = value.strip()
             if variable_name and not re.fullmatch('[A-Za-z_][A-Za-z0-9_]*', variable_name):
                 raise ValueError('msg.0210')
-            locator = self._event_locator(page, event, selector, fallback_selector, timeout)
+            locator = self._fast_event_locator(
+                page, event, selector, fallback_selector, timeout,
+            )
             captured = (locator.text_content() or '').strip()
             if variable_name:
                 variables[variable_name] = captured
@@ -767,15 +834,22 @@ class WorkflowExecutor:
         keys = {part.strip().casefold() for part in str(event.get('value', '')).split('+')}
         return bool(keys & {'enter', 'numpadenter', 'tab'})
 
-    def _prepare_spinner_observers(self, page: Any) -> dict[Any, tuple[int, bool]]:
+    def _prepare_spinner_observers(
+        self, page: Any, event: dict[str, Any] | None=None,
+    ) -> dict[Any, tuple[int, bool]]:
         """各 frame に一度だけ監視器を設置し、操作前の状態を返す。"""
         page = active_page(page)
         try:
-            frames = page_frames(page)
+            all_frames = page_frames(page)
         except Exception:
             return {}
-        current_frames = set(frames)
+        current_frames = set(all_frames)
         self._spinner_observed_frames.intersection_update(current_frames)
+        frames = all_frames
+        if event and str(event.get('iframe_path', '')).strip():
+            target_frame = self._saved_event_frame(page, event)
+            if target_frame is not None:
+                frames = list(dict.fromkeys((page.main_frame, target_frame)))
         states: dict[Any, tuple[int, bool]] = {}
         install_script = """() => {
             const selector = '.slds-spinner, lightning-spinner';
@@ -837,16 +911,18 @@ class WorkflowExecutor:
 
     def _wait_for_observed_spinner(
         self, page: Any, baseline: dict[Any, tuple[int, bool]],
-        timeout: int, prefix: str='',
+        timeout: int, prefix: str='', event: dict[str, Any] | None=None,
     ) -> None:
         """短い出現待ちの後、実際に現れた Spinner だけが消えるまで待つ。"""
         started = time.monotonic()
-        appearance_deadline = started + SPINNER_APPEARANCE_WINDOW_MS / 1000
+        action = str((event or {}).get('action', ''))
+        appearance_ms = 100 if action == 'select' else 150 if action == 'click' else 250
+        appearance_deadline = started + appearance_ms / 1000
         timeout_deadline = started + timeout / 1000
         saw_spinner = any(visible for _revision, visible in baseline.values())
         logged = False
         while True:
-            states = self._prepare_spinner_observers(page)
+            states = self._prepare_spinner_observers(page, event)
             visible_count = sum(visible for _revision, visible in states.values())
             changed = any(
                 revision > baseline.get(frame, (revision, False))[0]
@@ -892,9 +968,14 @@ class WorkflowExecutor:
                     raise
                 time.sleep(0.1)
 
-    def _event_locator(self, page: Any, event: dict[str, Any], selector: str, fallback_selector: str, timeout: int=10000) -> Any:
+    def _event_locator(
+        self, page: Any, event: dict[str, Any], selector: str,
+        fallback_selector: str, timeout: int=10000,
+        require_actionable: bool=True,
+    ) -> Any:
         saved = self._locator_in_saved_frame(
             page, event, event['selector_type'], selector, timeout,
+            require_actionable,
         )
         if saved is not None:
             return saved
@@ -902,17 +983,24 @@ class WorkflowExecutor:
         if fallback_type != 'none' and fallback_selector:
             saved_fallback = self._locator_in_saved_frame(
                 page, event, fallback_type, fallback_selector, timeout,
+                require_actionable,
             )
             if saved_fallback is not None:
                 return saved_fallback
         try:
-            return self._unique_locator(page, event['selector_type'], selector, timeout)
+            return self._unique_locator(
+                page, event['selector_type'], selector, timeout,
+                require_actionable,
+            )
         except RuntimeError:
             if fallback_type == 'none' or not fallback_selector:
                 raise
             self.logger(f'msg.0212{fallback_type}: "{fallback_selector}"')
             try:
-                return self._unique_locator(page, fallback_type, fallback_selector, timeout)
+                return self._unique_locator(
+                    page, fallback_type, fallback_selector, timeout,
+                    require_actionable,
+                )
             except Exception as fallback_error:
                 raise RuntimeError(f'msg.0565{fallback_error}') from fallback_error
 

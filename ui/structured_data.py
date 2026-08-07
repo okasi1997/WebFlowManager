@@ -9,7 +9,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Any
 from core.database import Database
 from i18n import SUPPORTED_LANGUAGES, tr, tr_language
-from ui.ui_helpers import AutoScrollbar, scrollable_tree, toggle_tree_indicator_on_double_click
+from ui.ui_helpers import AutoScrollbar, scrollable_tree, toggle_tree_indicator_on_double_click, tree_toggle_all_button
 TYPES = ('text', 'number', 'boolean', 'object', 'list')
 
 def strip_data_whitespace(value: Any) -> Any:
@@ -535,6 +535,10 @@ class SchemaDesignerDialog(tk.Toplevel):
         self.drag_active = False
         for column in range(4):
             buttons.columnconfigure(column, weight=1)
+        tree_toggle_all_button(
+            buttons, self.tree,
+            style='Secondary.TButton' if embedded else 'TButton',
+        ).grid(row=2, column=0, padx=3, pady=3, sticky='ew')
         self.tree.bind('<<TreeviewSelect>>', self._update_action_buttons)
         self.tree.bind('<Double-1>', self._tree_double_click)
         self.tree.bind('<ButtonPress-1>', self._drag_start, add='+')
@@ -928,7 +932,10 @@ class DataPathDialog(tk.Toplevel):
             item = self.tree.insert(parent_items[parent_path], 'end', text=node['name'], values=(node['type'], path), open=True)
             parent_items[path] = item
             self.paths[item] = (path, node['type'])
-        ttk.Button(self, text='msg.0280', command=self._choose).pack(pady=(0, 10))
+        footer = ttk.Frame(self)
+        footer.pack(fill='x', padx=10, pady=(0, 10))
+        tree_toggle_all_button(footer, self.tree).pack(side='left')
+        ttk.Button(footer, text='msg.0280', command=self._choose).pack(side='right')
         self.tree.bind('<Double-1>', lambda _event: self._choose())
         self.transient(parent)
         self.grab_set()
@@ -994,7 +1001,9 @@ class HierarchicalDataDialog(tk.Toplevel):
             text='msg.0286',
             style='EmbeddedCardTitle.TLabel' if embedded else 'Section.TLabel',
         ).pack(side='left')
-        records_frame, self.records = scrollable_tree(left, columns=('name', 'summary'), show='headings')
+        records_frame, self.records = scrollable_tree(
+            left, always_y=True, columns=('name', 'summary'), show='headings',
+        )
         self.record_heading_keys = {'name': 'msg.0524', 'summary': 'msg.0517'}
         self._update_record_headings()
         self.records.column('name', width=140, minwidth=100, stretch=True)
@@ -1036,7 +1045,10 @@ class HierarchicalDataDialog(tk.Toplevel):
             text='msg.0295',
             style='EmbeddedCardTitle.TLabel' if embedded else 'Section.TLabel',
         ).pack(anchor='w')
-        tree_frame, self.tree = scrollable_tree(right, columns=('type', 'value', 'path'), show='tree headings')
+        tree_frame, self.tree = scrollable_tree(
+            right, always_y=True,
+            columns=('type', 'value', 'path'), show='tree headings',
+        )
         self.tree.heading('#0', text='msg.0296')
         self.tree.heading('type', text='msg.0257')
         self.tree.heading('value', text='msg.0379')
@@ -1057,6 +1069,9 @@ class HierarchicalDataDialog(tk.Toplevel):
         ttk.Button(rb, text='msg.0300', command=self._delete_list_item, style='Danger.TButton').pack(side='left', padx=3)
         ttk.Button(rb, text='msg.0301', command=self._sync_all_records, style=standard_style).pack(side='left', padx=3)
         ttk.Button(rb, text='msg.0302', command=lambda: self._save_record(show_message=True), style='Primary.TButton').pack(side='right', padx=3)
+        tree_toggle_all_button(
+            rb, self.tree, style=standard_style,
+        ).pack(side='right', padx=3)
         self._sync_all_records(show_message=False)
         self._refresh_records()
         if not embedded:

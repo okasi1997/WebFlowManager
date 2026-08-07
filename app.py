@@ -27,7 +27,7 @@ from ui.dialogs import EventDialog, EventGroupDialog, GuardConditionDialog, Vari
 from ui.auth_state import AuthStateDialog, profile_path
 from ui.message_dialog import install_app_messageboxes
 from ui.structured_data import DataPathDialog, HierarchicalDataDialog, SchemaDesignerDialog
-from ui.ui_helpers import AutoScrollbar, toggle_tree_indicator_on_double_click
+from ui.ui_helpers import AutoScrollbar, toggle_tree_indicator_on_double_click, tree_toggle_all_button
 
 class FlowManagerApp:
     """Tk の画面状態と、バックグラウンドで動く実行処理を接続する。"""
@@ -704,7 +704,7 @@ class FlowManagerApp:
         event_tab = ttk.Frame(right, style='EmbeddedCardBody.TFrame')
         event_tab.pack(fill='both', expand=True)
 
-        columns = ('action', 'value', 'data_path', 'guard', 'enabled', 'position')
+        columns = ('action', 'value', 'guard', 'enabled', 'position')
         self.event_table = ttk.Frame(event_tab, style='EmbeddedCardBody.TFrame')
         self.event_table.pack(fill='both', expand=True, pady=(8, 4))
         event_tree_style = ttk.Style(self.root)
@@ -718,13 +718,13 @@ class FlowManagerApp:
         self.event_tree = ttk.Treeview(self.event_table, columns=columns, show='tree headings', height=8, style='Event.Treeview')
         self.event_tree.heading('#0', text='msg.0028')
         self.event_tree.column('#0', width=170, minwidth=90, stretch=False)
-        headings = {'position': 'msg.0027', 'action': 'msg.0029', 'value': 'msg.0032', 'data_path': 'msg.0033', 'guard': 'msg.0405', 'enabled': 'msg.0006'}
-        widths = {'position': 48, 'action': 78, 'value': 110, 'data_path': 130, 'guard': 190, 'enabled': 58}
+        headings = {'position': 'msg.0027', 'action': 'msg.0029', 'value': 'msg.0032', 'guard': 'msg.0405', 'enabled': 'msg.0006'}
+        widths = {'position': 48, 'action': 78, 'value': 130, 'guard': 240, 'enabled': 58}
         for column in columns:
             self.event_tree.heading(column, text=headings[column])
             self.event_tree.column(column, width=widths[column], minwidth=35, stretch=False)
         self.event_tree.column('guard', stretch=True)
-        event_y = AutoScrollbar(self.event_table, orient='vertical', command=self.event_tree.yview)
+        event_y = ttk.Scrollbar(self.event_table, orient='vertical', command=self.event_tree.yview)
         event_x = AutoScrollbar(self.event_table, orient='horizontal', command=self.event_tree.xview)
         self.event_tree.configure(yscrollcommand=event_y.set, xscrollcommand=event_x.set)
         self.event_tree.grid(row=0, column=0, sticky='nsew')
@@ -732,6 +732,7 @@ class FlowManagerApp:
         event_x.grid(row=1, column=0, sticky='ew')
         self.event_table.rowconfigure(0, weight=1)
         self.event_table.columnconfigure(0, weight=1)
+        self.event_tree.after_idle(lambda: event_x.set(*self.event_tree.xview()))
         self.event_tree.bind('<Configure>', self._resize_event_columns)
         self.event_tree.tag_configure('odd', background='#FAFAFA')
         self.event_tree.tag_configure('disabled', foreground='#A0A0A0')
@@ -761,6 +762,11 @@ class FlowManagerApp:
                 row=0, column=index, padx=3, pady=2, sticky='ew'
             )
             event_buttons.columnconfigure(index, weight=1, uniform='event_action')
+        toggle_column = len(event_actions)
+        tree_toggle_all_button(
+            event_buttons, self.event_tree, style='Secondary.TButton',
+        ).grid(row=0, column=toggle_column, padx=3, pady=2, sticky='ew')
+        event_buttons.columnconfigure(toggle_column, weight=1, uniform='event_action')
 
         execution_header = ttk.Frame(execution_page, padding=(30, 14, 30, 12), style='PageHeader.TFrame')
         execution_header.pack(fill='x')
@@ -1495,15 +1501,15 @@ class FlowManagerApp:
     def _resize_event_columns(self, event: tk.Event) -> None:
         # Treeview の実クライアント幅を使用する。スクロールバー領域を固定確保すると、
         # AutoScrollbar が非表示になった際に空白が残るためである。
-        available = max(620, event.width - 3)
+        # Treeview 内部の境界分を残し、列幅の丸めだけで横方向が溢れないようにする。
+        available = max(420, event.width - 10)
         fixed = {'position': 52, 'action': 90, 'enabled': 62}
         flexible = available - sum(fixed.values())
         widths = {
             **fixed,
-            'name': int(flexible * 0.30),
-            'value': int(flexible * 0.15),
-            'data_path': int(flexible * 0.18),
-            'guard': int(flexible * 0.37),
+            'name': int(flexible * 0.34),
+            'value': int(flexible * 0.18),
+            'guard': int(flexible * 0.48),
         }
         for column, width in widths.items():
             target = '#0' if column == 'name' else column
@@ -1610,7 +1616,7 @@ class FlowManagerApp:
             guard_summary = summarize_guard(decode_guard(row['guard_json']), guard_operator_labels()) or tr('msg.0404')
             parent = parents[-1] if parents else ''
             display_action = 'group' if row['action'] == 'group_start' else 'loop' if row['action'] == 'loop_start' else 'retry' if row['action'] == 'retry_start' else row['action']
-            self.event_tree.insert(parent, 'end', iid=str(row['id']), text=display_name, open=group_open if is_group else False, values=(display_action, row['value'], row['data_path'], guard_summary, 'msg.0037' if row['enabled'] else 'msg.0038', row['position']), tags=tuple((tag for tag, applies in (('odd', row_index % 2 == 1), ('disabled', not row['enabled']), ('event_group', is_group)) if applies)))
+            self.event_tree.insert(parent, 'end', iid=str(row['id']), text=display_name, open=group_open if is_group else False, values=(display_action, row['value'], guard_summary, 'msg.0037' if row['enabled'] else 'msg.0038', row['position']), tags=tuple((tag for tag, applies in (('odd', row_index % 2 == 1), ('disabled', not row['enabled']), ('event_group', is_group)) if applies)))
             if is_group:
                 parents.append(str(row['id']))
         self._append_group_counts()
@@ -1751,7 +1757,7 @@ class FlowManagerApp:
                 return 'break'
             self._edit_event()
             return 'break'
-        if self.event_tree.identify_column(event.x) == '#5':
+        if self.event_tree.identify_column(event.x) == '#4':
             self._toggle_event()
         elif self.event_tree.get_children(item):
             self._edit_event()

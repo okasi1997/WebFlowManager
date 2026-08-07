@@ -139,6 +139,21 @@ class PageRuntimeTests(unittest.TestCase):
         self.assertEqual(result['selector_type'], 'xpath')
         self.assertEqual(result['selector'], '//form[2]//input[1]')
 
+    def test_picker_suggests_action_from_element_tag(self) -> None:
+        picker = ElementPicker()
+        expected = {'select': 'select', 'input': 'fill', 'button': 'click'}
+
+        for tag, action in expected.items():
+            with (
+                self.subTest(tag=tag),
+                patch.object(picker, '_matches_in_page', return_value=[object()]),
+                patch.object(picker, '_actionable_matches_in_page', return_value=[object()]),
+            ):
+                result = picker._choose_unique_locator(
+                    object(), {'tag': tag, 'css': f'#{tag}'},
+                )
+                self.assertEqual(result['suggested_action'], action)
+
     def test_event_execution_does_not_run_spinner_scan_while_disabled(self) -> None:
         class Context:
             pages = []
@@ -191,12 +206,39 @@ class PageRuntimeTests(unittest.TestCase):
             {frame: (2, False)},
         ))
         executor = WorkflowExecutor(Path('.'), lambda _message: None)
-        executor._prepare_spinner_observers = lambda _page: next(states)
+        executor._prepare_spinner_observers = lambda *_args: next(states)
 
         with patch('core.executor.active_page', side_effect=lambda page: page):
             executor._wait_for_observed_spinner(
                 Page(), {frame: (0, False)}, timeout=1000,
             )
+
+    def test_spinner_observer_checks_only_main_and_saved_target_frame(self) -> None:
+        class Frame:
+            def __init__(self):
+                self.calls = 0
+
+            def evaluate(self, _script):
+                self.calls += 1
+                return {'revision': 0, 'visible': False}
+
+        main = Frame()
+        target = Frame()
+        unrelated = Frame()
+        page = type('Page', (), {'main_frame': main})()
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        executor._saved_event_frame = lambda *_args: target
+
+        with (
+            patch('core.executor.active_page', side_effect=lambda current: current),
+            patch('core.executor.page_frames', return_value=[main, target, unrelated]),
+        ):
+            states = executor._prepare_spinner_observers(
+                page, {'iframe_path': '["#target"]'},
+            )
+
+        self.assertEqual(set(states), {main, target})
+        self.assertEqual(unrelated.calls, 0)
 
     def test_consecutive_fill_reuses_the_confirmed_frame(self) -> None:
         class Match:
@@ -253,7 +295,7 @@ class PageRuntimeTests(unittest.TestCase):
         executor = WorkflowExecutor(Path('.'), lambda _message: None)
         global_scans = []
 
-        def full_scan(*_args):
+        def full_scan(*_args, **_kwargs):
             global_scans.append(True)
             return first
 
@@ -267,6 +309,60 @@ class PageRuntimeTests(unittest.TestCase):
         self.assertEqual(len(global_scans), 1)
         self.assertEqual(first.values, ['A'])
         self.assertEqual(second.values, ['B'])
+
+    def test_input_frame_cache_reads_sync_playwright_locator_frame(self) -> None:
+        impl_frame = object()
+        frame = type('Frame', (), {'_impl_obj': impl_frame})()
+
+        class Page:
+            frames = [frame]
+
+        locator = type(
+            'Locator', (),
+            {'_impl_obj': type('ImplLocator', (), {'_frame': impl_frame})()},
+        )()
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+
+        with patch('core.executor.active_page', side_effect=lambda page: page):
+            executor._remember_input_frame(Page(), locator)
+
+        self.assertIs(executor._input_frame_cache[1], frame)
+
+    def test_saved_iframe_path_is_resolved_only_once(self) -> None:
+        class Element:
+            calls = 0
+
+            def evaluate(self, _script, _selector):
+                self.calls += 1
+                return True
+
+        element = Element()
+
+        class ChildFrame:
+            child_frames = []
+
+            def frame_element(self):
+                return element
+
+            def is_detached(self):
+                return False
+
+        child = ChildFrame()
+        main = type('MainFrame', (), {'child_frames': [child]})()
+
+        class Page:
+            main_frame = main
+            frames = [main, child]
+
+        page = Page()
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        event = {'iframe_path': '["#detail-frame"]'}
+
+        with patch('core.executor.active_page', side_effect=lambda current: current):
+            self.assertIs(executor._saved_event_frame(page, event), child)
+            self.assertIs(executor._saved_event_frame(page, event), child)
+
+        self.assertEqual(element.calls, 1)
 
     def test_locator_lookup_retries_after_dynamic_target_replacement(self) -> None:
         class Page:
@@ -654,7 +750,7 @@ class PageRuntimeTests(unittest.TestCase):
         page.context.pages = [page]
         locator = Locator()
         executor = WorkflowExecutor(Path('.'), lambda _message: None)
-        executor._event_locator = lambda *_args: locator
+        executor._event_locator = lambda *_args, **_kwargs: locator
         executor._execute_event(
             page,
             {

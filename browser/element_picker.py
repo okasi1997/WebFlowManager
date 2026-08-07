@@ -19,7 +19,8 @@ class ElementPicker:
 
     def _choose_unique_locator(self, page: Any, info: dict[str, str], picked_frame: Any | None=None) -> dict[str, str]:
         # 人が理解しやすい locator から順に試し、XPath は予備として保持する。
-        action = 'fill' if info.get('role') in ('textbox', 'combobox') else 'click'
+        tag = str(info.get('tag', '')).casefold()
+        action = {'select': 'select', 'input': 'fill', 'button': 'click'}.get(tag, '')
         display = info.get('label') or info.get('name') or info.get('text') or info.get('tag')
         candidates: list[tuple[str, str]] = []
         if info.get('label'):

@@ -457,7 +457,7 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         stored_failure_action = str(event.get('failure_action', 'none'))
         failure_key = 'continue' if stored_failure_action == 'none' and event.get('continue_on_error', 0) else ('stop' if stored_failure_action == 'none' else stored_failure_action)
         initial_value = '' if self.select_first.get() else str(event.get('value', ''))
-        self.values = {'name': tk.StringVar(value=str(event.get('name', ''))), 'action': tk.StringVar(value=str(event.get('action', 'click' if 'click' in actions else actions[0]))), 'selector_type': tk.StringVar(value=str(event.get('selector_type', 'role' if 'role' in selector_types else selector_types[0]))), 'selector': tk.StringVar(value=str(event.get('selector', ''))), 'fallback_selector_type': tk.StringVar(value=str(event.get('fallback_selector_type', 'none'))), 'fallback_selector': tk.StringVar(value=str(event.get('fallback_selector', ''))), 'value': tk.StringVar(value=initial_value), 'timeout_ms': tk.StringVar(value=str(event.get('timeout_ms', default_timeout_ms))), 'retry_count': tk.StringVar(value=str(event.get('retry_count', 0))), 'retry_interval_ms': tk.StringVar(value=str(event.get('retry_interval_ms', 0))), 'enabled': tk.BooleanVar(value=bool(event.get('enabled', 1))), 'failure_action': tk.StringVar(value=self.failure_action_labels.get(failure_key, self.failure_action_labels['stop'])), 'failure_target': tk.StringVar(value=str(event.get('failure_target', ''))), 'data_path': tk.StringVar(value=str(event.get('data_path', ''))), 'target_url': tk.StringVar(value=default_url)}
+        self.values = {'name': tk.StringVar(value=str(event.get('name', ''))), 'action': tk.StringVar(value=str(event.get('action', ''))), 'selector_type': tk.StringVar(value=str(event.get('selector_type', 'role' if 'role' in selector_types else selector_types[0]))), 'selector': tk.StringVar(value=str(event.get('selector', ''))), 'fallback_selector_type': tk.StringVar(value=str(event.get('fallback_selector_type', 'none'))), 'fallback_selector': tk.StringVar(value=str(event.get('fallback_selector', ''))), 'value': tk.StringVar(value=initial_value), 'timeout_ms': tk.StringVar(value=str(event.get('timeout_ms', default_timeout_ms))), 'retry_count': tk.StringVar(value=str(event.get('retry_count', 0))), 'retry_interval_ms': tk.StringVar(value=str(event.get('retry_interval_ms', 0))), 'enabled': tk.BooleanVar(value=bool(event.get('enabled', 1))), 'failure_action': tk.StringVar(value=self.failure_action_labels.get(failure_key, self.failure_action_labels['stop'])), 'failure_target': tk.StringVar(value=str(event.get('failure_target', ''))), 'data_path': tk.StringVar(value=str(event.get('data_path', ''))), 'target_url': tk.StringVar(value=default_url)}
 
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
@@ -533,7 +533,7 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         add_field(basic, 0, 'msg.0028', 'name', columnspan=2)
         self.enabled_check = ttk.Checkbutton(basic, text='msg.0006', variable=self.values['enabled'], style='DialogCard.TCheckbutton')
         self.enabled_check.grid(row=0, column=3, padx=(8, 10), pady=5, sticky='w')
-        add_field(basic, 1, 'msg.0132', 'action', actions, columnspan=2)
+        add_field(basic, 1, 'msg.0132', 'action', ('', *actions), columnspan=2)
 
         operation = basic
         operation.columnconfigure(1, weight=1)
@@ -813,7 +813,7 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
                 self.values['fallback_selector_type'].set(result.get('fallback_selector_type', 'none'))
                 self.values['fallback_selector'].set(result.get('fallback_selector', ''))
                 self.iframe_path = result.get('iframe_path', '')
-                if result.get('suggested_action') in ('click', 'fill'):
+                if not self.values['action'].get() and result.get('suggested_action') in ('click', 'fill', 'select'):
                     self.values['action'].set(result['suggested_action'])
                     self._update_action_fields()
                 if not self.values['name'].get().strip():
@@ -957,6 +957,9 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         name = self.values['name'].get().strip()
         if not name:
             messagebox.showerror('msg.0159', 'msg.0160', parent=self)
+            return
+        if not self.values['action'].get():
+            messagebox.showerror('msg.0159', 'msg.0579', parent=self)
             return
         try:
             timeout = int(self.values['timeout_ms'].get())
