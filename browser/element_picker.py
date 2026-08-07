@@ -1,5 +1,6 @@
 """ブラウザー上で要素を選択し、一意な locator 候補を生成する。"""
 from __future__ import annotations
+import json
 import queue
 import tempfile
 import threading
@@ -16,7 +17,7 @@ from i18n import tr
 class ElementPicker:
     """F2 で選択モードへ入り、操作可能な要素だけを候補として返す。"""
 
-    def _choose_unique_locator(self, page: Any, info: dict[str, str]) -> dict[str, str]:
+    def _choose_unique_locator(self, page: Any, info: dict[str, str], picked_frame: Any | None=None) -> dict[str, str]:
         # 人が理解しやすい locator から順に試し、XPath は予備として保持する。
         action = 'fill' if info.get('role') in ('textbox', 'combobox') else 'click'
         display = info.get('label') or info.get('name') or info.get('text') or info.get('tag')
@@ -42,8 +43,44 @@ class ElementPicker:
                 continue
             actionable = self._actionable_matches_in_page(page, selector_type, selector)
             if len(actionable) == 1:
-                return {'selector_type': selector_type, 'selector': selector, 'fallback_selector_type': 'xpath' if selector_type != 'xpath' and info.get('xpath') else 'none', 'fallback_selector': info.get('xpath', '') if selector_type != 'xpath' else '', 'display': display, 'suggested_action': action, 'match_count': '1'}
+                return {'selector_type': selector_type, 'selector': selector, 'fallback_selector_type': 'xpath' if selector_type != 'xpath' and info.get('xpath') else 'none', 'fallback_selector': info.get('xpath', '') if selector_type != 'xpath' else '', 'iframe_path': self._iframe_path(picked_frame), 'display': display, 'suggested_action': action, 'match_count': '1'}
         raise RuntimeError('msg.0172')
+
+    @staticmethod
+    def _iframe_path(frame: Any | None) -> str:
+        """対象 frame までの各 iframe を、親 frame 内で一意な CSS として保存する。"""
+        selectors: list[str] = []
+        current = frame
+        while current is not None and current.parent_frame is not None:
+            element = current.frame_element()
+            selector = element.evaluate("""element => {
+                const escape = value => CSS.escape(String(value));
+                const unique = selector => element.ownerDocument.querySelectorAll(selector).length === 1;
+                for (const name of ['id', 'name', 'title']) {
+                    const value = element.getAttribute(name);
+                    if (!value) continue;
+                    const selector = name === 'id'
+                        ? `#${escape(value)}`
+                        : `${element.localName}[${name}="${escape(value)}"]`;
+                    if (unique(selector)) return selector;
+                }
+                const segment = node => {
+                    const siblings = Array.from(node.parentElement.children)
+                        .filter(item => item.localName === node.localName);
+                    return `${node.localName}:nth-of-type(${siblings.indexOf(node) + 1})`;
+                };
+                let node = element;
+                let selector = segment(node);
+                while (!unique(selector) && node.parentElement && node.parentElement !== element.ownerDocument.documentElement) {
+                    node = node.parentElement;
+                    selector = `${segment(node)} > ${selector}`;
+                }
+                return selector;
+            }""")
+            selectors.append(str(selector))
+            current = current.parent_frame
+        selectors.reverse()
+        return json.dumps(selectors, ensure_ascii=False)
 
     @staticmethod
     def _locator(page: Any, selector_type: str, selector: str) -> Any:
@@ -232,7 +269,7 @@ class DebugBrowserSession:
                     if result:
                         if result.get('cancelled'):
                             raise RuntimeError('msg.0170')
-                        return picker._choose_unique_locator(page, result)
+                        return picker._choose_unique_locator(page, result, frame)
         return self._submit(task)
 
     def test(self, selector_type: str, selector: str, target_url: str='') -> int:

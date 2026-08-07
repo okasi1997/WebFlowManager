@@ -139,7 +139,7 @@ class PageRuntimeTests(unittest.TestCase):
         self.assertEqual(result['selector_type'], 'xpath')
         self.assertEqual(result['selector'], '//form[2]//input[1]')
 
-    def test_fill_skips_redundant_post_action_spinner_scan(self) -> None:
+    def test_event_execution_does_not_run_spinner_scan_while_disabled(self) -> None:
         class Context:
             pages = []
 
@@ -168,7 +168,105 @@ class PageRuntimeTests(unittest.TestCase):
             {}, Path('.'), None, {}, 'test',
         )
 
-        self.assertEqual(len(spinner_checks), 1)
+        self.assertEqual(len(spinner_checks), 0)
+
+    def test_spinner_observer_is_limited_to_page_changing_actions(self) -> None:
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+
+        self.assertFalse(executor._requires_spinner_check({'action': 'fill', 'value': 'A'}))
+        self.assertFalse(executor._requires_spinner_check({'action': 'press', 'value': 'ArrowDown'}))
+        self.assertTrue(executor._requires_spinner_check({'action': 'click', 'value': ''}))
+        self.assertTrue(executor._requires_spinner_check({'action': 'select', 'value': 'A'}))
+        self.assertTrue(executor._requires_spinner_check({'action': 'press', 'value': 'Shift+Tab'}))
+        self.assertTrue(executor._requires_spinner_check({'action': 'press', 'value': 'Enter'}))
+
+    def test_spinner_observer_waits_only_after_spinner_appears(self) -> None:
+        class Page:
+            def wait_for_timeout(self, _milliseconds):
+                pass
+
+        frame = object()
+        states = iter((
+            {frame: (1, True)},
+            {frame: (2, False)},
+        ))
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        executor._prepare_spinner_observers = lambda _page: next(states)
+
+        with patch('core.executor.active_page', side_effect=lambda page: page):
+            executor._wait_for_observed_spinner(
+                Page(), {frame: (0, False)}, timeout=1000,
+            )
+
+    def test_consecutive_fill_reuses_the_confirmed_frame(self) -> None:
+        class Match:
+            def __init__(self, frame):
+                self._frame = frame
+                self.values = []
+
+            def is_visible(self):
+                return True
+
+            def scroll_into_view_if_needed(self, timeout):
+                self.timeout = timeout
+
+            def fill(self, value):
+                self.values.append(value)
+
+        class Locator:
+            def __init__(self, match):
+                self.match = match
+
+            def count(self):
+                return 1
+
+            def nth(self, _index):
+                return self.match
+
+        class Frame:
+            def __init__(self):
+                self.matches = {}
+
+            def is_detached(self):
+                return False
+
+            def locator(self, selector):
+                return Locator(self.matches[selector])
+
+        class Page:
+            def __init__(self, frame):
+                self.context = type('Context', (), {})()
+                self.context.pages = [self]
+                self.frames = [frame]
+
+            def is_closed(self):
+                return False
+
+            def set_default_timeout(self, _timeout):
+                pass
+
+        frame = Frame()
+        first = Match(frame)
+        second = Match(frame)
+        frame.matches['#second'] = second
+        page = Page(frame)
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        global_scans = []
+
+        def full_scan(*_args):
+            global_scans.append(True)
+            return first
+
+        executor._event_locator = full_scan
+        common = {'action': 'fill', 'selector_type': 'css', 'fallback_selector': '', 'timeout_ms': 1000}
+
+        with patch('core.executor.is_topmost', return_value=True):
+            executor._execute_event(page, {**common, 'selector': '#first', 'value': 'A'}, {}, Path('.'))
+            executor._execute_event(page, {**common, 'selector': '#second', 'value': 'B'}, {}, Path('.'))
+
+        self.assertEqual(len(global_scans), 1)
+        self.assertEqual(first.values, ['A'])
+        self.assertEqual(second.values, ['B'])
 
     def test_locator_lookup_retries_after_dynamic_target_replacement(self) -> None:
         class Page:
@@ -372,7 +470,7 @@ class PageRuntimeTests(unittest.TestCase):
 
         self.assertEqual(len(attempts), 3)
         self.assertEqual(page.waits, [750, 750])
-        self.assertEqual(len(spinner_checks), 4)
+        self.assertEqual(len(spinner_checks), 0)
         self.assertEqual(sum('イベント再試行' in message for message in messages), 2)
 
     def test_wait_hidden_waits_until_all_matching_elements_are_hidden(self) -> None:
@@ -414,6 +512,58 @@ class PageRuntimeTests(unittest.TestCase):
         executor._wait_until_hidden(page, 'css', '.slds-spinner', 1000)
 
         self.assertEqual(page.polls, 3)
+
+    def test_wait_hidden_prefers_the_saved_iframe(self) -> None:
+        class Match:
+            def is_visible(self):
+                return False
+
+        class Locator:
+            def count(self):
+                return 1
+
+            def nth(self, _index):
+                return Match()
+
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        frame = object()
+        executor._saved_event_frame = lambda *_args: frame
+        executor._locator = lambda target, *_args: Locator() if target is frame else None
+        executor._visible_locator_count = lambda *_args: self.fail('全 frame 検索は不要です')
+
+        page = object()
+        with patch('core.executor.active_page', side_effect=lambda current: current):
+            executor._wait_until_hidden(
+                page, 'css', '.loading', 1000, {'iframe_path': '["#frame"]'},
+            )
+
+    def test_file_input_prefers_the_saved_iframe_even_when_hidden(self) -> None:
+        match = object()
+
+        class Locator:
+            def count(self):
+                return 1
+
+            def nth(self, _index):
+                return match
+
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        frame = object()
+        executor._saved_event_frame = lambda *_args: frame
+        executor._locator = lambda target, *_args: Locator() if target is frame else None
+        executor._locators = lambda *_args: self.fail('全 frame 検索は不要です')
+
+        result = executor._file_input_locator(
+            object(),
+            {
+                'selector_type': 'css',
+                'fallback_selector_type': 'none',
+                'iframe_path': '["#frame"]',
+            },
+            'input[type=file]', '', 1000,
+        )
+
+        self.assertIs(result, match)
 
     def test_event_log_details_include_effective_operation_values(self) -> None:
         self.assertEqual(
