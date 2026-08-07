@@ -1198,9 +1198,7 @@ class FlowManagerApp:
             self._refresh_execution_plan_preview()
             self.root.after_idle(self._update_execution_status_scrollbar)
         elif page_name == 'data':
-            self.data_view.schema = self.db.get_data_schema(0)
-            self.data_view._sync_all_records(show_message=False)
-            self.data_view._refresh_records(self.data_view.current_id)
+            self.data_view.reload_from_database()
         elif page_name == 'auth':
             try:
                 self.debug_browser.close_browser()

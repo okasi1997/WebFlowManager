@@ -168,16 +168,33 @@ def read_records_excel(path: str | Path, schema: dict[str, Any]) -> list[dict[st
             return value
         for merged in sheet.merged_cells.ranges:
             if merged.min_row <= row <= merged.max_row and merged.min_col <= column <= merged.max_col:
+                # A vertically merged leaf occupies several header rows but is
+                # only one path segment.  Horizontal merges, on the other hand,
+                # repeat a parent segment across their child columns.
+                if merged.min_row < row and merged.max_row > merged.min_row:
+                    return None
                 return sheet.cell(merged.min_row, merged.min_col).value
         return None
     columns: list[str] = []
     for column in range(2, sheet.max_column + 1):
         parts = [str(header_value(row, column)).strip() for row in range(1, header_depth + 1) if header_value(row, column) not in (None, '')]
-        path_name = '.'.join(dict.fromkeys(parts))
+        # Preserve repeated names at different levels (for example
+        # 料金.オプション.オプション).  Vertical merge continuations have
+        # already been removed by header_value().
+        path_name = '.'.join(parts)
         columns.append(path_name)
     expected = set(scalar_paths(schema))
-    if not columns or any((column not in expected for column in columns)):
-        raise ValueError('msg.0246')
+    actual = set(columns)
+    unexpected = sorted(actual - expected)
+    missing = sorted(expected - actual)
+    if not columns or unexpected:
+        details = ['msg.0246']
+        if unexpected:
+            details.append(f"Excel only: {', '.join(unexpected)}")
+        if missing:
+            details.append(f"Current structure only: {', '.join(missing)}")
+        details.append(f"Excel headers: {', '.join(columns) if columns else '(none)'}")
+        raise ValueError('\n'.join(details))
     grouped: list[tuple[str, list[dict[str, Any]]]] = []
     current_name = ''
     current_rows: list[dict[str, Any]] = []
@@ -1088,6 +1105,20 @@ class HierarchicalDataDialog(tk.Toplevel):
             self.current_data = normalize_record(self.schema, row['data'])
             self._render()
         return True
+
+    def reload_from_database(self) -> None:
+        """Reload schema and records after the page-level leave check completed."""
+        selected_id = self.current_id
+        self.schema = self.db.get_data_schema(self.workflow_id)
+        # A schema save normalizes records in the database.  The editor copy is
+        # still based on the previous schema and must not be treated as a new,
+        # unsaved user edit while this page is being entered.
+        self.current_id = None
+        self.current_name = ''
+        self.current_summary = ''
+        self.current_data = {}
+        self._sync_all_records(show_message=False)
+        self._refresh_records(selected_id)
 
     def _render(self) -> None:
         had_previous_view = bool(self.view_identity)

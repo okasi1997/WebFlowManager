@@ -1,11 +1,33 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 import tempfile
 from pathlib import Path
 
 from core.database import Database
-from ui.structured_data import SchemaDesignerDialog
+from ui.structured_data import HierarchicalDataDialog, SchemaDesignerDialog
+
+
+class DataEditorReloadTests(unittest.TestCase):
+    def test_reload_discards_stale_editor_copy_before_syncing(self) -> None:
+        dialog = object.__new__(HierarchicalDataDialog)
+        dialog.workflow_id = 0
+        dialog.db = SimpleNamespace(get_data_schema=lambda _workflow_id: {'type': 'object', 'children': []})
+        dialog.current_id = 17
+        dialog.current_name = 'old'
+        dialog.current_summary = 'old summary'
+        dialog.current_data = {'stale': 'value'}
+        calls = []
+        dialog._sync_all_records = lambda show_message=True: calls.append(
+            ('sync', dialog.current_id, show_message)
+        )
+        dialog._refresh_records = lambda selected_id=None: calls.append(('refresh', selected_id))
+
+        dialog.reload_from_database()
+
+        self.assertEqual(dialog.current_data, {})
+        self.assertEqual(calls, [('sync', None, False), ('refresh', 17)])
 
 
 class SchemaDesignerOrderingTests(unittest.TestCase):
