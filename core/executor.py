@@ -142,8 +142,7 @@ class WorkflowExecutor:
         return browser_context_options(browser_visible)
 
     def _execute_workflow_on_page(self, page: Any, events: list[dict[str, Any]], variables: dict[str, str], artifact_dir: Path, root_data: dict[str, Any] | None, trace: str, start_index: int=0, log_prefix: str='', on_event_start: Callable[[dict[str, Any]], None] | None=None) -> None:
-        enabled = [event for event in events if event.get('enabled', 1)][start_index:]
-        self._execute_sequence(page, enabled, variables, artifact_dir, root_data, {}, trace, log_prefix, [], on_event_start)
+        self._execute_sequence(page, events[start_index:], variables, artifact_dir, root_data, {}, trace, log_prefix, [], on_event_start)
 
     def _execute_sequence(self, page: Any, events: list[dict[str, Any]], variables: dict[str, str], artifact_dir: Path, root_data: dict[str, Any] | None, loop_context: dict[str, Any], trace: str, log_prefix: str='', loop_progress: list[str] | None=None, on_event_start: Callable[[dict[str, Any]], None] | None=None, deadline: float | None=None) -> None:
         # loop/retry は境界イベントを検出し、内側の配列を再帰的に実行する。
@@ -155,6 +154,18 @@ class WorkflowExecutor:
             page = active_page(page)
             event = events[index]
             action = event['action']
+            if not event.get('enabled', 1):
+                # 無効な境界だけを先に除外すると、配下の有効イベントがグループ外として
+                # 実行されてしまう。開始境界が無効な場合は対応する終了境界まで一括で飛ばす。
+                if action == 'group_start':
+                    index = self._matching_group_end(events, index) + 1
+                elif action == 'loop_start':
+                    index = self._matching_loop_end(events, index) + 1
+                elif action == 'retry_start':
+                    index = self._matching_retry_end(events, index) + 1
+                else:
+                    index += 1
+                continue
             if action in {'loop_start', 'loop_end', 'retry_start', 'retry_end', 'group_start', 'group_end'} and on_event_start:
                 on_event_start(event)
             if action == 'group_start':

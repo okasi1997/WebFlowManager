@@ -92,8 +92,8 @@ _PICKER_SCRIPT = r"""
     const tag = element.tagName.toLowerCase();
     const unique = (xpath) => xpathCount(xpath) === 1 ? xpath : '';
 
-    // Prefer short, human-readable selectors. Attribute order intentionally
-    // puts application-owned identifiers before accessibility/display text.
+    // 短く読みやすい定位を優先する。属性はアプリ固有の識別子を、
+    // アクセシビリティ／表示用の文言より先に評価する。
     const id = element.getAttribute('id');
     if (id && !/\d{4,}/.test(id)) {
       const candidate = unique(`//*[@id=${xpathLiteral(id)}]`);
@@ -116,8 +116,30 @@ _PICKER_SCRIPT = r"""
       if (candidate) return candidate;
     }
 
-    // No concise selector was unique: fall back to an ID-anchored or absolute
-    // structural path so selection still succeeds on ambiguous pages.
+    // 簡潔で一意な定位がない場合は、一意に特定できる親要素を起点とする
+    // 最短パスへ切り替え、同名要素がある画面でも選択結果を保持する。
+    const anchorCandidate = (node) => {
+      const nodeTag = node.tagName.toLowerCase();
+      const nodeId = node.getAttribute('id');
+      if (nodeId && !/\d{4,}/.test(nodeId)) {
+        const candidate = unique(`//*[@id=${xpathLiteral(nodeId)}]`);
+        if (candidate) return candidate;
+      }
+      for (const attr of [
+        'data-target-selection-name', 'data-id', 'name', 'role',
+        'aria-label', 'placeholder', 'title'
+      ]) {
+        const value = node.getAttribute(attr);
+        if (!value) continue;
+        const candidate = unique(`//${nodeTag}[@${attr}=${xpathLiteral(value)}]`);
+        if (candidate) return candidate;
+      }
+      const nodeText = (node.innerText || '').trim().replace(/\s+/g, ' ');
+      if (nodeText && nodeText.length <= 120) {
+        return unique(`//${nodeTag}[normalize-space(.)=${xpathLiteral(nodeText)}]`);
+      }
+      return '';
+    };
     const segment = (node) => {
       const nodeTag = node.tagName.toLowerCase();
       if (!node.parentElement) return `${nodeTag}[1]`;
@@ -129,14 +151,22 @@ _PICKER_SCRIPT = r"""
     const parts = [];
     let current = element;
     while (current && current.nodeType === Node.ELEMENT_NODE) {
-      const currentId = current.getAttribute('id');
-      if (currentId && !/\d{4,}/.test(currentId)) {
-        const anchor = `//*[@id=${xpathLiteral(currentId)}]`;
-        if (xpathCount(anchor) === 1) {
-          return parts.length ? `${anchor}/${parts.join('/')}` : anchor;
-        }
-      }
       parts.unshift(segment(current));
+      const anchor = anchorCandidate(current);
+      if (anchor) {
+        const descendants = parts.slice(1);
+        if (!descendants.length) return anchor;
+        // 一意な親要素の範囲内で末端から最短の子孫パスを試し、一意でなければ
+        // 親要素を一段ずつ追加する。最後に完全な直接子パスを使用する。
+        for (let length = 1; length <= descendants.length; length += 1) {
+          const suffix = descendants.slice(-length).join('/');
+          const anchoredRelative = unique(`${anchor}//${suffix}`);
+          if (anchoredRelative) return anchoredRelative;
+        }
+        return `${anchor}/${descendants.join('/')}`;
+      }
+      const relative = unique(`//${parts.join('/')}`);
+      if (relative) return relative;
       current = current.parentElement;
     }
     return `/${parts.join('/')}`;

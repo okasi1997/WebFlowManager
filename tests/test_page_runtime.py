@@ -84,6 +84,40 @@ class FakeLocator:
 
 
 class PageRuntimeTests(unittest.TestCase):
+    def test_disabled_group_skips_enabled_inner_events_without_changing_them(self) -> None:
+        class Context:
+            pages = []
+
+        class Page:
+            context = Context()
+
+            def is_closed(self):
+                return False
+
+        page = Page()
+        page.context.pages = [page]
+        events = [
+            {'id': 1, 'position': 1, 'name': 'disabled group', 'action': 'group_start',
+             'enabled': 0, 'value': '', 'data_path': ''},
+            {'id': 2, 'position': 2, 'name': 'inside', 'action': 'click',
+             'enabled': 1, 'selector_type': 'css', 'selector': '#inside', 'value': ''},
+            {'id': 3, 'position': 3, 'name': 'disabled group', 'action': 'group_end',
+             'enabled': 0},
+            {'id': 4, 'position': 4, 'name': 'outside', 'action': 'click',
+             'enabled': 1, 'selector_type': 'css', 'selector': '#outside', 'value': ''},
+        ]
+        executed = []
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        executor._wait_for_salesforce_spinner_if_present = lambda *_args: None
+        executor._execute_event = lambda _page, event, *_args: executed.append(event['name'])
+
+        executor._execute_workflow_on_page(
+            page, events, {}, Path('.'), None, 'test',
+        )
+
+        self.assertEqual(executed, ['outside'])
+        self.assertEqual(events[1]['enabled'], 1)
+
     def test_picker_rejects_selector_with_offscreen_duplicate(self) -> None:
         picker = ElementPicker()
         info = {
@@ -539,6 +573,13 @@ class PageRuntimeTests(unittest.TestCase):
         self.assertIn("'data-target-selection-name', 'data-id', 'name'", script)
         self.assertIn('//${tag}[@${attr}=${xpathLiteral(value)}]', script)
         self.assertIn('//${tag}[normalize-space(.)=${xpathLiteral(exactText)}]', script)
+        self.assertIn("unique(`//${parts.join('/')}`)", script)
+        self.assertIn('const descendants = parts.slice(1)', script)
+        self.assertIn('descendants.slice(-length)', script)
+        self.assertIn('unique(`${anchor}//${suffix}`)', script)
+        self.assertIn('const anchorCandidate = (node)', script)
+        self.assertIn("'data-target-selection-name', 'data-id', 'name', 'role'", script)
+        self.assertIn('//${nodeTag}[@${attr}=${xpathLiteral(value)}]', script)
         self.assertIn('actionableSelector', script)
         self.assertIn('"待機"', script)
         self.assertIn('"選択中"', script)
