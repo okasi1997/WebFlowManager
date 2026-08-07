@@ -140,6 +140,26 @@ _PICKER_SCRIPT = r"""
       }
       return '';
     };
+    const scopedTargetCandidates = (node) => {
+      const nodeTag = node.tagName.toLowerCase();
+      const candidates = [];
+      const nodeText = (node.innerText || '').trim().replace(/\s+/g, ' ');
+      const textCandidate = nodeText && nodeText.length <= 120
+        ? `${nodeTag}[normalize-space(.)=${xpathLiteral(nodeText)}]`
+        : '';
+      // ボタンやリンクは表示文言を最優先し、入力項目などは安定属性を優先する。
+      if (textCandidate && ['button', 'a'].includes(nodeTag)) candidates.push(textCandidate);
+      for (const attr of [
+        'data-target-selection-name', 'data-id', 'name', 'role',
+        'aria-label', 'placeholder', 'title'
+      ]) {
+        const value = node.getAttribute(attr);
+        if (value) candidates.push(`${nodeTag}[@${attr}=${xpathLiteral(value)}]`);
+      }
+      if (textCandidate && !['button', 'a'].includes(nodeTag)) candidates.push(textCandidate);
+      candidates.push(nodeTag);
+      return [...new Set(candidates)];
+    };
     const segment = (node) => {
       const nodeTag = node.tagName.toLowerCase();
       if (!node.parentElement) return `${nodeTag}[1]`;
@@ -149,15 +169,29 @@ _PICKER_SCRIPT = r"""
       return `${nodeTag}[${siblings.indexOf(node) + 1}]`;
     };
     const parts = [];
+    const plainParts = [];
+    const targetCandidates = scopedTargetCandidates(element);
     let current = element;
     while (current && current.nodeType === Node.ELEMENT_NODE) {
       parts.unshift(segment(current));
+      plainParts.unshift(current.tagName.toLowerCase());
       const anchor = anchorCandidate(current);
       if (anchor) {
         const descendants = parts.slice(1);
         if (!descendants.length) return anchor;
-        // 一意な親要素の範囲内で末端から最短の子孫パスを試し、一意でなければ
-        // 親要素を一段ずつ追加する。最後に完全な直接子パスを使用する。
+        // 全体では重複する文字や属性も、一意な親要素の範囲内で再評価する。
+        for (const targetCandidate of targetCandidates) {
+          const scoped = unique(`${anchor}//${targetCandidate}`);
+          if (scoped) return scoped;
+        }
+        // 位置番号を付けない短い構造パスを先に試す。
+        const plainDescendants = plainParts.slice(1);
+        for (let length = 1; length <= plainDescendants.length; length += 1) {
+          const suffix = plainDescendants.slice(-length).join('/');
+          const anchoredPlain = unique(`${anchor}//${suffix}`);
+          if (anchoredPlain) return anchoredPlain;
+        }
+        // 最後に位置番号を含むパスを末端から一段ずつ追加する。
         for (let length = 1; length <= descendants.length; length += 1) {
           const suffix = descendants.slice(-length).join('/');
           const anchoredRelative = unique(`${anchor}//${suffix}`);
@@ -165,6 +199,8 @@ _PICKER_SCRIPT = r"""
         }
         return `${anchor}/${descendants.join('/')}`;
       }
+      const plainRelative = unique(`//${plainParts.join('/')}`);
+      if (plainRelative) return plainRelative;
       const relative = unique(`//${parts.join('/')}`);
       if (relative) return relative;
       current = current.parentElement;
