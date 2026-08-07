@@ -69,13 +69,35 @@ class ElementPicker:
                         .filter(item => item.localName === node.localName);
                     return `${node.localName}:nth-of-type(${siblings.indexOf(node) + 1})`;
                 };
+                const anchor = node => {
+                    const id = node.getAttribute('id');
+                    if (id) {
+                        const selector = `#${escape(id)}`;
+                        if (unique(selector)) return selector;
+                    }
+                    for (const name of ['data-testid', 'data-id', 'name', 'title']) {
+                        const value = node.getAttribute(name);
+                        if (!value) continue;
+                        const selector = `${node.localName}[${name}="${escape(value)}"]`;
+                        if (unique(selector)) return selector;
+                    }
+                    return '';
+                };
                 let node = element;
                 let selector = segment(node);
-                while (!unique(selector) && node.parentElement && node.parentElement !== element.ownerDocument.documentElement) {
+                let positionalSelector = unique(selector) ? selector : '';
+                while (node.parentElement && node.parentElement !== element.ownerDocument.documentElement) {
                     node = node.parentElement;
+                    const parentAnchor = anchor(node);
+                    if (parentAnchor) {
+                        const shortSelector = `${parentAnchor} ${element.localName}`;
+                        if (unique(shortSelector)) return shortSelector;
+                        return `${parentAnchor} > ${selector}`;
+                    }
                     selector = `${segment(node)} > ${selector}`;
+                    if (!positionalSelector && unique(selector)) positionalSelector = selector;
                 }
-                return selector;
+                return positionalSelector || selector;
             }""")
             selectors.append(str(selector))
             current = current.parent_frame
