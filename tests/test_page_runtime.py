@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from browser.auth_session import AuthBrowserSession
 from browser.element_picker import DebugBrowserSession
@@ -83,6 +84,47 @@ class FakeLocator:
 
 
 class PageRuntimeTests(unittest.TestCase):
+    def test_locator_lookup_retries_after_dynamic_target_replacement(self) -> None:
+        class Page:
+            def __init__(self):
+                self.context = type('Context', (), {})()
+                self.context.pages = [self]
+
+            def is_closed(self):
+                return False
+
+            def wait_for_timeout(self, _milliseconds):
+                pass
+
+        class Match:
+            def is_visible(self):
+                return True
+
+            def scroll_into_view_if_needed(self, timeout):
+                pass
+
+        class Locator:
+            def __init__(self, fails=False):
+                self.fails = fails
+                self.match = Match()
+
+            def count(self):
+                if self.fails:
+                    raise RuntimeError('Locator.count: Target page, context or browser has been closed')
+                return 1
+
+            def nth(self, _index):
+                return self.match
+
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        attempts = iter(([Locator(fails=True)], [Locator()]))
+        executor._locators = lambda *_args: next(attempts)
+
+        with patch('core.executor.is_topmost', return_value=True):
+            match = executor._unique_locator(Page(), 'css', '#target', timeout=500)
+
+        self.assertIsInstance(match, Match)
+
     def test_event_group_timeout_limits_one_attempt(self) -> None:
         class Context:
             pages = []

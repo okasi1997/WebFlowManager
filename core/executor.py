@@ -502,18 +502,49 @@ class WorkflowExecutor:
     def _locators(self, page: Any, selector_type: str, selector: str) -> list[Any]:
         return locators_in_frames(page, lambda frame: self._locator(frame, selector_type, selector))
 
+    @staticmethod
+    def _is_transient_target_error(error: Exception) -> bool:
+        """Return whether a dynamic navigation invalidated a page/frame handle."""
+        message = str(error).casefold()
+        return any(fragment in message for fragment in (
+            'target page, context or browser has been closed',
+            'frame was detached',
+            'execution context was destroyed',
+            'cannot find context with specified id',
+        ))
+
+    def _locator_matches(self, page: Any, selector_type: str, selector: str) -> list[Any]:
+        """Resolve frames and consume their locators as one atomic attempt."""
+        locators = self._locators(page, selector_type, selector)
+        return [
+            locator.nth(index)
+            for locator in locators
+            for index in range(locator.count())
+        ]
+
     def _unique_locator(self, page: Any, selector_type: str, selector: str, timeout: int=10000) -> Any:
-        page = active_page(page)
         deadline = time.monotonic() + timeout / 1000
         all_matches: list[Any] = []
         while time.monotonic() < deadline:
-            page = active_page(page)
-            locators = self._locators(page, selector_type, selector)
-            all_matches = [locator.nth(index) for locator in locators for index in range(locator.count())]
+            try:
+                page = active_page(page)
+                if page.is_closed():
+                    raise RuntimeError('Target page has been closed')
+                all_matches = self._locator_matches(page, selector_type, selector)
+            except Exception as error:
+                if not self._is_transient_target_error(error) and 'target page has been closed' not in str(error).casefold():
+                    raise
+                time.sleep(0.1)
+                continue
             if all_matches:
                 break
             page.wait_for_timeout(100)
-        visible = [item for item in all_matches if item.is_visible()]
+        try:
+            visible = [item for item in all_matches if item.is_visible()]
+        except Exception as error:
+            if self._is_transient_target_error(error):
+                return self._unique_locator(page, selector_type, selector, max(1, int((deadline - time.monotonic()) * 1000)))
+            raise
         if len(visible) == 1:
             visible[0].scroll_into_view_if_needed(timeout=max(1, timeout))
         actionable = [item for item in visible if is_topmost(item)]
@@ -597,13 +628,21 @@ class WorkflowExecutor:
         self._wait_until_hidden(page, 'css', SALESFORCE_SPINNER_SELECTOR, timeout)
 
     def _visible_locator_count(self, page: Any, selector_type: str, selector: str) -> int:
-        locators = self._locators(page, selector_type, selector)
-        return sum(
-            1
-            for locator in locators
-            for index in range(locator.count())
-            if locator.nth(index).is_visible()
-        )
+        deadline = time.monotonic() + 1.0
+        while True:
+            try:
+                page = active_page(page)
+                if page.is_closed():
+                    raise RuntimeError('Target page has been closed')
+                return sum(item.is_visible() for item in self._locator_matches(page, selector_type, selector))
+            except Exception as error:
+                transient = (
+                    self._is_transient_target_error(error)
+                    or 'target page has been closed' in str(error).casefold()
+                )
+                if not transient or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.1)
 
     def _event_locator(self, page: Any, event: dict[str, Any], selector: str, fallback_selector: str, timeout: int=10000) -> Any:
         try:
