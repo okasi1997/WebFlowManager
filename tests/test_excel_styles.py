@@ -6,10 +6,89 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from ui.structured_data import read_records_excel, write_records_excel
+from ui.structured_data import read_records_excel, remap_data_for_schema_names, schema_name_path_map, strip_data_record_whitespace, strip_schema_name_whitespace, write_records_excel
 
 
 class ExcelStyleTests(unittest.TestCase):
+    def test_schema_names_and_existing_data_keys_are_trimmed_together(self) -> None:
+        schema = {
+            'name': '\u3000Data\n', 'type': 'object',
+            'children': [{
+                'name': '\t料金 \u3000', 'type': 'object',
+                'children': [{'name': '\nオプション\r', 'type': 'text'}],
+            }],
+        }
+        cleaned = strip_schema_name_whitespace(schema)
+        migrated = remap_data_for_schema_names(
+            schema, cleaned, {'\t料金 \u3000': {'\nオプション\r': '値'}},
+        )
+
+        self.assertEqual(cleaned['name'], 'Data')
+        self.assertEqual(cleaned['children'][0]['name'], '料金')
+        self.assertEqual(cleaned['children'][0]['children'][0]['name'], 'オプション')
+        self.assertEqual(migrated, {'料金': {'オプション': '値'}})
+        self.assertEqual(schema_name_path_map(schema, cleaned), {
+            '\t料金 \u3000': '料金',
+            '\t料金 \u3000.\nオプション\r': '料金.オプション',
+        })
+
+    def test_schema_name_trim_rejects_resulting_sibling_duplicate(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object',
+            'children': [
+                {'name': '料金', 'type': 'text'},
+                {'name': '料金\u3000', 'type': 'text'},
+            ],
+        }
+        with self.assertRaises(ValueError):
+            strip_schema_name_whitespace(schema)
+
+    def test_data_json_record_strips_unicode_whitespace(self) -> None:
+        cleaned = strip_data_record_whitespace({
+            'name': '\u3000PCL_001\n',
+            'summary': '\t概要\r',
+            'execution_group': '\n 1 \u3000',
+            'enabled': True,
+            'data': {'outer': {'text': '\r\n 値 \t'}, 'items': ['\u3000A ', '\nB\r']},
+        })
+
+        self.assertEqual(cleaned['name'], 'PCL_001')
+        self.assertEqual(cleaned['summary'], '概要')
+        self.assertEqual(cleaned['execution_group'], '1')
+        self.assertEqual(cleaned['data'], {'outer': {'text': '値'}, 'items': ['A', 'B']})
+
+    def test_data_management_excel_strips_unicode_whitespace(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object',
+            'children': [{
+                'name': 'items', 'type': 'list',
+                'children': [{'name': 'value', 'type': 'text'}],
+            }],
+        }
+        records = [{
+            'name': '\u3000PCL_001\n',
+            'summary': '\t概要\r\n',
+            'enabled': True,
+            'execution_group': '\u30001\t',
+            'data': {'items': [{'value': '\n 値 \u3000'}, {'value': '\t次\r'}]},
+        }]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'trimmed.xlsx'
+            write_records_excel(path, schema, records)
+            workbook = load_workbook(path, data_only=True)
+            data_sheet = workbook.worksheets[0]
+            settings_sheet = workbook.worksheets[1]
+            self.assertEqual(data_sheet.cell(3, 1).value, 'PCL_001')
+            self.assertEqual(data_sheet.cell(3, 2).value, '値')
+            self.assertEqual(data_sheet.cell(4, 2).value, '次')
+            self.assertEqual(settings_sheet.cell(2, 2).value, '概要')
+            self.assertEqual(settings_sheet.cell(2, 4).value, '1')
+            restored = read_records_excel(path, schema)
+
+        self.assertEqual(restored[0]['name'], 'PCL_001')
+        self.assertEqual(restored[0]['summary'], '概要')
+        self.assertEqual(restored[0]['data']['items'], [{'value': '値'}, {'value': '次'}])
+
     def test_repeated_names_in_multilevel_header_round_trip(self) -> None:
         schema = {
             'name': 'Data',

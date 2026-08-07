@@ -12,6 +12,92 @@ from i18n import SUPPORTED_LANGUAGES, tr, tr_language
 from ui.ui_helpers import AutoScrollbar, scrollable_tree, toggle_tree_indicator_on_double_click
 TYPES = ('text', 'number', 'boolean', 'object', 'list')
 
+def strip_data_whitespace(value: Any) -> Any:
+    """Data 管理で扱う文字列から先頭・末尾の Unicode 空白を除去する。"""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        return {key: strip_data_whitespace(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [strip_data_whitespace(item) for item in value]
+    return value
+
+def strip_data_record_whitespace(record: dict[str, Any]) -> dict[str, Any]:
+    """Data の入出力用レコードに同じ空白除去規則を適用する。"""
+    cleaned = dict(record)
+    for field in ('name', 'summary', 'execution_group'):
+        if field in cleaned:
+            cleaned[field] = str(cleaned[field]).strip()
+    if 'data' in cleaned:
+        cleaned['data'] = strip_data_whitespace(cleaned['data'])
+    return cleaned
+
+def strip_schema_name_whitespace(schema: dict[str, Any]) -> dict[str, Any]:
+    """構造内の全フィールド名から先頭・末尾の Unicode 空白を除去する。"""
+    cleaned = copy.deepcopy(schema)
+    if not isinstance(cleaned, dict):
+        validate_schema(cleaned)
+
+    def walk(node: dict[str, Any]) -> None:
+        node['name'] = str(node.get('name', '')).strip()
+        for child in node.get('children', []):
+            if isinstance(child, dict):
+                walk(child)
+    walk(cleaned)
+    validate_schema(cleaned)
+    return cleaned
+
+def remap_data_for_schema_names(
+        old_schema: dict[str, Any], new_schema: dict[str, Any], data: Any) -> Any:
+    """空白除去で変更された構造名に合わせ、既存データのキーを移行する。"""
+    if old_schema.get('type') == 'list':
+        if not isinstance(data, list):
+            return data
+        return [remap_data_for_schema_names(
+            {'type': 'object', 'children': old_schema.get('children', [])},
+            {'type': 'object', 'children': new_schema.get('children', [])},
+            item,
+        ) for item in data]
+    if old_schema.get('type') != 'object' or not isinstance(data, dict):
+        return data
+    result = dict(data)
+    for old_child, new_child in zip(old_schema.get('children', []), new_schema.get('children', [])):
+        old_name, new_name = old_child['name'], new_child['name']
+        if old_name not in result:
+            continue
+        value = result.pop(old_name)
+        result[new_name] = remap_data_for_schema_names(old_child, new_child, value)
+    return result
+
+def schema_name_path_map(
+        old_schema: dict[str, Any], new_schema: dict[str, Any]) -> dict[str, str]:
+    """空白除去前後で変更された全構造パスの対応表を作成する。"""
+    result: dict[str, str] = {}
+
+    def walk(old_node: dict[str, Any], new_node: dict[str, Any], old_prefix: str, new_prefix: str) -> None:
+        for old_child, new_child in zip(old_node.get('children', []), new_node.get('children', [])):
+            old_path = f"{old_prefix}.{old_child['name']}" if old_prefix else old_child['name']
+            new_path = f"{new_prefix}.{new_child['name']}" if new_prefix else new_child['name']
+            if old_path != new_path:
+                result[old_path] = new_path
+            walk(old_child, new_child, old_path, new_path)
+    walk(old_schema, new_schema, '', '')
+    return result
+
+def normalize_stored_schema(db: Database, workflow_id: int=0) -> dict[str, Any]:
+    """保存済み構造名を正規化し、対応する既存データも一度だけ移行する。"""
+    original = db.get_data_schema(workflow_id)
+    cleaned = strip_schema_name_whitespace(original)
+    if cleaned == original:
+        return cleaned
+    records = db.list_data_records(workflow_id)
+    db.save_data_schema(workflow_id, cleaned)
+    for record in records:
+        migrated = remap_data_for_schema_names(original, cleaned, record['data'])
+        db.update_data_record(record['id'], str(record['name']).strip(), strip_data_whitespace(migrated))
+    db.remap_data_paths(schema_name_path_map(original, cleaned))
+    return cleaned
+
 def validate_schema(node: Any, location: str='Data') -> None:
     if not isinstance(node, dict) or not isinstance(node.get('name'), str) or (not node['name'].strip()):
         raise ValueError(f'{location}msg.0236')
@@ -90,6 +176,8 @@ def write_records_excel(path: str | Path, schema: dict[str, Any], records: list[
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
+    original_schema = schema
+    schema = strip_schema_name_whitespace(schema)
     columns = scalar_paths(schema)
     owners = scalar_list_owners(schema)
     max_depth = max((len(column.split('.')) for column in columns), default=1)
@@ -117,10 +205,12 @@ def write_records_excel(path: str | Path, schema: dict[str, Any], records: list[
             start = end
     output_row = max_depth + 1
     for record in records:
-        rows = _flatten_record_with_groups(schema, normalize_record(schema, record['data'])) or [({}, {})]
+        migrated = remap_data_for_schema_names(original_schema, schema, record['data'])
+        clean_data = strip_data_whitespace(normalize_record(schema, migrated))
+        rows = _flatten_record_with_groups(schema, clean_data) or [({}, {})]
         seen_scopes: set[tuple[Any, ...]] = set()
         for row_index, (values, groups) in enumerate(rows):
-            sheet.cell(output_row, 1, record['name'] if row_index == 0 else '')
+            sheet.cell(output_row, 1, str(record['name']).strip() if row_index == 0 else '')
             for column_index, column in enumerate(columns, 2):
                 ancestors = owners[column]
                 scope = (column, *(groups.get(path, -1) for path in ancestors))
@@ -142,7 +232,12 @@ def write_records_excel(path: str | Path, schema: dict[str, Any], records: list[
     settings_sheet = workbook.create_sheet(tr('msg.0243'))
     settings_sheet.append([tr('msg.0242'), tr('msg.0517'), tr('msg.0244'), tr('msg.0245')])
     for record in records:
-        settings_sheet.append([record['name'], str(record.get('summary', '')), bool(record.get('enabled', True)), str(record.get('execution_group', '1'))])
+        settings_sheet.append([
+            str(record['name']).strip(),
+            str(record.get('summary', '')).strip(),
+            bool(record.get('enabled', True)),
+            str(record.get('execution_group', '1')).strip(),
+        ])
     for current_sheet in workbook.worksheets:
         for row in current_sheet.iter_rows():
             for cell in row:
@@ -154,6 +249,7 @@ def write_records_excel(path: str | Path, schema: dict[str, Any], records: list[
 def read_records_excel(path: str | Path, schema: dict[str, Any]) -> list[dict[str, Any]]:
     """write_records_excel が作成した階層ブックを PCL に復元する。"""
     from openpyxl import load_workbook
+    schema = strip_schema_name_whitespace(schema)
     workbook = load_workbook(path, data_only=True)
     sheet = workbook.active
     header_depth = 1
@@ -198,7 +294,10 @@ def read_records_excel(path: str | Path, schema: dict[str, Any]) -> list[dict[st
     current_rows: list[dict[str, Any]] = []
     for row_number in range(header_depth + 1, sheet.max_row + 1):
         name_value = sheet.cell(row_number, 1).value
-        values = {path_name: sheet.cell(row_number, index + 2).value for index, path_name in enumerate(columns)}
+        values = {
+            path_name: strip_data_whitespace(sheet.cell(row_number, index + 2).value)
+            for index, path_name in enumerate(columns)
+        }
         if name_value not in (None, ''):
             if current_name:
                 grouped.append((current_name, current_rows))
@@ -218,7 +317,7 @@ def read_records_excel(path: str | Path, schema: dict[str, Any]) -> list[dict[st
         settings_sheet = workbook[settings_name]
         has_summary_column = settings_sheet.max_column >= 4
         for row in settings_sheet.iter_rows(min_row=2, values_only=True):
-            summary = str(row[1] if has_summary_column and len(row) > 1 and row[1] is not None else '')
+            summary = str(row[1] if has_summary_column and len(row) > 1 and row[1] is not None else '').strip()
             enabled_index = 2 if has_summary_column else 1
             group_index = 3 if has_summary_column else 2
             enabled_value = row[enabled_index] if len(row) > enabled_index else True
@@ -274,7 +373,7 @@ def read_records_excel(path: str | Path, schema: dict[str, Any]) -> list[dict[st
                 if value is not None:
                     assign(data, path_name, value, counters)
         setting = execution_settings[len(result)] if len(result) < len(execution_settings) else ('', True, '1')
-        result.append({'name': name, 'summary': setting[0], 'enabled': setting[1], 'execution_group': setting[2], 'data': normalize_record(schema, data)})
+        result.append({'name': name, 'summary': setting[0], 'enabled': setting[1], 'execution_group': setting[2], 'data': strip_data_whitespace(normalize_record(schema, data))})
     return result
 
 def default_value(node: dict[str, Any]) -> Any:
@@ -379,7 +478,7 @@ class SchemaDesignerDialog(tk.Toplevel):
         else:
             super().__init__(parent)
         self.db, self.workflow_id = (db, workflow_id)
-        self.schema = copy.deepcopy(db.get_data_schema(workflow_id))
+        self.schema = copy.deepcopy(normalize_stored_schema(db, workflow_id))
         self.node_by_item: dict[str, tuple[dict[str, Any], dict[str, Any] | None]] = {}
         if not embedded:
             self.title(f'msg.0255{workflow_name}')
@@ -791,6 +890,7 @@ class SchemaDesignerDialog(tk.Toplevel):
         try:
             payload = json.loads(Path(path).read_text(encoding='utf-8-sig'))
             imported = payload.get('schema') if isinstance(payload, dict) and 'schema' in payload else payload
+            imported = strip_schema_name_whitespace(imported)
             validate_schema(imported)
             if imported['type'] not in ('object', 'list'):
                 raise ValueError('msg.0271')
@@ -858,7 +958,7 @@ class HierarchicalDataDialog(tk.Toplevel):
         else:
             super().__init__(parent)
         self.db, self.workflow_id = (db, workflow_id)
-        self.schema = db.get_data_schema(workflow_id)
+        self.schema = normalize_stored_schema(db, workflow_id)
         self.current_id: int | None = None
         self.current_name = ''
         self.current_summary = ''
@@ -1107,7 +1207,7 @@ class HierarchicalDataDialog(tk.Toplevel):
     def reload_from_database(self) -> None:
         """画面離脱時の確認完了後に、構造とレコードをデータベースから再読込する。"""
         selected_id = self.current_id
-        self.schema = self.db.get_data_schema(self.workflow_id)
+        self.schema = normalize_stored_schema(self.db, self.workflow_id)
         # 構造保存時にデータベース側のレコードは正規化される。編集画面に残る旧構造の
         # コピーを、この画面へ戻る際の新しい未保存変更として扱わないようにする。
         self.current_id = None
@@ -1195,8 +1295,8 @@ class HierarchicalDataDialog(tk.Toplevel):
         if self.current_id is None:
             return
         name = simpledialog.askstring('msg.0044', 'msg.0319', initialvalue=self.current_name, parent=self)
-        if name:
-            self.current_name = name
+        if name and name.strip():
+            self.current_name = name.strip()
             self._save_record()
             self._refresh_records(self.current_id)
 
@@ -1244,6 +1344,7 @@ class HierarchicalDataDialog(tk.Toplevel):
         value = simpledialog.askstring('msg.0324', meta['node']['name'], initialvalue=old, parent=self)
         if value is None:
             return
+        value = value.strip()
         kind = meta['node']['type']
         try:
             yes_words = {tr_language('msg.0037', language).lower() for language in SUPPORTED_LANGUAGES}
@@ -1291,6 +1392,9 @@ class HierarchicalDataDialog(tk.Toplevel):
                 messagebox.showinfo('msg.0048', 'msg.0443', parent=self)
             return False
         try:
+            self.current_name = self.current_name.strip()
+            self.current_summary = self.current_summary.strip()
+            self.current_data = strip_data_whitespace(self.current_data)
             self.db.update_data_record(self.current_id, self.current_name, self.current_data)
         except Exception as error:
             messagebox.showerror('msg.0159', f'msg.0442{error}', parent=self)
@@ -1322,7 +1426,17 @@ class HierarchicalDataDialog(tk.Toplevel):
         path = filedialog.asksaveasfilename(parent=self, defaultextension='.json', filetypes=(('Json', '*.json'),))
         if not path:
             return
-        payload = {'version': 1, 'type': 'web-flow-data', 'records': [{'name': row['name'], 'summary': row['summary'], 'enabled': row['enabled'], 'execution_group': row['execution_group'], 'data': row['data']} for row in records]}
+        payload = {
+            'version': 1,
+            'type': 'web-flow-data',
+            'records': [strip_data_record_whitespace({
+                'name': row['name'],
+                'summary': row['summary'],
+                'enabled': row['enabled'],
+                'execution_group': row['execution_group'],
+                'data': row['data'],
+            }) for row in records],
+        }
         Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
         messagebox.showinfo('msg.0269', f'msg.0334{len(records)}msg.0335{path}', parent=self)
 
@@ -1346,7 +1460,8 @@ class HierarchicalDataDialog(tk.Toplevel):
                 if not group:
                     raise ValueError(f'msg.0103{index}msg.0339')
                 summary = str(record.get('summary', '')).strip()
-                checked.append((record['name'].strip() or f'Data {index}', summary, enabled, group, normalize_record(self.schema, record['data'])))
+                data = strip_data_whitespace(normalize_record(self.schema, record['data']))
+                checked.append((record['name'].strip() or f'Data {index}', summary, enabled, group, data))
         except (OSError, json.JSONDecodeError, ValueError) as error:
             messagebox.showerror('msg.0057', str(error), parent=self)
             return

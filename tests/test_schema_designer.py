@@ -10,10 +10,18 @@ from ui.structured_data import HierarchicalDataDialog, SchemaDesignerDialog
 
 
 class DataEditorReloadTests(unittest.TestCase):
+    def test_data_reference_tokens_are_remapped_exactly(self) -> None:
+        mapping = {'料金\u3000': '料金', '料金\u3000.項目 ': '料金.項目'}
+        text = 'A=${data:料金\u3000.項目 } B=${data:料金\u3000} C=${other}'
+
+        actual = Database._remap_text_data_references(text, mapping)
+
+        self.assertEqual(actual, 'A=${data:料金.項目} B=${data:料金} C=${other}')
+
     def test_reload_discards_stale_editor_copy_before_syncing(self) -> None:
         dialog = object.__new__(HierarchicalDataDialog)
         dialog.workflow_id = 0
-        dialog.db = SimpleNamespace(get_data_schema=lambda _workflow_id: {'type': 'object', 'children': []})
+        dialog.db = SimpleNamespace(get_data_schema=lambda _workflow_id: {'name': 'Data', 'type': 'object', 'children': []})
         dialog.current_id = 17
         dialog.current_name = 'old'
         dialog.current_summary = 'old summary'

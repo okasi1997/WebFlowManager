@@ -1,6 +1,7 @@
 """SQLite のスキーマ、移行処理、および永続化 API を提供する。"""
 from __future__ import annotations
 import json
+import re
 import sqlite3
 import threading
 from pathlib import Path
@@ -426,6 +427,50 @@ class Database:
                     self.connection.execute('UPDATE events SET failure_action=?, failure_target=?, retry_count=?, retry_interval_ms=? WHERE id=?', (event['failure_action'], event['failure_target'], event['retry_count'], event['retry_interval_ms'], event_cursor.lastrowid))
         self._migrate_combined_event_groups()
         self.connection.commit()
+
+    @staticmethod
+    def _remap_text_data_references(text: str, path_map: dict[str, str]) -> str:
+        """文字列内の ${data:...} を正規化後の構造パスへ置換する。"""
+        def replace(match: re.Match[str]) -> str:
+            raw_path = match.group(1)
+            path = path_map.get(raw_path, path_map.get(raw_path.strip(), raw_path.strip()))
+            return '${data:' + path + '}'
+        return re.sub(
+            r'\$\{data:([^{}]+)\}',
+            replace,
+            text,
+        )
+
+    def remap_data_paths(self, path_map: dict[str, str]) -> None:
+        """イベントとガードに保存された Data パスを一括で移行する。"""
+        if not path_map:
+            return
+
+        def remap_guard(raw: Any) -> str:
+            guard = decode_guard(raw)
+            for rule in guard['rules']:
+                rule['path'] = path_map.get(rule['path'], rule['path'])
+            return json.dumps(guard, ensure_ascii=False)
+
+        with self.connection:
+            workflows = self.connection.execute('SELECT id, guard_json FROM workflows').fetchall()
+            for workflow in workflows:
+                self.connection.execute(
+                    'UPDATE workflows SET guard_json=? WHERE id=?',
+                    (remap_guard(workflow['guard_json']), workflow['id']),
+                )
+            events = self.connection.execute(
+                'SELECT id, selector, fallback_selector, value, failure_target, data_path, guard_json FROM events'
+            ).fetchall()
+            for event in events:
+                fields = [
+                    self._remap_text_data_references(str(event[field]), path_map)
+                    for field in ('selector', 'fallback_selector', 'value', 'failure_target')
+                ]
+                self.connection.execute(
+                    'UPDATE events SET selector=?, fallback_selector=?, value=?, failure_target=?, data_path=?, guard_json=? WHERE id=?',
+                    (*fields, path_map.get(event['data_path'], event['data_path']), remap_guard(event['guard_json']), event['id']),
+                )
         return len(normalized)
 
     def get_browser_visible(self) -> bool:
