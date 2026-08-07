@@ -86,6 +86,12 @@ _PICKER_SCRIPT = r"""
   const xpathCount = (xpath) => document.evaluate(
     xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
   ).snapshotLength;
+  const elementTextCandidates = (element) => [...new Set([
+    element.innerText || '',
+    element.textContent || '',
+    element.value || ''
+  ].map(value => String(value).trim().replace(/\s+/g, ' '))
+    .filter(value => value && value.length <= 120))];
   const xpathCandidate = (element) => {
     const root = element.getRootNode();
     if (root instanceof ShadowRoot) return '';
@@ -108,8 +114,7 @@ _PICKER_SCRIPT = r"""
       const candidate = unique(`//${tag}[@${attr}=${xpathLiteral(value)}]`);
       if (candidate) return candidate;
     }
-    const exactText = (element.innerText || '').trim().replace(/\s+/g, ' ');
-    if (exactText && exactText.length <= 120) {
+    for (const exactText of elementTextCandidates(element)) {
       const candidate = unique(
         `//${tag}[normalize-space(.)=${xpathLiteral(exactText)}]`
       );
@@ -134,21 +139,20 @@ _PICKER_SCRIPT = r"""
         const candidate = unique(`//${nodeTag}[@${attr}=${xpathLiteral(value)}]`);
         if (candidate) return candidate;
       }
-      const nodeText = (node.innerText || '').trim().replace(/\s+/g, ' ');
-      if (nodeText && nodeText.length <= 120) {
-        return unique(`//${nodeTag}[normalize-space(.)=${xpathLiteral(nodeText)}]`);
+      for (const nodeText of elementTextCandidates(node)) {
+        const candidate = unique(`//${nodeTag}[normalize-space(.)=${xpathLiteral(nodeText)}]`);
+        if (candidate) return candidate;
       }
       return '';
     };
     const scopedTargetCandidates = (node) => {
       const nodeTag = node.tagName.toLowerCase();
       const candidates = [];
-      const nodeText = (node.innerText || '').trim().replace(/\s+/g, ' ');
-      const textCandidate = nodeText && nodeText.length <= 120
-        ? `${nodeTag}[normalize-space(.)=${xpathLiteral(nodeText)}]`
-        : '';
       // ボタンやリンクは表示文言を最優先し、入力項目などは安定属性を優先する。
-      if (textCandidate && ['button', 'a'].includes(nodeTag)) candidates.push(textCandidate);
+      const textCandidates = elementTextCandidates(node).map(
+        text => `${nodeTag}[normalize-space(.)=${xpathLiteral(text)}]`
+      );
+      if (['button', 'a'].includes(nodeTag)) candidates.push(...textCandidates);
       for (const attr of [
         'data-target-selection-name', 'data-id', 'name', 'role',
         'aria-label', 'placeholder', 'title'
@@ -156,7 +160,7 @@ _PICKER_SCRIPT = r"""
         const value = node.getAttribute(attr);
         if (value) candidates.push(`${nodeTag}[@${attr}=${xpathLiteral(value)}]`);
       }
-      if (textCandidate && !['button', 'a'].includes(nodeTag)) candidates.push(textCandidate);
+      if (!['button', 'a'].includes(nodeTag)) candidates.push(...textCandidates);
       candidates.push(nodeTag);
       return [...new Set(candidates)];
     };
