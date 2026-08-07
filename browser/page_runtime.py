@@ -18,7 +18,7 @@ HEADLESS_HEIGHT = 1080
 
 
 def close_browser_context(context: Any) -> None:
-    """Close a context while treating an already-closed browser as success."""
+    """ブラウザーがすでに閉じている場合も正常終了として Context を閉じる。"""
     if context is None:
         return
     try:

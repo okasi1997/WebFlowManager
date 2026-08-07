@@ -75,8 +75,8 @@ class RoundedCard(tk.Canvas):
         self.tag_raise(self.bottom_border)
         self.itemconfigure(self.content_window, width=max(1, width - self.card_padding[0] * 2))
         if self.stretch_height:
-            # Keep expanding content inside the card's reserved padding.  Without
-            # an explicit height, a growing child can cover the lower border.
+            # カードの余白内で内容を拡張する。高さを明示しない場合、
+            # 拡張した子要素が下側の枠線を覆うことがある。
             self.itemconfigure(
                 self.content_window,
                 height=max(1, height - self.card_padding[1] * 2),
@@ -476,9 +476,9 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         content = ttk.Frame(canvas, padding=(14, 10))
         content_window = canvas.create_window((0, 0), window=content, anchor='nw')
         content.bind('<Configure>', lambda _event: canvas.configure(scrollregion=canvas.bbox('all')))
-        # Keep the content as tall as its widgets require.  Forcing the canvas
-        # window height to the viewport clipped the lower execution controls
-        # instead of making them reachable through the vertical scrollbar.
+        # 内容の高さを各ウィジェットの要求値に合わせる。Canvas 内ウィンドウを
+        # 表示領域の高さへ固定すると、縦スクロールで到達可能にならず、
+        # 下側の実行設定が切れてしまう。
         canvas.bind('<Configure>', lambda event: canvas.itemconfigure(content_window, width=event.width))
 
         def scroll_content(event: tk.Event) -> str:
@@ -612,9 +612,9 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         self.failure_target_entry = ttk.Entry(execution, textvariable=self.values['failure_target'], style='Dialog.TEntry')
         self.failure_target_entry.grid(row=5, column=1, columnspan=2, padx=(0, 10), pady=5, sticky='ew')
         self.failure_action_box.bind('<<ComboboxSelected>>', self._update_failure_fields)
-        # Let this card request the height required by all execution fields.
-        # Stretching it to the remaining column height clips lower rows when
-        # the dialog is shorter than the complete form.
+        # 全実行項目に必要な高さを、このカード自身が要求できるようにする。
+        # 残りの列高さへ引き伸ばすと、ダイアログがフォーム全体より短い場合に
+        # 下側の行が切れてしまう。
         execution.rounded_card.pack_configure(fill='x', expand=False)
         execution.pack_configure(fill='x', expand=False)
 

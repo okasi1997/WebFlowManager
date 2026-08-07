@@ -60,9 +60,9 @@ class WorkflowExecutor:
         # 各並列組は同じログイン状態を読み込むが、終了時の書き込み先は分離する。
         # 複数スレッドによる browser_state.json の同時上書きを避けるためである。
         with sync_playwright() as playwright:
-            # Chrome locks a persistent user-data directory to one process.
-            # Parallel groups therefore need independent profile directories;
-            # they still restore the same selected login storage state below.
+            # Chrome の永続ユーザーデータディレクトリは一つのプロセスが占有する。
+            # 並列グループには個別のプロファイルを割り当てるが、選択中のログイン状態は
+            # いずれのプロファイルにも同じ内容を復元する。
             profile_dir = persistent_profile_dir(
                 self.project_dir,
                 state_path if shared_session else output_state_path,
@@ -296,9 +296,8 @@ class WorkflowExecutor:
                     try:
                         self._wait_for_salesforce_spinner_if_present(page, int(effective.get('timeout_ms', 10000)), prefix)
                         captured = self._execute_event(page, effective, variables, artifact_dir)
-                        # Text entry normally does not navigate or start a page
-                        # load. Avoid a second full page/iframe scan for those
-                        # high-frequency form operations.
+                        # 文字入力は通常、画面遷移や読込を開始しないため、頻繁に行われる
+                        # フォーム入力では操作後の画面・iframe 全体の再走査を省略する。
                         if action in POST_ACTION_SPINNER_CHECKS:
                             self._wait_for_salesforce_spinner_if_present(page, int(effective.get('timeout_ms', 10000)), prefix)
                         if deadline is not None and time.monotonic() >= deadline:
@@ -354,7 +353,7 @@ class WorkflowExecutor:
 
     @staticmethod
     def _event_log_detail(event: dict[str, Any], variables: dict[str, str]) -> str:
-        """Return effective operation parameters as one compact log fragment."""
+        """実際に使用する操作パラメーターを簡潔なログ文字列として返す。"""
         action = str(event.get('action', ''))
         selector_type = str(event.get('selector_type', 'none'))
         selector = substitute(str(event.get('selector', '')), variables)
@@ -452,7 +451,7 @@ class WorkflowExecutor:
         root_data: dict[str, Any] | None,
         loop_context: dict[str, Any],
     ) -> str:
-        """Replace ${data:path} tokens with scalar values from the current record."""
+        """${data:path} を現在のレコードにある単一値で置換する。"""
         def replace(match: re.Match[str]) -> str:
             path = match.group(1).strip()
             if not path:
@@ -509,7 +508,7 @@ class WorkflowExecutor:
 
     @staticmethod
     def _is_transient_target_error(error: Exception) -> bool:
-        """Return whether a dynamic navigation invalidated a page/frame handle."""
+        """動的な画面遷移で page／frame の参照が無効になったかを判定する。"""
         message = str(error).casefold()
         return any(fragment in message for fragment in (
             'target page, context or browser has been closed',
@@ -519,7 +518,7 @@ class WorkflowExecutor:
         ))
 
     def _locator_matches(self, page: Any, selector_type: str, selector: str) -> list[Any]:
-        """Resolve frames and consume their locators as one atomic attempt."""
+        """一回の試行内で frame を取得し、その Locator をすべて評価する。"""
         locators = self._locators(page, selector_type, selector)
         return [
             locator.nth(index)
@@ -550,9 +549,8 @@ class WorkflowExecutor:
             if self._is_transient_target_error(error):
                 return self._unique_locator(page, selector_type, selector, max(1, int((deadline - time.monotonic()) * 1000)))
             raise
-        # Do not let the viewport turn an ambiguous selector into an apparently
-        # unique one. If off-screen duplicates exist, fail the primary lookup
-        # so _event_locator can use the exact saved fallback XPath.
+        # 画面内に一件だけ見える場合でも、画面外に同じ要素があれば一意とは扱わない。
+        # 主定位を失敗させ、保存済みの正確な予備 XPath を使用できるようにする。
         if len(all_matches) == 1 and len(visible) == 1:
             visible[0].scroll_into_view_if_needed(timeout=max(1, timeout))
         actionable = [item for item in visible if is_topmost(item)] if len(all_matches) == 1 else []
@@ -615,7 +613,7 @@ class WorkflowExecutor:
             raise ValueError(f'Unsupported action: {action}')
 
     def _wait_until_hidden(self, page: Any, selector_type: str, selector: str, timeout: int=10000) -> None:
-        """Wait until every matching element in the page and its frames is hidden or detached."""
+        """画面と配下 frame にある一致要素がすべて非表示または切断されるまで待機する。"""
         deadline = time.monotonic() + timeout / 1000
         while True:
             page = active_page(page)
@@ -627,7 +625,7 @@ class WorkflowExecutor:
             page.wait_for_timeout(100)
 
     def _wait_for_salesforce_spinner_if_present(self, page: Any, timeout: int, prefix: str='') -> None:
-        """Apply the common Salesforce loading guard without delaying pages that have no spinner."""
+        """Spinner がない画面を遅延させず、Salesforce 共通の読込完了待ちを行う。"""
         page = active_page(page)
         visible_count = self._visible_locator_count(page, 'css', SALESFORCE_SPINNER_SELECTOR)
         if visible_count == 0:

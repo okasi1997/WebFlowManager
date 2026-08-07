@@ -34,11 +34,9 @@ class ElementPicker:
         if info.get('xpath'):
             candidates.append(('xpath', info['xpath']))
         for selector_type, selector in candidates:
-            # Visibility depends on the current scroll position.  A readable
-            # label/text selector that only has one *currently actionable*
-            # match may still refer to several off-screen elements.  Require
-            # DOM-wide uniqueness so execution cannot select a different item
-            # after the viewport changes.
+            # 可視性は現在のスクロール位置に左右される。現在操作可能な一致が一件でも、
+            # label／text が画面外の複数要素を指す場合があるため、DOM 全体で一意な
+            # 定位だけを採用し、実行時の表示位置による対象の入れ替わりを防ぐ。
             matches = self._matches_in_page(page, selector_type, selector)
             if len(matches) != 1:
                 continue
@@ -142,8 +140,8 @@ class DebugBrowserSession:
                     if not page.is_closed():
                         return context, page
                 except Exception:
-                    # Chrome may have been closed outside the application.
-                    # Clear the stale Playwright handles before relaunching.
+                    # アプリ外で Chrome が閉じられた可能性があるため、
+                    # 再起動前に無効な Playwright の参照を破棄する。
                     dispose()
             state_path = self.storage_state_getter()
             last_error: Exception | None = None

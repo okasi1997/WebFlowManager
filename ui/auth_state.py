@@ -65,9 +65,9 @@ class AuthStateDialog(tk.Toplevel):
             uniform='auth_panel' if embedded else None,
         )
         if embedded:
-            # Keep the 2:3 split independent of each panel's requested width.
-            # In particular, the longer "no profile" hint must not resize the
-            # left profile list when switching between default and none.
+            # 各パネルの要求幅に左右されず、左右の比率を 2:3 に保つ。
+            # 特に長い「プロファイルなし」の説明へ切り替えた際も、
+            # 左側のプロファイル一覧幅を変化させない。
             body.columnconfigure(1, weight=3, uniform='auth_panel')
             body.rowconfigure(0, weight=1)
 

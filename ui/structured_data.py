@@ -168,9 +168,8 @@ def read_records_excel(path: str | Path, schema: dict[str, Any]) -> list[dict[st
             return value
         for merged in sheet.merged_cells.ranges:
             if merged.min_row <= row <= merged.max_row and merged.min_col <= column <= merged.max_col:
-                # A vertically merged leaf occupies several header rows but is
-                # only one path segment.  Horizontal merges, on the other hand,
-                # repeat a parent segment across their child columns.
+                # 縦結合された末端項目は複数のヘッダー行を占めるが、パス要素は一つだけである。
+                # 一方、横結合では親項目を配下の各列へ引き継ぐ。
                 if merged.min_row < row and merged.max_row > merged.min_row:
                     return None
                 return sheet.cell(merged.min_row, merged.min_col).value
@@ -178,9 +177,8 @@ def read_records_excel(path: str | Path, schema: dict[str, Any]) -> list[dict[st
     columns: list[str] = []
     for column in range(2, sheet.max_column + 1):
         parts = [str(header_value(row, column)).strip() for row in range(1, header_depth + 1) if header_value(row, column) not in (None, '')]
-        # Preserve repeated names at different levels (for example
-        # 料金.オプション.オプション).  Vertical merge continuations have
-        # already been removed by header_value().
+        # 料金.オプション.オプション のような階層間の同名項目を保持する。
+        # 縦結合による重複部分は header_value() ですでに除外している。
         path_name = '.'.join(parts)
         columns.append(path_name)
     expected = set(scalar_paths(schema))
@@ -608,7 +606,7 @@ class SchemaDesignerDialog(tk.Toplevel):
     @classmethod
     def _move_node(cls, schema: dict[str, Any], node: dict[str, Any],
                    parent: dict[str, Any], direction: int) -> str:
-        """Move like flow events: swap siblings, then leave the parent at an edge."""
+        """フローイベントと同様に、兄弟間を移動し、端では親階層の外へ移動する。"""
         children = parent.get('children', [])
         if node not in children or direction not in (-1, 1):
             return 'blocked'
@@ -1107,12 +1105,11 @@ class HierarchicalDataDialog(tk.Toplevel):
         return True
 
     def reload_from_database(self) -> None:
-        """Reload schema and records after the page-level leave check completed."""
+        """画面離脱時の確認完了後に、構造とレコードをデータベースから再読込する。"""
         selected_id = self.current_id
         self.schema = self.db.get_data_schema(self.workflow_id)
-        # A schema save normalizes records in the database.  The editor copy is
-        # still based on the previous schema and must not be treated as a new,
-        # unsaved user edit while this page is being entered.
+        # 構造保存時にデータベース側のレコードは正規化される。編集画面に残る旧構造の
+        # コピーを、この画面へ戻る際の新しい未保存変更として扱わないようにする。
         self.current_id = None
         self.current_name = ''
         self.current_summary = ''

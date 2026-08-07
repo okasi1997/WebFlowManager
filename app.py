@@ -1467,7 +1467,7 @@ class FlowManagerApp:
         return 'break'
 
     def _execution_record_motion(self, event: tk.Event) -> None:
-        """Show that preview group/run cells can be edited by double-clicking."""
+        """プレビューのグループ／実行列をダブルクリックで編集できることを示す。"""
         editable = (
             not self.running
             and self.parallel_tree.identify_region(event.x, event.y) == 'cell'
@@ -2097,8 +2097,8 @@ class FlowManagerApp:
         for workflow in enabled_workflows:
             events = [dict(row) for row in self.db.list_events(workflow['id'])]
             if events:
-                # The former "data start" boundary is no longer part of the UI.
-                # Every enabled workflow now runs once for each enabled data row.
+                # 旧仕様の「データ開始」境界は現在の画面には存在しない。
+                # 有効な各業務フローを、有効なデータ行ごとに一回実行する。
                 jobs.append({'id': workflow['id'], 'name': workflow['name'], 'position': workflow['position'], 'events': events, 'guard': decode_guard(workflow['guard_json']), 'per_pcl': True})
             else:
                 self._log(f"msg.0061{workflow['name']}")
@@ -2115,8 +2115,8 @@ class FlowManagerApp:
             if dialog.result is None:
                 return
             variables = dialog.result
-        # Worker/UI state uses plain dictionaries so record IDs can be mapped
-        # back to the persistent preview rows while execution is running.
+        # 実行中もレコード ID と固定プレビュー行を対応付けられるように、
+        # ワーカー／画面間の状態には通常の辞書を使用する。
         all_structured_records = [dict(row) for row in self.db.list_data_records()]
         structured_records = [row for row in all_structured_records if row['enabled']]
         skipped_record_count = len(all_structured_records) - len(structured_records)
@@ -2211,9 +2211,8 @@ class FlowManagerApp:
                 if preamble_steps:
                     executor.run_batch(preamble_steps, variables, step_start, step_success, step_failure, event_start, self.browser_visible.get(), 'preamble', execution_state_path)
                 if groups and pcl_jobs:
-                    # Different execution groups may run concurrently up to the
-                    # configured Session limit. Records inside one group remain
-                    # sequential because each group uses a single run_batch.
+                    # 異なる実行グループは設定済みのセッション上限まで並列実行できる。
+                    # 同一グループ内のレコードは一つの run_batch を使うため直列実行する。
                     worker_count = max(1, min(session_limit, len(groups)))
                     self._log(f'msg.0078{len(groups)}msg.0079{worker_count}msg.0080')
                     failures: list[str] = []
@@ -2399,17 +2398,17 @@ class FlowManagerApp:
 
     @staticmethod
     def _compact_display_log(raw_message: str, translated: str) -> str | None:
-        """Keep the on-screen log concise while the file log remains complete."""
-        # These are intermediate or duplicate details. They remain in the daily
-        # log file but add little value beside the execution-status table.
+        """ファイルログの完全性を保ちながら、画面ログを簡潔に表示する。"""
+        # 中間経過または重複情報は日次ログファイルに残すが、
+        # 実行状態表と並べて画面表示する必要はない。
         if any(token in raw_message for token in ('msg.0076', 'msg.0078', 'msg.0212')):
             return None
-        # The outer batch error repeats failures already reported per group.
+        # バッチ全体のエラーは、グループごとに報告済みの失敗と重複する。
         if 'msg.0086' in raw_message and 'msg.0083' in raw_message:
             return None
         text = ' '.join(translated.splitlines()).strip()
         if 'msg.0193' in raw_message:
-            # Show the artifact name in the UI; the full path is retained on disk.
+            # 画面には成果物名だけを表示し、完全なパスはファイルログに残す。
             prefix, separator, path = text.partition(':')
             if separator and path.strip():
                 text = f'{prefix}: {ntpath.basename(path.strip())}'
@@ -2427,9 +2426,9 @@ class FlowManagerApp:
     def _refresh_execution_indicators(self) -> None:
         status_labels = {'waiting': tr('msg.0304'), 'running': tr('msg.0305'), 'success': tr('msg.0306'), 'failed': tr('msg.0307')}
         status_counts = {'waiting': 0, 'running': 0, 'success': 0, 'failed': 0}
-        # Keep the execution-plan preview rows and their first four columns intact.
-        # Rebuilding the Treeview here used to remove skipped records and made the
-        # table appear to change shape when execution started.
+        # 実行計画のプレビュー行と先頭四列をそのまま維持する。
+        # ここで Treeview を再構築するとスキップ対象が消え、実行開始時に
+        # 表の構成が変わったように見えていた。
         records_by_id = {int(row['id']): row for row in self.db.list_data_records()}
         for item in self.parallel_tree.get_children():
             if not item.startswith('preview:'):
@@ -2472,10 +2471,9 @@ class FlowManagerApp:
             values[5] = event_text
             values[6] = status_labels.get(status, status)
             self.parallel_tree.item(item, values=values)
-        # A preamble workflow runs once before per-data workflows and therefore
-        # has no record ID. Surface its live workflow/event on every enabled
-        # preview row; otherwise the log advances while the status table appears
-        # frozen. Once per-data work starts, record-specific states take over.
+        # 前処理フローはデータ別フローより先に一回だけ実行され、レコード ID を持たない。
+        # 状態表が停止して見えないよう、有効な全プレビュー行へ実行中のフロー／イベントを
+        # 表示する。データ別処理の開始後は、レコード固有の状態表示へ切り替える。
         record_tasks_exist = any(
             isinstance(step.get('record'), dict)
             for step, _event, _status in self.execution_task_states.values()
