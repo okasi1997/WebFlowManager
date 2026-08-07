@@ -5,20 +5,45 @@ cd /d "%~dp0"
 set "APP_NAME=WebFlowManager"
 set "PYTHON=python"
 set "INCLUDE_LOCAL_DATA=0"
+set "INSTALL_DEPENDENCIES=0"
+set "CHECK_ONLY=0"
 
 if exist "env\Scripts\python.exe" set "PYTHON=env\Scripts\python.exe"
-if /I "%~1"=="--with-data" set "INCLUDE_LOCAL_DATA=1"
-if /I "%~1"=="--check" goto :check
+
+:parse_args
+if "%~1"=="" goto :args_done
+if /I "%~1"=="--with-data" (
+  set "INCLUDE_LOCAL_DATA=1"
+) else if /I "%~1"=="--setup" (
+  set "INSTALL_DEPENDENCIES=1"
+) else if /I "%~1"=="--check" (
+  set "CHECK_ONLY=1"
+) else (
+  echo Unknown option: %~1
+  echo Usage: build_exe.bat [--setup] [--with-data] [--check]
+  exit /b 1
+)
+shift
+goto :parse_args
+
+:args_done
+if "%CHECK_ONLY%"=="1" goto :check
 
 echo [1/6] Checking Python...
 "%PYTHON%" --version
 if errorlevel 1 goto :error
 
-echo [2/6] Installing build dependencies...
-"%PYTHON%" -m pip install --upgrade pyinstaller
-if errorlevel 1 goto :error
-"%PYTHON%" -m pip install -r requirements.txt
-if errorlevel 1 goto :error
+if "%INSTALL_DEPENDENCIES%"=="1" (
+  echo [2/6] Installing build dependencies...
+  "%PYTHON%" -m pip install --upgrade pyinstaller
+  if errorlevel 1 goto :error
+  "%PYTHON%" -m pip install -r requirements.txt
+  if errorlevel 1 goto :error
+) else (
+  echo [2/6] Checking installed build dependencies...
+  "%PYTHON%" -c "import PyInstaller, playwright, openpyxl"
+  if errorlevel 1 goto :missing_dependencies
+)
 
 echo [3/6] Cleaning old build output...
 if exist "build" rmdir /s /q "build"
@@ -70,6 +95,7 @@ if "%INCLUDE_LOCAL_DATA%"=="0" (
   echo WARNING: This build contains local data and login states.
   echo Do not distribute it to untrusted people.
 )
+if "%INSTALL_DEPENDENCIES%"=="0" echo To install or update dependencies, run: build_exe.bat --setup
 exit /b 0
 
 :check
@@ -88,6 +114,14 @@ exit /b 0
 
 :missing_input
 echo Required build input is missing.
+exit /b 1
+
+:missing_dependencies
+echo.
+echo Required build dependencies are not installed in:
+echo   %PYTHON%
+echo Run the following command once, then build again:
+echo   build_exe.bat --setup
 exit /b 1
 
 :error
