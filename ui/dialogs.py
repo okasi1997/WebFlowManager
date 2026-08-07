@@ -292,7 +292,6 @@ class EventGroupDialog(_GuardEditorMixin, tk.Toplevel):
         self.result: dict[str, Any] | None = None
         self.choose_data_path = choose_data_path
         event = event or {}
-        self.iframe_path = str(event.get('iframe_path', ''))
         self.guard = decode_guard(event.get('guard', event.get('guard_json', '')))
         action = str(event.get('action', 'group_start'))
         self.loop_enabled = tk.BooleanVar(value=bool(event.get('loop_enabled', action == 'loop_start' or bool(event.get('data_path')))))
@@ -449,6 +448,7 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         self.field_widgets: dict[str, tk.Widget] = {}
         self.field_labels: dict[str, ttk.Label] = {}
         event = event or {}
+        self.iframe_path = str(event.get('iframe_path', ''))
         self.guard = decode_guard(event.get('guard', event.get('guard_json', '')))
         self.select_first = tk.BooleanVar(
             value=str(event.get('value', '')) == SELECT_FIRST_VALUE,
@@ -931,7 +931,7 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
             'selector': self.values['selector'].get().strip(),
             'fallback_selector_type': self.values['fallback_selector_type'].get(),
             'fallback_selector': self.values['fallback_selector'].get().strip(),
-            'iframe_path': self.iframe_path,
+            'iframe_path': getattr(self, 'iframe_path', ''),
             'value': (
                 SELECT_FIRST_VALUE
                 if self.values['action'].get() == 'select' and self.select_first.get()
@@ -988,7 +988,7 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         if failure_action == 'goto' and not failure_target.startswith(('http://', 'https://')):
             messagebox.showerror('msg.0159', 'msg.0429', parent=self)
             return
-        self.result = {'name': name, 'action': self.values['action'].get(), 'selector_type': self.values['selector_type'].get(), 'selector': self.values['selector'].get().strip(), 'fallback_selector_type': self.values['fallback_selector_type'].get(), 'fallback_selector': self.values['fallback_selector'].get().strip(), 'iframe_path': self.iframe_path, 'value': self.values['value'].get(), 'timeout_ms': timeout, 'retry_count': event_retry_count, 'retry_interval_ms': event_retry_interval_ms, 'enabled': int(self.values['enabled'].get()), 'continue_on_error': continue_on_error, 'failure_action': failure_action, 'failure_target': failure_target if failure_action == 'goto' else '', 'data_path': self.values['data_path'].get(), 'guard': self.guard}
+        self.result = {'name': name, 'action': self.values['action'].get(), 'selector_type': self.values['selector_type'].get(), 'selector': self.values['selector'].get().strip(), 'fallback_selector_type': self.values['fallback_selector_type'].get(), 'fallback_selector': self.values['fallback_selector'].get().strip(), 'iframe_path': getattr(self, 'iframe_path', ''), 'value': self.values['value'].get(), 'timeout_ms': timeout, 'retry_count': event_retry_count, 'retry_interval_ms': event_retry_interval_ms, 'enabled': int(self.values['enabled'].get()), 'continue_on_error': continue_on_error, 'failure_action': failure_action, 'failure_target': failure_target if failure_action == 'goto' else '', 'data_path': self.values['data_path'].get(), 'guard': self.guard}
         if self.result['action'] == 'select' and self.select_first.get():
             self.result['value'] = SELECT_FIRST_VALUE
             self.result['data_path'] = ''
