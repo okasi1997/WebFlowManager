@@ -7,7 +7,7 @@ from typing import Any, Callable
 from core.conditions import OPERATORS, decode_guard, summarize_guard
 from core.settings import SELECT_FIRST_VALUE
 from i18n import tr
-from ui.ui_helpers import AutoScrollbar
+from ui.ui_helpers import AutoScrollbar, attach_tree_scrollbars
 
 
 class RoundedCard(tk.Canvas):
@@ -189,14 +189,16 @@ class GuardConditionDialog(tk.Toplevel):
         logic_box = ttk.Combobox(header, state='readonly', width=18, textvariable=self.logic_display, values=tuple(logic_labels.values()))
         logic_box.pack(side='left', padx=8)
         logic_box.bind('<<ComboboxSelected>>', lambda _event: self.logic.set(next(key for key, label in logic_labels.items() if label == self.logic_display.get())))
-        self.tree = ttk.Treeview(self, columns=('path', 'operator', 'value'), show='headings', height=9)
+        tree_frame = ttk.Frame(self)
+        tree_frame.pack(fill='both', expand=True, padx=14)
+        self.tree = ttk.Treeview(tree_frame, columns=('path', 'operator', 'value'), show='headings', height=9)
         self.tree.heading('path', text='msg.0394')
         self.tree.heading('operator', text='msg.0395')
         self.tree.heading('value', text='msg.0396')
         self.tree.column('path', width=280)
         self.tree.column('operator', width=170)
         self.tree.column('value', width=220)
-        self.tree.pack(fill='both', expand=True, padx=14)
+        attach_tree_scrollbars(tree_frame, self.tree)
         self.tree.bind('<Double-1>', lambda _event: self._edit_rule(choose_path))
         actions = ttk.Frame(self, padding=(14, 8))
         actions.pack(fill='x')

@@ -27,7 +27,7 @@ from ui.dialogs import EventDialog, EventGroupDialog, GuardConditionDialog, Vari
 from ui.auth_state import AuthStateDialog, profile_path
 from ui.message_dialog import install_app_messageboxes
 from ui.structured_data import DataPathDialog, HierarchicalDataDialog, SchemaDesignerDialog
-from ui.ui_helpers import AutoScrollbar, toggle_tree_indicator_on_double_click, tree_toggle_all_button
+from ui.ui_helpers import AutoScrollbar, attach_tree_scrollbars, toggle_tree_indicator_on_double_click, tree_toggle_all_button
 
 class FlowManagerApp:
     """Tk の画面状態と、バックグラウンドで動く実行処理を接続する。"""
@@ -402,8 +402,19 @@ class FlowManagerApp:
         style.configure('TCheckbutton', background='#F3F3F3', foreground='#1F1F1F', font=font)
         style.map('TCheckbutton', background=[('active', '#F3F3F3')], foreground=[('disabled', '#A0A0A0')])
         for scrollbar_style in ('Vertical.TScrollbar', 'Horizontal.TScrollbar'):
-            style.configure(scrollbar_style, background='#C8C8C8', troughcolor='#F3F3F3', bordercolor='#F3F3F3', arrowcolor='#616161')
-            style.map(scrollbar_style, background=[('active', '#A6A6A6'), ('pressed', '#8C8C8C')])
+            style.configure(
+                scrollbar_style,
+                background='#E5E7E9', troughcolor='#FAFAFA',
+                bordercolor='#F0F0F0', lightcolor='#E5E7E9', darkcolor='#E5E7E9',
+                arrowcolor='#92969A', relief='flat', borderwidth=0,
+            )
+            style.map(
+                scrollbar_style,
+                background=[('active', '#D5D8DB'), ('pressed', '#C5C9CD')],
+                lightcolor=[('active', '#D5D8DB'), ('pressed', '#C5C9CD')],
+                darkcolor=[('active', '#D5D8DB'), ('pressed', '#C5C9CD')],
+                arrowcolor=[('active', '#777B7F'), ('pressed', '#666A6E')],
+            )
         unchecked = tk.PhotoImage(width=16, height=16)
         checked = tk.PhotoImage(width=16, height=16)
         for image in (unchecked, checked):
@@ -657,18 +668,12 @@ class FlowManagerApp:
         self.workflow_tree.column('enabled', width=48, anchor='center', stretch=False)
         self.workflow_tree.column('pcl_start', width=65, anchor='center', stretch=False)
         self.workflow_tree.column('guard', width=130)
-        workflow_y = AutoScrollbar(workflow_table, orient='vertical', command=self.workflow_tree.yview)
-        workflow_x = AutoScrollbar(workflow_table, orient='horizontal', command=self.workflow_tree.xview)
-        self.workflow_tree.configure(yscrollcommand=workflow_y.set, xscrollcommand=workflow_x.set)
-        self.workflow_tree.grid(row=0, column=0, sticky='nsew')
-        workflow_y.grid(row=0, column=1, sticky='ns')
-        workflow_x.grid(row=1, column=0, sticky='ew')
-        workflow_table.rowconfigure(0, weight=1)
-        workflow_table.columnconfigure(0, weight=1)
+        attach_tree_scrollbars(workflow_table, self.workflow_tree)
         self.workflow_tree.tag_configure('odd', background='#FAFAFA')
         self.workflow_tree.tag_configure('disabled', foreground='#A0A0A0')
         self.workflow_tree.bind('<<TreeviewSelect>>', self._select_workflow)
         self.workflow_tree.bind('<Double-1>', self._workflow_double_click)
+        self.workflow_tree.bind('<Configure>', self._resize_workflow_columns)
         self._bind_drag_sort(self.workflow_tree, 'workflow')
         workflow_buttons = ttk.Frame(left, style='EmbeddedCardBody.TFrame')
         workflow_buttons.pack(fill='x')
@@ -724,15 +729,7 @@ class FlowManagerApp:
             self.event_tree.heading(column, text=headings[column])
             self.event_tree.column(column, width=widths[column], minwidth=35, stretch=False)
         self.event_tree.column('guard', stretch=True)
-        event_y = ttk.Scrollbar(self.event_table, orient='vertical', command=self.event_tree.yview)
-        event_x = AutoScrollbar(self.event_table, orient='horizontal', command=self.event_tree.xview)
-        self.event_tree.configure(yscrollcommand=event_y.set, xscrollcommand=event_x.set)
-        self.event_tree.grid(row=0, column=0, sticky='nsew')
-        event_y.grid(row=0, column=1, sticky='ns')
-        event_x.grid(row=1, column=0, sticky='ew')
-        self.event_table.rowconfigure(0, weight=1)
-        self.event_table.columnconfigure(0, weight=1)
-        self.event_tree.after_idle(lambda: event_x.set(*self.event_tree.xview()))
+        attach_tree_scrollbars(self.event_table, self.event_tree)
         self.event_tree.bind('<Configure>', self._resize_event_columns)
         self.event_tree.tag_configure('odd', background='#FAFAFA')
         self.event_tree.tag_configure('disabled', foreground='#A0A0A0')
@@ -903,23 +900,13 @@ class FlowManagerApp:
         ):
             self.parallel_tree.heading(column, text=heading)
             self.parallel_tree.column(column, width=width, minwidth=minimum, stretch=False)
-        self.parallel_scrollbar = AutoScrollbar(parallel_table_inner, orient='vertical', command=self.parallel_tree.yview)
-        self.parallel_xscrollbar = AutoScrollbar(parallel_table_inner, orient='horizontal', command=self.parallel_tree.xview)
-        self.parallel_tree.configure(
-            yscrollcommand=self.parallel_scrollbar.set,
-            xscrollcommand=self.parallel_xscrollbar.set,
+        self.parallel_scrollbar, self.parallel_xscrollbar = attach_tree_scrollbars(
+            parallel_table_inner, self.parallel_tree,
         )
-        self.parallel_tree.grid(row=0, column=0, sticky='nsew')
-        self.parallel_scrollbar.grid(row=0, column=1, sticky='ns')
-        self.parallel_xscrollbar.grid(row=1, column=0, sticky='ew')
-        self.parallel_scrollbar.grid_remove()
-        self.parallel_xscrollbar.grid_remove()
         self.parallel_tree.bind('<Configure>', self._resize_execution_status_columns)
         self.parallel_tree.bind('<Double-1>', self._execution_record_double_click)
         self.parallel_tree.bind('<Motion>', self._execution_record_motion)
         self.parallel_tree.bind('<Leave>', lambda _event: self.parallel_tree.configure(cursor=''))
-        parallel_table_inner.columnconfigure(0, weight=1)
-        parallel_table_inner.rowconfigure(0, weight=1)
         parallel_table_frame.columnconfigure(0, weight=1)
         parallel_table_frame.rowconfigure(0, weight=1)
         self.parallel_frame.columnconfigure(0, weight=1)
@@ -1516,8 +1503,20 @@ class FlowManagerApp:
             minimum = 180 if target == '#0' else 45
             self.event_tree.column(target, width=max(minimum, width))
 
+    def _resize_workflow_columns(self, event: tk.Event) -> None:
+        """縦スクロール領域を含む実幅内にワークフロー列を収める。"""
+        fixed = {'position': 42, 'enabled': 48, 'pcl_start': 65}
+        flexible = max(120, event.width - sum(fixed.values()) - 10)
+        widths = {
+            **fixed,
+            'name': int(flexible * 0.55),
+            'guard': int(flexible * 0.45),
+        }
+        for column, width in widths.items():
+            self.workflow_tree.column(column, width=width)
+
     def _resize_execution_status_columns(self, event: tk.Event) -> None:
-        available = max(980, event.width - 3)
+        available = max(850, event.width - 10)
         ratios = {
             'group': 0.10, 'enabled': 0.11, 'data': 0.15, 'summary': 0.14,
             'workflow': 0.16, 'event': 0.23, 'status': 0.11,
@@ -1547,12 +1546,7 @@ class FlowManagerApp:
     def _update_execution_status_scrollbar(self) -> None:
         if getattr(self, 'selected_execution_tab', None) != 'status' or not self.parallel_tree.winfo_ismapped():
             return
-        self.parallel_tree.update_idletasks()
-        first, last = self.parallel_tree.yview()
-        if first <= 0.0 and last >= 0.999:
-            self.parallel_scrollbar.grid_remove()
-        else:
-            self.parallel_scrollbar.grid()
+        self.parallel_scrollbar.grid()
 
     def _clear_log(self) -> None:
         self.log_text.configure(state='normal')

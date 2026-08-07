@@ -15,7 +15,7 @@ class AutoScrollbar(ttk.Scrollbar):
         super().set(first, last)
 
 def scrollable_tree(
-        parent: Any, *, always_y: bool=False, **tree_options: Any,
+        parent: Any, *, always_y: bool=True, **tree_options: Any,
 ) -> tuple[tk.Frame, ttk.Treeview]:
     """縦横スクロール対応の Treeview と、その外枠をまとめて作成する。"""
     # 各画面で grid 設定を重複させず、スクロール挙動を統一する。
@@ -30,6 +30,14 @@ def scrollable_tree(
         bd=0,
     )
     tree = ttk.Treeview(frame, **tree_options)
+    attach_tree_scrollbars(frame, tree, always_y=always_y)
+    return (frame, tree)
+
+
+def attach_tree_scrollbars(
+        frame: Any, tree: ttk.Treeview, *, always_y: bool=True,
+) -> tuple[ttk.Scrollbar, AutoScrollbar]:
+    """Treeview の縦固定・横自動スクロールを共通設定する。"""
     yscroll_class = ttk.Scrollbar if always_y else AutoScrollbar
     yscroll = yscroll_class(frame, orient='vertical', command=tree.yview)
     xscroll = AutoScrollbar(frame, orient='horizontal', command=tree.xview)
@@ -41,7 +49,7 @@ def scrollable_tree(
     frame.columnconfigure(0, weight=1)
     # 初期配置後の実表示幅で再判定し、不要な横スクロールバーを残さない。
     tree.after_idle(lambda: xscroll.set(*tree.xview()))
-    return (frame, tree)
+    return yscroll, xscroll
 
 
 def toggle_tree_indicator_on_double_click(
@@ -62,6 +70,7 @@ def toggle_tree_indicator_on_double_click(
 def tree_toggle_all_button(
         parent: Any,
         tree: ttk.Treeview,
+        preserve_root: bool=False,
         **button_options: Any,
 ) -> ttk.Button:
     """全階層の展開状態に応じて表示が切り替わる共通ボタンを作成する。"""
@@ -78,16 +87,39 @@ def tree_toggle_all_button(
                     items.append(item)
                     collect(item)
 
-        collect('')
+        if preserve_root:
+            for root_item in tree.get_children(''):
+                collect(root_item)
+        else:
+            collect('')
         return items
 
     def refresh(_event: object=None) -> None:
-        items = expandable_items()
-        has_closed = any(not bool(tree.item(item, 'open')) for item in items)
-        button.configure(
-            text='msg.0580' if has_closed else 'msg.0581',
-            state='normal' if items else 'disabled',
-        )
+        try:
+            items = expandable_items()
+            has_closed = any(not bool(tree.item(item, 'open')) for item in items)
+            button.configure(
+                text='msg.0580' if has_closed else 'msg.0581',
+                state='normal' if items else 'disabled',
+            )
+        except tk.TclError:
+            # 画面を閉じた後に予約済みの更新が実行された場合は何もしない。
+            return
+
+    refresh_pending = False
+
+    def schedule_refresh() -> None:
+        nonlocal refresh_pending
+        if refresh_pending:
+            return
+        refresh_pending = True
+
+        def run() -> None:
+            nonlocal refresh_pending
+            refresh_pending = False
+            refresh()
+
+        tree.after_idle(run)
 
     def toggle() -> None:
         items = expandable_items()
@@ -97,8 +129,24 @@ def tree_toggle_all_button(
         refresh()
 
     button.configure(command=toggle)
-    tree.bind('<<TreeviewOpen>>', lambda _event: tree.after_idle(refresh), add='+')
-    tree.bind('<<TreeviewClose>>', lambda _event: tree.after_idle(refresh), add='+')
-    tree.bind('<<TreeviewSelect>>', lambda _event: tree.after_idle(refresh), add='+')
-    tree.after_idle(refresh)
+    tree.bind('<<TreeviewOpen>>', lambda _event: schedule_refresh(), add='+')
+    tree.bind('<<TreeviewClose>>', lambda _event: schedule_refresh(), add='+')
+    tree.bind('<<TreeviewSelect>>', lambda _event: schedule_refresh(), add='+')
+
+    # Treeview には挿入・削除時の仮想イベントがないため、更新を共通箇所で検知する。
+    original_insert = tree.insert
+    original_delete = tree.delete
+
+    def insert(*args: Any, **kwargs: Any) -> str:
+        item = original_insert(*args, **kwargs)
+        schedule_refresh()
+        return item
+
+    def delete(*items: Any) -> None:
+        original_delete(*items)
+        schedule_refresh()
+
+    tree.insert = insert  # type: ignore[method-assign]
+    tree.delete = delete  # type: ignore[method-assign]
+    schedule_refresh()
     return button

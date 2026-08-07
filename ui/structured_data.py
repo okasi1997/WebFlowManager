@@ -8,29 +8,18 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Any
 from core.database import Database
+from core.data_values import normalize_data_record, strip_unicode_whitespace
 from i18n import SUPPORTED_LANGUAGES, tr, tr_language
-from ui.ui_helpers import AutoScrollbar, scrollable_tree, toggle_tree_indicator_on_double_click, tree_toggle_all_button
+from ui.ui_helpers import AutoScrollbar, attach_tree_scrollbars, scrollable_tree, toggle_tree_indicator_on_double_click, tree_toggle_all_button
 TYPES = ('text', 'number', 'boolean', 'object', 'list')
 
 def strip_data_whitespace(value: Any) -> Any:
     """Data 管理で扱う文字列から先頭・末尾の Unicode 空白を除去する。"""
-    if isinstance(value, str):
-        return value.strip()
-    if isinstance(value, dict):
-        return {key: strip_data_whitespace(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [strip_data_whitespace(item) for item in value]
-    return value
+    return strip_unicode_whitespace(value)
 
 def strip_data_record_whitespace(record: dict[str, Any]) -> dict[str, Any]:
     """Data の入出力用レコードに同じ空白除去規則を適用する。"""
-    cleaned = dict(record)
-    for field in ('name', 'summary', 'execution_group'):
-        if field in cleaned:
-            cleaned[field] = str(cleaned[field]).strip()
-    if 'data' in cleaned:
-        cleaned['data'] = strip_data_whitespace(cleaned['data'])
-    return cleaned
+    return normalize_data_record(record)
 
 def strip_schema_name_whitespace(schema: dict[str, Any]) -> dict[str, Any]:
     """構造内の全フィールド名から先頭・末尾の Unicode 空白を除去する。"""
@@ -499,14 +488,7 @@ class SchemaDesignerDialog(tk.Toplevel):
         self.tree.heading('path', text='msg.0258')
         # 展開・折りたたみでスクロールバーが消えると列幅が変わって揺れるため、
         # 構造デザイナーでは縦スクロールバーの領域を常に確保する。
-        yscroll = ttk.Scrollbar(tree_frame, orient='vertical', command=self.tree.yview)
-        xscroll = AutoScrollbar(tree_frame, orient='horizontal', command=self.tree.xview)
-        self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
-        self.tree.grid(row=0, column=0, sticky='nsew')
-        yscroll.grid(row=0, column=1, sticky='ns')
-        xscroll.grid(row=1, column=0, sticky='ew')
-        tree_frame.rowconfigure(0, weight=1)
-        tree_frame.columnconfigure(0, weight=1)
+        attach_tree_scrollbars(tree_frame, self.tree)
         tree_frame.pack(fill='both', expand=True, padx=10, pady=(6, 8))
         buttons = ttk.Frame(self, padding=(8, 6), style='EmbeddedCard.TFrame' if embedded else 'TFrame')
         buttons.pack(fill='x', padx=10, pady=(0, 10))
@@ -536,7 +518,7 @@ class SchemaDesignerDialog(tk.Toplevel):
         for column in range(4):
             buttons.columnconfigure(column, weight=1)
         tree_toggle_all_button(
-            buttons, self.tree,
+            buttons, self.tree, preserve_root=True,
             style='Secondary.TButton' if embedded else 'TButton',
         ).grid(row=2, column=0, padx=3, pady=3, sticky='ew')
         self.tree.bind('<<TreeviewSelect>>', self._update_action_buttons)
@@ -916,7 +898,7 @@ class DataPathDialog(tk.Toplevel):
     def __init__(self, parent: tk.Misc, schema: dict[str, Any], lists_only: bool=False) -> None:
         super().__init__(parent)
         self.title('msg.0276')
-        self.geometry('520x460')
+        self.geometry('680x460')
         self.result: str | None = None
         self.paths: dict[str, tuple[str, str]] = {}
         self.lists_only = lists_only
@@ -924,6 +906,9 @@ class DataPathDialog(tk.Toplevel):
         self.tree.heading('#0', text='msg.0277')
         self.tree.heading('type', text='msg.0257')
         self.tree.heading('path', text='msg.0278')
+        self.tree.column('#0', width=220, minwidth=140, stretch=True)
+        self.tree.column('type', width=90, minwidth=70, stretch=False)
+        self.tree.column('path', width=330, minwidth=180, stretch=True)
         tree_frame.pack(fill='both', expand=True, padx=10, pady=10)
         root = self.tree.insert('', 'end', text='msg.0279', values=('object', ''), open=True)
         parent_items: dict[str, str] = {'': root}
@@ -934,7 +919,9 @@ class DataPathDialog(tk.Toplevel):
             self.paths[item] = (path, node['type'])
         footer = ttk.Frame(self)
         footer.pack(fill='x', padx=10, pady=(0, 10))
-        tree_toggle_all_button(footer, self.tree).pack(side='left')
+        tree_toggle_all_button(
+            footer, self.tree, preserve_root=True,
+        ).pack(side='left')
         ttk.Button(footer, text='msg.0280', command=self._choose).pack(side='right')
         self.tree.bind('<Double-1>', lambda _event: self._choose())
         self.transient(parent)
@@ -1009,6 +996,7 @@ class HierarchicalDataDialog(tk.Toplevel):
         self.records.column('name', width=140, minwidth=100, stretch=True)
         self.records.column('summary', width=180, minwidth=120, stretch=True)
         records_frame.pack(fill='both', expand=True, pady=5)
+        self.records.bind('<Configure>', self._resize_record_columns)
         self.records.bind('<<TreeviewSelect>>', self._select_record)
         self.records.bind('<Double-1>', self._record_double_click)
         self.records.bind('<Motion>', self._record_column_motion)
@@ -1058,6 +1046,7 @@ class HierarchicalDataDialog(tk.Toplevel):
         self.tree.column('value', width=220)
         self.tree.column('path', width=220)
         tree_frame.pack(fill='both', expand=True, pady=5)
+        self.tree.bind('<Configure>', self._resize_data_columns)
         self.tree.bind('<Double-1>', self._edit_value)
         self.tree.bind('<Motion>', self._value_column_motion)
         self.tree.bind('<Leave>', lambda _event: self.tree.configure(cursor=''))
@@ -1070,12 +1059,34 @@ class HierarchicalDataDialog(tk.Toplevel):
         ttk.Button(rb, text='msg.0301', command=self._sync_all_records, style=standard_style).pack(side='left', padx=3)
         ttk.Button(rb, text='msg.0302', command=lambda: self._save_record(show_message=True), style='Primary.TButton').pack(side='right', padx=3)
         tree_toggle_all_button(
-            rb, self.tree, style=standard_style,
+            rb, self.tree, preserve_root=True, style=standard_style,
         ).pack(side='right', padx=3)
         self._sync_all_records(show_message=False)
         self._refresh_records()
         if not embedded:
             self.transient(parent)
+
+    def _resize_record_columns(self, event: tk.Event) -> None:
+        """データ一覧の二列を表示領域内に収める。"""
+        available = max(160, event.width - 2)
+        name_width = int(available * 0.45)
+        self.records.column('name', width=name_width, minwidth=40, stretch=False)
+        self.records.column(
+            'summary', width=available - name_width, minwidth=40, stretch=True,
+        )
+
+    def _resize_data_columns(self, event: tk.Event) -> None:
+        """階層データの全列を表示領域内に収める。"""
+        available = max(160, event.width - 2)
+        ratios = {'#0': 0.28, 'type': 0.10, 'value': 0.27}
+        used = 0
+        for column, ratio in ratios.items():
+            width = int(available * ratio)
+            self.tree.column(column, width=width, minwidth=40, stretch=False)
+            used += width
+        self.tree.column(
+            'path', width=available - used, minwidth=40, stretch=True,
+        )
 
     def _refresh_records(self, select_id: int | None=None) -> None:
         self.records.delete(*self.records.get_children())

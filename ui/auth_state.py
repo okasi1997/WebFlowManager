@@ -86,15 +86,21 @@ class AuthStateDialog(tk.Toplevel):
         )
         if embedded:
             profile_panel.rowconfigure(1, weight=1)
+            profile_list_frame = ttk.Frame(profile_panel, style=frame_style)
+            profile_list_frame.grid(
+                row=1, column=0, columnspan=4, sticky='nsew', pady=(4, 12),
+            )
             self.profile_list = ttk.Treeview(
-                profile_panel, columns=('status',), show='tree headings',
+                profile_list_frame, columns=('status',), show='tree headings',
                 selectmode='browse', style='Status.Treeview',
             )
             self.profile_list.heading('#0', text='msg.0461')
             self.profile_list.heading('status', text='msg.0520')
             self.profile_list.column('#0', width=220, minwidth=140, stretch=True)
             self.profile_list.column('status', width=100, minwidth=80, anchor='center', stretch=False)
-            self.profile_list.grid(row=1, column=0, columnspan=4, sticky='nsew', pady=(4, 12))
+            self.profile_list.grid(row=0, column=0, sticky='nsew')
+            profile_list_frame.rowconfigure(0, weight=1)
+            profile_list_frame.columnconfigure(0, weight=1)
             profile_actions = ttk.Frame(profile_panel, style=frame_style)
             profile_actions.grid(row=2, column=0, columnspan=4, sticky='ew')
             profile_actions.columnconfigure(0, weight=1)

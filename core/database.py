@@ -476,19 +476,33 @@ class Database:
         return len(normalized)
 
     def get_browser_visible(self) -> bool:
-        row = self.connection.execute("SELECT value FROM app_meta WHERE key='browser_visible'").fetchone()
-        return row is None or row['value'] != '0'
+        return self._get_meta('browser_visible') != '0'
 
     def set_browser_visible(self, visible: bool) -> None:
-        self.connection.execute("INSERT INTO app_meta(key, value) VALUES ('browser_visible', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", ('1' if visible else '0',))
+        self._set_meta('browser_visible', '1' if visible else '0')
+
+    def _get_meta(self, key: str, default: str | None=None) -> str | None:
+        """アプリ共通設定を文字列として取得する。"""
+        row = self.connection.execute(
+            'SELECT value FROM app_meta WHERE key=?', (key,),
+        ).fetchone()
+        return str(row['value']) if row is not None else default
+
+    def _set_meta(self, key: str, value: object) -> None:
+        """アプリ共通設定を保存する。"""
+        self.connection.execute(
+            'INSERT INTO app_meta(key, value) VALUES (?, ?) '
+            'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+            (key, str(value)),
+        )
         self.connection.commit()
 
     def get_start_url(self) -> str | None:
         """保存済みの既定開始 URL を返す。未設定の場合は None を返す。"""
-        row = self.connection.execute("SELECT value FROM app_meta WHERE key='start_url'").fetchone()
-        if row is None:
+        stored = self._get_meta('start_url')
+        if stored is None:
             return None
-        value = str(row['value']).strip()
+        value = stored.strip()
         return value if value.startswith(('http://', 'https://')) else None
 
     def set_start_url(self, start_url: str) -> None:
@@ -496,19 +510,12 @@ class Database:
         value = start_url.strip()
         if not value.startswith(('http://', 'https://')):
             raise ValueError('Invalid start URL')
-        self.connection.execute(
-            "INSERT INTO app_meta(key, value) VALUES ('start_url', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (value,),
-        )
-        self.connection.commit()
+        self._set_meta('start_url', value)
 
     def get_default_timeout_ms(self) -> int:
-        row = self.connection.execute(
-            "SELECT value FROM app_meta WHERE key='default_timeout_ms'"
-        ).fetchone()
+        stored = self._get_meta('default_timeout_ms')
         try:
-            value = int(row['value']) if row is not None else 10000
+            value = int(stored) if stored is not None else 10000
         except (TypeError, ValueError):
             return 10000
         return value if 1 <= value <= 3600000 else 10000
@@ -516,37 +523,28 @@ class Database:
     def set_default_timeout_ms(self, timeout_ms: int) -> None:
         if not 1 <= timeout_ms <= 3600000:
             raise ValueError('Invalid default timeout')
-        self.connection.execute(
-            "INSERT INTO app_meta(key, value) VALUES ('default_timeout_ms', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (str(timeout_ms),),
-        )
-        self.connection.commit()
+        self._set_meta('default_timeout_ms', timeout_ms)
 
     def get_language(self) -> str:
-        row = self.connection.execute("SELECT value FROM app_meta WHERE key='language'").fetchone()
-        return row['value'] if row is not None and row['value'] in {'ja', 'zh'} else 'ja'
+        language = self._get_meta('language')
+        return language if language in {'ja', 'zh'} else 'ja'
 
     def set_language(self, language: str) -> None:
         if language not in {'ja', 'zh'}:
             raise ValueError('Unsupported language')
-        self.connection.execute("INSERT INTO app_meta(key, value) VALUES ('language', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (language,))
-        self.connection.commit()
+        self._set_meta('language', language)
 
     def get_auth_profile(self) -> str:
-        row = self.connection.execute("SELECT value FROM app_meta WHERE key='auth_profile'").fetchone()
-        return str(row['value']) if row else 'default'
+        return self._get_meta('auth_profile', 'default') or 'default'
 
     def set_auth_profile(self, profile: str) -> None:
-        self.connection.execute("INSERT INTO app_meta(key, value) VALUES ('auth_profile', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (profile,))
-        self.connection.commit()
+        self._set_meta('auth_profile', profile)
 
     def get_ui_font(self) -> tuple[str, int]:
-        family_row = self.connection.execute("SELECT value FROM app_meta WHERE key='ui_font_family'").fetchone()
-        size_row = self.connection.execute("SELECT value FROM app_meta WHERE key='ui_font_size'").fetchone()
-        family = family_row['value'].strip() if family_row is not None else 'Yu Gothic UI'
+        family = (self._get_meta('ui_font_family', 'Yu Gothic UI') or '').strip()
+        stored_size = self._get_meta('ui_font_size')
         try:
-            size = max(8, min(18, int(size_row['value']))) if size_row is not None else 10
+            size = max(8, min(18, int(stored_size))) if stored_size is not None else 10
         except (TypeError, ValueError):
             size = 10
         return (family or 'Yu Gothic UI', size)
@@ -556,23 +554,30 @@ class Database:
         if not family or not 8 <= size <= 18:
             raise ValueError('Invalid UI font setting')
         with self.connection:
-            self.connection.execute("INSERT INTO app_meta(key, value) VALUES ('ui_font_family', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (family,))
-            self.connection.execute("INSERT INTO app_meta(key, value) VALUES ('ui_font_size', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(size),))
+            self.connection.execute(
+                'INSERT INTO app_meta(key, value) VALUES (?, ?) '
+                'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                ('ui_font_family', family),
+            )
+            self.connection.execute(
+                'INSERT INTO app_meta(key, value) VALUES (?, ?) '
+                'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                ('ui_font_size', str(size)),
+            )
 
     def get_pcl_session_limit(self) -> int:
-        row = self.connection.execute("SELECT value FROM app_meta WHERE key='pcl_session_limit'").fetchone()
-        if row is None:
+        stored = self._get_meta('pcl_session_limit')
+        if stored is None:
             return 2
         try:
-            return max(1, min(20, int(row['value'])))
+            return max(1, min(20, int(stored)))
         except (TypeError, ValueError):
             return 2
 
     def set_pcl_session_limit(self, limit: int) -> None:
         if not 1 <= limit <= 20:
             raise ValueError('msg.0128')
-        self.connection.execute("INSERT INTO app_meta(key, value) VALUES ('pcl_session_limit', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(limit),))
-        self.connection.commit()
+        self._set_meta('pcl_session_limit', limit)
 
     def create_run(self, workflow_id: int) -> int:
         with self._lock:

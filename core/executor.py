@@ -8,7 +8,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from browser.page_runtime import active_page, browser_args, browser_context_options, close_browser_context, is_topmost, launch_persistent_chrome, locators_in_frames, open_pages, page_frames, restore_storage_state, settle_new_page
+from browser.page_runtime import active_page, browser_args, browser_context_options, close_browser_context, is_topmost, launch_persistent_chrome, open_pages, page_frames, restore_storage_state, settle_new_page
+from browser.locators import build_locator, locators_across_frames
 from browser.profile_runtime import persistent_profile_dir
 from core.conditions import decode_guard, evaluate_guard
 from core.settings import SELECT_FIRST_VALUE
@@ -511,23 +512,10 @@ class WorkflowExecutor:
                 current = loop_context[current_path]
 
     def _locator(self, page: Any, selector_type: str, selector: str) -> Any:
-        if selector_type == 'css':
-            return page.locator(selector)
-        if selector_type == 'text':
-            return page.get_by_text(selector, exact=True)
-        if selector_type == 'label':
-            return page.get_by_label(selector, exact=True)
-        if selector_type == 'placeholder':
-            return page.get_by_placeholder(selector, exact=True)
-        if selector_type == 'xpath':
-            return page.locator(f'xpath={selector}')
-        if selector_type == 'role':
-            role, separator, name = selector.partition('|')
-            return page.get_by_role(role.strip(), name=name.strip() if separator else None)
-        raise ValueError(f'Action requires a selector: {selector_type}')
+        return build_locator(page, selector_type, selector)
 
     def _locators(self, page: Any, selector_type: str, selector: str) -> list[Any]:
-        return locators_in_frames(page, lambda frame: self._locator(frame, selector_type, selector))
+        return locators_across_frames(page, selector_type, selector)
 
     @staticmethod
     def _is_transient_target_error(error: Exception) -> bool:
@@ -542,10 +530,9 @@ class WorkflowExecutor:
 
     def _locator_matches(self, page: Any, selector_type: str, selector: str) -> list[Any]:
         """一回の試行内で frame を取得し、その Locator をすべて評価する。"""
-        locators = self._locators(page, selector_type, selector)
         return [
             locator.nth(index)
-            for locator in locators
+            for locator in self._locators(page, selector_type, selector)
             for index in range(locator.count())
         ]
 

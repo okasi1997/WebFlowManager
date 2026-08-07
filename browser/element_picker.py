@@ -9,7 +9,8 @@ from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from browser.page_runtime import active_page, bring_page_to_front, close_browser_context, is_topmost, launch_persistent_chrome, locators_in_frames, page_frames, restore_storage_state
+from browser.page_runtime import active_page, bring_page_to_front, close_browser_context, launch_persistent_chrome, page_frames, restore_storage_state
+from browser.locators import actionable_matches, actionable_matches_across_frames, build_locator, matches_across_frames, visible_matches
 from browser.picker_scripts import picker_script
 from browser.profile_runtime import persistent_profile_dir
 from i18n import tr
@@ -107,45 +108,26 @@ class ElementPicker:
 
     @staticmethod
     def _locator(page: Any, selector_type: str, selector: str) -> Any:
-        if selector_type == 'role':
-            role, separator, name = selector.partition('|')
-            return page.get_by_role(role.strip(), name=name.strip() if separator else None)
-        if selector_type == 'label':
-            return page.get_by_label(selector, exact=True)
-        if selector_type == 'placeholder':
-            return page.get_by_placeholder(selector, exact=True)
-        if selector_type == 'text':
-            return page.get_by_text(selector, exact=True)
-        if selector_type == 'css':
-            return page.locator(selector)
-        if selector_type == 'xpath':
-            return page.locator(f'xpath={selector}')
-        raise ValueError('msg.0174')
+        return build_locator(page, selector_type, selector)
 
     @classmethod
     def _actionable_matches_in_page(cls, page: Any, selector_type: str, selector: str) -> list[Any]:
-        locators = locators_in_frames(page, lambda frame: cls._locator(frame, selector_type, selector))
-        return [item for locator in locators for item in cls._actionable_matches(locator)]
+        return actionable_matches_across_frames(page, selector_type, selector)
 
     @classmethod
     def _matches_in_page(cls, page: Any, selector_type: str, selector: str) -> list[Any]:
-        locators = locators_in_frames(page, lambda frame: cls._locator(frame, selector_type, selector))
-        return [
-            locator.nth(index)
-            for locator in locators
-            for index in range(locator.count())
-        ]
+        return matches_across_frames(page, selector_type, selector)
 
     @staticmethod
     def _visible_matches(locator: Any) -> list[Any]:
         """元の DOM 順を維持したまま、表示中の一致要素だけを返す。"""
-        return [locator.nth(index) for index in range(locator.count()) if locator.nth(index).is_visible()]
+        return visible_matches(locator)
 
     @classmethod
     def _actionable_matches(cls, locator: Any) -> list[Any]:
         # DOM に存在するだけでなく、表示中かつ最前面にある要素へ絞り込む。
         """表示領域内にあり、他要素に覆われていない一致要素だけを返す。"""
-        return [item for item in cls._visible_matches(locator) if is_topmost(item)]
+        return actionable_matches(locator)
 
 
 class _DebugPause(BaseException):
