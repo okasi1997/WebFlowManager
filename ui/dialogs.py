@@ -616,6 +616,21 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
             style='DialogInline.TButton',
         )
         self.selector_data_reference_button.grid(row=1, column=3, padx=(8, 10), pady=5, sticky='ew')
+        ttk.Label(
+            locator, text='msg.0589', width=18, anchor='w',
+            style='DialogCard.TLabel',
+        ).grid(row=2, column=0, padx=(10, 8), pady=5, sticky='w')
+        self.iframe_path_display = tk.StringVar(
+            value=self.iframe_path or tr('msg.0590'),
+        )
+        self.iframe_path_entry = ttk.Entry(
+            locator, textvariable=self.iframe_path_display,
+            state='readonly', style='Dialog.TEntry',
+        )
+        self.iframe_path_entry.grid(
+            row=2, column=1, columnspan=3,
+            padx=(0, 10), pady=5, sticky='ew',
+        )
         execution = add_section(left_column, 'msg.0502')
         execution.columnconfigure(1, weight=1)
         execution.columnconfigure(3, weight=0, minsize=120)
@@ -855,6 +870,7 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
                 self.values['fallback_selector_type'].set(result.get('fallback_selector_type', 'none'))
                 self.values['fallback_selector'].set(result.get('fallback_selector', ''))
                 self.iframe_path = result.get('iframe_path', '')
+                self.iframe_path_display.set(self.iframe_path or tr('msg.0590'))
                 if not self.values['action'].get() and result.get('suggested_action') in ('click', 'fill', 'select'):
                     self.values['action'].set(result['suggested_action'])
                     self._update_action_fields()

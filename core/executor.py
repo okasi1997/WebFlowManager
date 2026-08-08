@@ -874,6 +874,12 @@ class WorkflowExecutor:
         if condition == 'operable':
             if not match.is_enabled():
                 return False
+            # hit-test は表示領域外の要素を判定できないため、マウスを動かさず必要な場合だけ画面内へ移動する。
+            remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
+            try:
+                match.scroll_into_view_if_needed(timeout=remaining_ms)
+            except Exception:
+                return False
             operation = match.evaluate("""element => {
                 const tag = element.localName;
                 const role = element.getAttribute('role');

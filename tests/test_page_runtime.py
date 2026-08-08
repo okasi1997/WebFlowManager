@@ -708,11 +708,16 @@ class PageRuntimeTests(unittest.TestCase):
 
     def test_wait_operable_does_not_interact_with_button(self) -> None:
         class Element:
+            scrolled_with = None
+
             def is_visible(self):
                 return True
 
             def is_enabled(self):
                 return True
+
+            def scroll_into_view_if_needed(self, **kwargs):
+                self.scrolled_with = kwargs
 
             def evaluate(self, _script):
                 return 'click'
@@ -729,6 +734,7 @@ class PageRuntimeTests(unittest.TestCase):
                 )
             )
         topmost.assert_called_once_with(element)
+        self.assertGreater(element.scrolled_with['timeout'], 0)
 
     def test_wait_operable_checks_editability_for_input(self) -> None:
         class Element:
@@ -737,6 +743,9 @@ class PageRuntimeTests(unittest.TestCase):
 
             def is_enabled(self):
                 return True
+
+            def scroll_into_view_if_needed(self, **_kwargs):
+                return None
 
             def evaluate(self, _script):
                 return 'input'
