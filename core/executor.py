@@ -678,8 +678,26 @@ class WorkflowExecutor:
                 if len(matches) > 1:
                     matches = [
                         child for child in matches
-                        if child.frame_element().is_visible()
+                        if not child.is_detached()
+                        and not str(getattr(child, 'url', '')).startswith('chrome-error://')
+                        and child.frame_element().is_visible()
                     ]
+                if len(matches) > 1:
+                    sized_matches: list[tuple[float, Any]] = []
+                    for child in matches:
+                        try:
+                            box = child.frame_element().bounding_box()
+                            area = float(box['width']) * float(box['height']) if box else 0
+                            if area > 4:
+                                sized_matches.append((area, child))
+                        except (AttributeError, KeyError, TypeError, ValueError):
+                            continue
+                    if sized_matches:
+                        largest = max(area for area, _child in sized_matches)
+                        matches = [
+                            child for area, child in sized_matches
+                            if area == largest
+                        ]
                 if len(matches) != 1:
                     return None
                 current = matches[0]

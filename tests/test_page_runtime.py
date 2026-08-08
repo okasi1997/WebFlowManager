@@ -313,6 +313,89 @@ class PageRuntimeTests(unittest.TestCase):
 
         self.assertIs(result, visible)
 
+    def test_saved_iframe_path_prefers_large_frame_over_error_frame(self) -> None:
+        class Element:
+            def __init__(self, width, height):
+                self.box = {'width': width, 'height': height}
+
+            def evaluate(self, _script, _selector):
+                return True
+
+            def is_visible(self):
+                return True
+
+            def bounding_box(self):
+                return self.box
+
+        class ChildFrame:
+            child_frames = []
+
+            def __init__(self, width, height, url):
+                self.element = Element(width, height)
+                self.url = url
+
+            def frame_element(self):
+                return self.element
+
+            def is_detached(self):
+                return False
+
+        error_frame = ChildFrame(1, 1, 'chrome-error://chromewebdata/')
+        target_frame = ChildFrame(1200, 800, 'https://example.com/application')
+        main = type('MainFrame', (), {'child_frames': [error_frame, target_frame]})()
+        page = type(
+            'Page', (),
+            {'main_frame': main, 'frames': [main, error_frame, target_frame]},
+        )()
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+
+        with patch('core.executor.active_page', side_effect=lambda current: current):
+            result = executor._saved_event_frame(
+                page, {'iframe_path': '["#frame-parent > iframe"]'},
+            )
+
+        self.assertIs(result, target_frame)
+
+    def test_saved_iframe_path_prefers_candidate_with_largest_display_area(self) -> None:
+        class Element:
+            def __init__(self, width, height):
+                self.box = {'width': width, 'height': height}
+
+            def evaluate(self, _script, _selector):
+                return True
+
+            def is_visible(self):
+                return True
+
+            def bounding_box(self):
+                return self.box
+
+        class ChildFrame:
+            child_frames = []
+            url = 'https://example.com/application'
+
+            def __init__(self, width, height):
+                self.element = Element(width, height)
+
+            def frame_element(self):
+                return self.element
+
+            def is_detached(self):
+                return False
+
+        stale = ChildFrame(1, 1)
+        target = ChildFrame(1200, 800)
+        main = type('MainFrame', (), {'child_frames': [stale, target]})()
+        page = type('Page', (), {'main_frame': main, 'frames': [main, stale, target]})()
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+
+        with patch('core.executor.active_page', side_effect=lambda current: current):
+            result = executor._saved_event_frame(
+                page, {'iframe_path': '["#frame-parent > iframe"]'},
+            )
+
+        self.assertIs(result, target)
+
     def test_event_execution_does_not_run_spinner_scan_while_disabled(self) -> None:
         class Context:
             pages = []
