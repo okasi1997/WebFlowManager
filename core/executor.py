@@ -706,19 +706,28 @@ class WorkflowExecutor:
         except Exception:
             return None
 
-    def _event_frame(self, page: Any, event: dict[str, Any]) -> Any | None:
+    def _event_frame(
+        self, page: Any, event: dict[str, Any], timeout: int=0,
+    ) -> Any | None:
         """指定済みの iframe 経路が解決できない場合は全 frame 検索へ切り替えず失敗させる。"""
-        frame = self._saved_event_frame(page, event)
-        if str(event.get('iframe_path', '')).strip() and frame is None:
-            raise RuntimeError('msg.0592')
-        return frame
+        raw_path = str(event.get('iframe_path', '')).strip()
+        if not raw_path:
+            return None
+        deadline = time.monotonic() + max(0, timeout) / 1000
+        while True:
+            frame = self._saved_event_frame(page, event)
+            if frame is not None:
+                return frame
+            if time.monotonic() >= deadline:
+                raise RuntimeError('msg.0592')
+            active_page(page).wait_for_timeout(100)
 
     def _locator_in_saved_frame(
         self, page: Any, event: dict[str, Any], selector_type: str,
         selector: str, timeout: int, require_actionable: bool=True,
     ) -> Any | None:
         """保存済み frame 内で一意かつ操作可能な要素だけを返す。"""
-        frame = self._event_frame(page, event)
+        frame = self._event_frame(page, event, timeout)
         if frame is None:
             return None
         try:
@@ -745,7 +754,7 @@ class WorkflowExecutor:
         selector_type = event['selector_type']
         fallback_type = str(event.get('fallback_selector_type', 'none'))
         if str(event.get('iframe_path', '')).strip():
-            frame = self._event_frame(page, event)
+            frame = self._event_frame(page, event, timeout)
             try:
                 return self._unique_locator_in_frame(
                     page, frame, selector_type, selector, timeout,
@@ -882,7 +891,8 @@ class WorkflowExecutor:
         deadline = time.monotonic() + timeout / 1000
         while True:
             page = active_page(page)
-            frame = self._event_frame(page, event) if event else None
+            remaining = max(0, int((deadline - time.monotonic()) * 1000))
+            frame = self._event_frame(page, event, remaining) if event else None
             if frame is not None:
                 try:
                     locator = self._locator(frame, selector_type, selector)
@@ -910,7 +920,8 @@ class WorkflowExecutor:
         fallback_type = str(event.get('fallback_selector_type', 'none'))
         while True:
             page = active_page(page)
-            frame = self._event_frame(page, event)
+            remaining = max(0, int((deadline - time.monotonic()) * 1000))
+            frame = self._event_frame(page, event, remaining)
             try:
                 locators = (
                     [self._locator(frame, event['selector_type'], selector)]
@@ -1003,7 +1014,9 @@ class WorkflowExecutor:
         self._spinner_observed_frames.intersection_update(current_frames)
         frames = all_frames
         if event and str(event.get('iframe_path', '')).strip():
-            target_frame = self._event_frame(page, event)
+            target_frame = self._event_frame(
+                page, event, int(event.get('timeout_ms', 10000)),
+            )
             if target_frame is not None:
                 frames = list(dict.fromkeys((page.main_frame, target_frame)))
         states: dict[Any, tuple[int, bool]] = {}
@@ -1131,7 +1144,7 @@ class WorkflowExecutor:
     ) -> Any:
         fallback_type = str(event.get('fallback_selector_type', 'none'))
         if str(event.get('iframe_path', '')).strip():
-            frame = self._event_frame(page, event)
+            frame = self._event_frame(page, event, timeout)
             try:
                 return self._unique_locator_in_frame(
                     page, frame, event['selector_type'], selector, timeout,
@@ -1177,7 +1190,7 @@ class WorkflowExecutor:
 
     def _file_input_locator(self, page: Any, event: dict[str, Any], selector: str, fallback_selector: str, timeout: int=10000) -> Any:
         """非表示の場合もある file input を可視性判定なしで一意に取得する。"""
-        frame = self._event_frame(page, event)
+        frame = self._event_frame(page, event, timeout)
         fallback_type = str(event.get('fallback_selector_type', 'none'))
         if frame is not None:
             try:

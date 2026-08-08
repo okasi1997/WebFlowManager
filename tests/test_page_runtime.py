@@ -277,6 +277,32 @@ class PageRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'msg.0592'):
             executor._event_frame(object(), {'iframe_path': '["iframe"]'})
 
+    def test_explicit_iframe_path_waits_until_dynamic_frame_is_stable(self) -> None:
+        target = object()
+        results = iter((None, None, target))
+
+        class Page:
+            def __init__(self):
+                self.waits = []
+                self.context = type('Context', (), {'pages': [self]})()
+
+            def is_closed(self):
+                return False
+
+            def wait_for_timeout(self, milliseconds):
+                self.waits.append(milliseconds)
+
+        page = Page()
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        executor._saved_event_frame = lambda *_args: next(results)
+
+        result = executor._event_frame(
+            page, {'iframe_path': '["#dynamic-frame"]'}, 1000,
+        )
+
+        self.assertIs(result, target)
+        self.assertEqual(page.waits, [100, 100])
+
     def test_saved_iframe_path_ignores_hidden_duplicate_frame(self) -> None:
         class Element:
             def __init__(self, visible):
