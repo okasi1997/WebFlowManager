@@ -184,6 +184,11 @@ class ElementPicker:
                         matches.append(child)
                 except Exception:
                     continue
+            if len(matches) > 1:
+                matches = [
+                    child for child in matches
+                    if child.frame_element().is_visible()
+                ]
             if len(matches) != 1 or matches[0] is not current:
                 raise RuntimeError('msg.0593')
             selectors.append(selector)

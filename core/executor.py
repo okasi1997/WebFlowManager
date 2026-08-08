@@ -640,6 +640,11 @@ class WorkflowExecutor:
                             matches.append(child)
                     except Exception:
                         continue
+                if len(matches) > 1:
+                    matches = [
+                        child for child in matches
+                        if child.frame_element().is_visible()
+                    ]
                 if len(matches) != 1:
                     return None
                 current = matches[0]

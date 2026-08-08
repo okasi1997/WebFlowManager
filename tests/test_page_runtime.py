@@ -253,6 +253,9 @@ class PageRuntimeTests(unittest.TestCase):
             def evaluate(self, _script, selector=None):
                 return True if selector is not None else 'iframe[id^="dynamic-"]'
 
+            def is_visible(self):
+                return True
+
         parent = type('ParentFrame', (), {'parent_frame': None, 'child_frames': []})()
         selected = type(
             'ChildFrame', (),
@@ -273,6 +276,42 @@ class PageRuntimeTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, 'msg.0592'):
             executor._event_frame(object(), {'iframe_path': '["iframe"]'})
+
+    def test_saved_iframe_path_ignores_hidden_duplicate_frame(self) -> None:
+        class Element:
+            def __init__(self, visible):
+                self.visible = visible
+
+            def evaluate(self, _script, _selector):
+                return True
+
+            def is_visible(self):
+                return self.visible
+
+        class ChildFrame:
+            child_frames = []
+
+            def __init__(self, visible):
+                self.element = Element(visible)
+
+            def frame_element(self):
+                return self.element
+
+            def is_detached(self):
+                return False
+
+        hidden = ChildFrame(False)
+        visible = ChildFrame(True)
+        main = type('MainFrame', (), {'child_frames': [hidden, visible]})()
+        page = type('Page', (), {'main_frame': main, 'frames': [main, hidden, visible]})()
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+
+        with patch('core.executor.active_page', side_effect=lambda current: current):
+            result = executor._saved_event_frame(
+                page, {'iframe_path': '["iframe[id^=detail]"]'},
+            )
+
+        self.assertIs(result, visible)
 
     def test_event_execution_does_not_run_spinner_scan_while_disabled(self) -> None:
         class Context:
