@@ -976,6 +976,8 @@ class PageRuntimeTests(unittest.TestCase):
         self.assertIn('const semanticAnchoredCandidate = ()', script)
         self.assertIn('const resolvesTarget = (xpath)', script)
         self.assertIn('normalize-space(.)=${xpathLiteral(text)}', script)
+        self.assertIn('${anchorPath}/following-sibling::*[1]//${targetCandidate}', script)
+        self.assertIn('${anchorPath}/parent::*//${targetCandidate}', script)
         self.assertIn('if (resolvesTarget(candidate)) return candidate', script)
         self.assertIn("'data-target-selection-name', 'data-testid', 'data-id', 'name', 'role'", script)
         self.assertIn('//${nodeTag}[@${attr}=${xpathLiteral(value)}]', script)

@@ -187,8 +187,15 @@ _PICKER_SCRIPT = r"""
             const anchorPath = `//${anchorTag}[normalize-space(.)=${xpathLiteral(text)}]`;
             if (xpathCount(anchorPath) !== 1) continue;
             for (const targetCandidate of targetCandidates) {
-              const candidate = `//${scopeTag}[.//${anchorTag}[normalize-space(.)=${xpathLiteral(text)}]]//${targetCandidate}`;
-              if (resolvesTarget(candidate)) return candidate;
+              const relationshipCandidates = [
+                `${anchorPath}/following-sibling::${targetCandidate}`,
+                `${anchorPath}/following-sibling::*[1]//${targetCandidate}`,
+                `${anchorPath}/parent::*//${targetCandidate}`,
+                `//${scopeTag}[.//${anchorTag}[normalize-space(.)=${xpathLiteral(text)}]]//${targetCandidate}`
+              ];
+              for (const candidate of relationshipCandidates) {
+                if (resolvesTarget(candidate)) return candidate;
+              }
             }
           }
         }
