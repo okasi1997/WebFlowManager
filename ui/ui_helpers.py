@@ -71,6 +71,8 @@ def tree_toggle_all_button(
         parent: Any,
         tree: ttk.Treeview,
         preserve_root: bool=False,
+        expand_text: str='msg.0580',
+        collapse_text: str='msg.0581',
         **button_options: Any,
 ) -> ttk.Button:
     """全階層の展開状態に応じて表示が切り替わる共通ボタンを作成する。"""
@@ -99,7 +101,7 @@ def tree_toggle_all_button(
             items = expandable_items()
             has_closed = any(not bool(tree.item(item, 'open')) for item in items)
             button.configure(
-                text='msg.0580' if has_closed else 'msg.0581',
+                text=expand_text if has_closed else collapse_text,
                 state='normal' if items else 'disabled',
             )
         except tk.TclError:

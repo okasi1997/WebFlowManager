@@ -280,6 +280,83 @@ class FlowManagerApp:
         dialog.bind('<Destroy>', lambda event: self.open_dialogs.pop(key, None) if event.widget is dialog else None, add='+')
         return dialog
 
+    def _show_toolbar_popup(
+            self,
+            anchor: tk.Widget,
+            items: tuple[tuple[str, Callable[[], None]], ...],
+    ) -> None:
+        """原生 Menu を使わず、主画面と同じボタンでポップアップを表示する。"""
+        existing = getattr(self, '_toolbar_popup', None)
+        if existing is not None and existing.winfo_exists():
+            existing.destroy()
+            self._toolbar_popup = None
+            return
+
+        popup = tk.Frame(
+            self.root,
+            background='#FFFFFF',
+            highlightbackground='#D9E0E7',
+            highlightcolor='#D9E0E7',
+            highlightthickness=1,
+            bd=0,
+        )
+        self._toolbar_popup = popup
+
+        shell = ttk.Frame(popup, padding=4, style='PopupMenu.TFrame')
+        shell.pack(fill='both', expand=True)
+        width = max(14, max(len(tr(label)) for label, _command in items) + 4)
+
+        root_click_binding: str | None = None
+        root_escape_binding: str | None = None
+
+        def close_popup() -> None:
+            nonlocal root_click_binding, root_escape_binding
+            if root_click_binding is not None:
+                self.root.unbind('<Button-1>', root_click_binding)
+                root_click_binding = None
+            if root_escape_binding is not None:
+                self.root.unbind('<Escape>', root_escape_binding)
+                root_escape_binding = None
+            if popup.winfo_exists():
+                popup.destroy()
+            if getattr(self, '_toolbar_popup', None) is popup:
+                self._toolbar_popup = None
+
+        def run(command: Callable[[], None]) -> None:
+            close_popup()
+            command()
+
+        for label, command in items:
+            ttk.Button(
+                shell,
+                text=tr(label),
+                command=lambda selected=command: run(selected),
+                style='PopupMenu.TButton',
+                width=width,
+            ).pack(fill='x', pady=1)
+
+        popup.update_idletasks()
+        x = anchor.winfo_rootx() - self.root.winfo_rootx()
+        anchor_y = anchor.winfo_rooty() - self.root.winfo_rooty()
+        below_y = anchor_y + anchor.winfo_height() + 3
+        popup_width = popup.winfo_reqwidth()
+        popup_height = popup.winfo_reqheight()
+        y = below_y
+        if below_y + popup_height > self.root.winfo_height() - 6:
+            y = anchor_y - popup_height - 3
+        x = min(x, self.root.winfo_width() - popup_width - 6)
+        popup.place(x=max(0, x), y=max(0, y), width=popup_width, height=popup_height)
+        popup.lift()
+
+        def close_on_outside_click(event: tk.Event) -> None:
+            widget_path = str(event.widget)
+            if widget_path.startswith(str(popup)) or event.widget is anchor:
+                return
+            close_popup()
+
+        root_click_binding = self.root.bind('<Button-1>', close_on_outside_click, add='+')
+        root_escape_binding = self.root.bind('<Escape>', lambda _event: close_popup(), add='+')
+
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
         if 'clam' in style.theme_names():
@@ -317,28 +394,132 @@ class FlowManagerApp:
         style.map('DialogPlaceholder.TLabel', background=[('disabled', '#F3F3F3')], foreground=[('disabled', '#A0A0A0')])
         style.configure('DialogCard.TSeparator', background='#E5E5E5', bordercolor='#E5E5E5', lightcolor='#E5E5E5', darkcolor='#E5E5E5')
         style.configure('DialogFooter.TFrame', background='#FAFAFA')
+        style.configure('PopupMenu.TFrame', background='#FFFFFF')
+        style.configure('PopupMenu.TButton', background='#FFFFFF', foreground='#1F1F1F', bordercolor='#FFFFFF', lightcolor='#FFFFFF', darkcolor='#FFFFFF', font=small_font, padding=(12, 7), relief='flat', anchor='w')
+        style.map('PopupMenu.TButton', background=[('active', '#E5F1FB'), ('pressed', '#D7EAF8')], foreground=[('active', '#075A9C')], bordercolor=[('active', '#E5F1FB')], lightcolor=[('active', '#E5F1FB')], darkcolor=[('active', '#E5F1FB')])
         style.configure('DialogFooter.TSeparator', background='#E1E1E1', bordercolor='#E1E1E1', lightcolor='#E1E1E1', darkcolor='#E1E1E1')
         style.configure('Subtle.TLabel', background='#F3F3F3', foreground='#616161', font=small_font)
         style.configure('TButton', font=small_font, padding=(10, 5), relief='flat', borderwidth=1, background='#FFFFFF', foreground='#1F1F1F', bordercolor='#D4D4D4', focusthickness=1, focuscolor='#0078D4')
         style.map('TButton', background=[('active', '#E8E8E8'), ('pressed', '#DCDCDC'), ('disabled', '#F3F3F3')], foreground=[('disabled', '#A0A0A0')], bordercolor=[('active', '#B8B8B8'), ('focus', '#0078D4')])
-        style.configure('Primary.TButton', background='#0078D4', foreground='#FFFFFF', bordercolor='#0078D4', font=(family, max(8, size - 1), 'bold'), relief='flat')
-        style.map('Primary.TButton', background=[('active', '#106EBE'), ('pressed', '#005A9E'), ('disabled', '#C8C8C8')], foreground=[('disabled', '#F3F3F3')], bordercolor=[('disabled', '#C8C8C8')])
-        style.configure('Secondary.TButton', background='#EDF2F7', foreground='#1F1F1F', bordercolor='#D9E0E7', lightcolor='#EDF2F7', darkcolor='#EDF2F7', font=small_font, padding=(10, 7), relief='flat')
+        style.configure('Primary.TButton', background='#1683D8', foreground='#FFFFFF', bordercolor='#4CA3DF', font=(family, max(8, size - 1), 'bold'), padding=(10, 2), relief='flat')
+        style.map('Primary.TButton', background=[('active', '#0F76C5'), ('pressed', '#0B67AD'), ('disabled', '#C8C8C8')], foreground=[('disabled', '#F3F3F3')], bordercolor=[('disabled', '#C8C8C8')])
+        style.configure('Secondary.TButton', background='#F1F5F9', foreground='#1F1F1F', bordercolor='#DDE4EB', lightcolor='#F1F5F9', darkcolor='#F1F5F9', font=small_font, padding=(10, 4), relief='flat')
         style.map('Secondary.TButton', background=[('active', '#E1EAF3'), ('pressed', '#D4E1ED'), ('disabled', '#F4F5F6')], foreground=[('disabled', '#A0A0A0')], bordercolor=[('active', '#C8D7E5'), ('pressed', '#B9CCDD')], lightcolor=[('active', '#E1EAF3'), ('pressed', '#D4E1ED')], darkcolor=[('active', '#E1EAF3'), ('pressed', '#D4E1ED')])
         style.configure('MessagePrimary.TButton', background='#0078D4', foreground='#FFFFFF', bordercolor='#0078D4', lightcolor='#0078D4', darkcolor='#0078D4', font=(family, max(8, size - 1), 'bold'), padding=(10, 5), relief='flat', borderwidth=1)
         style.map('MessagePrimary.TButton', background=[('active', '#106EBE'), ('pressed', '#005A9E')], bordercolor=[('active', '#106EBE'), ('pressed', '#005A9E')])
         style.configure('MessageSecondary.TButton', background='#EDF2F7', foreground='#1F1F1F', bordercolor='#D9E0E7', lightcolor='#EDF2F7', darkcolor='#EDF2F7', font=(family, max(8, size - 1), 'bold'), padding=(10, 5), relief='flat', borderwidth=1)
         style.map('MessageSecondary.TButton', background=[('active', '#E1EAF3'), ('pressed', '#D4E1ED')], bordercolor=[('active', '#C8D7E5'), ('pressed', '#B9CCDD')], lightcolor=[('active', '#E1EAF3'), ('pressed', '#D4E1ED')], darkcolor=[('active', '#E1EAF3'), ('pressed', '#D4E1ED')])
-        style.configure('Danger.TButton', background='#FDF0F1', foreground='#B42318', bordercolor='#F0C9CD', lightcolor='#FDF0F1', darkcolor='#FDF0F1', padding=(10, 7), relief='flat')
+        style.configure('Danger.TButton', background='#FFF4F4', foreground='#B42318', bordercolor='#F2D5D8', lightcolor='#FFF4F4', darkcolor='#FFF4F4', padding=(10, 4), relief='flat')
         style.map('Danger.TButton', background=[('disabled', '#F6F6F6'), ('active', '#FBE3E5'), ('pressed', '#F6D3D6')], foreground=[('disabled', '#A6A6A6'), ('active', '#9F1C13')], bordercolor=[('disabled', '#E5E5E5'), ('active', '#E7AEB4')])
-        style.configure('Toolbar.TButton', background='#F5F7FA', foreground='#1F1F1F', bordercolor='#D9DEE5', font=small_font, padding=(9, 6), relief='flat')
+        style.configure('Toolbar.TButton', background='#F7F9FB', foreground='#1F1F1F', bordercolor='#DDE3E9', font=small_font, padding=(10, 4), relief='flat')
         style.map('Toolbar.TButton', background=[('active', '#E8EEF4'), ('pressed', '#DDE6EF'), ('disabled', '#F4F5F6')], foreground=[('disabled', '#A0A0A0')], bordercolor=[('active', '#C5D1DD')])
         style.configure('ExecutionAction.TButton', background='#E1E9F1', foreground='#263746', bordercolor='#BBC9D6', lightcolor='#E1E9F1', darkcolor='#E1E9F1', font=small_font, padding=(10, 6), relief='flat', borderwidth=1)
         style.map('ExecutionAction.TButton', background=[('active', '#D2E0EC'), ('pressed', '#C3D4E3'), ('disabled', '#F1F3F5')], foreground=[('disabled', '#9A9A9A')], bordercolor=[('active', '#91ABC1'), ('pressed', '#7898B2'), ('disabled', '#E0E3E6')], lightcolor=[('active', '#D2E0EC'), ('pressed', '#C3D4E3')], darkcolor=[('active', '#D2E0EC'), ('pressed', '#C3D4E3')])
         style.configure('Action.TButton', background='#EAF2F9', foreground='#075A9C', bordercolor='#C9DCEB', lightcolor='#EAF2F9', darkcolor='#EAF2F9', font=small_font, padding=(10, 7), relief='flat')
         style.map('Action.TButton', background=[('active', '#DCEBF7'), ('pressed', '#CFE3F2'), ('disabled', '#F4F5F6')], foreground=[('disabled', '#A0A0A0')], bordercolor=[('active', '#9FC4DF'), ('focus', '#0078D4')])
-        style.configure('Toolbar.TMenubutton', background='#FFFFFF', foreground='#1F1F1F', bordercolor='#D4D4D4', arrowcolor='#616161', font=small_font, padding=(9, 5), relief='flat')
+        style.configure('Toolbar.TMenubutton', background='#FFFFFF', foreground='#1F1F1F', bordercolor='#D9E0E7', arrowcolor='#616161', font=small_font, padding=(10, 4), relief='flat')
         style.map('Toolbar.TMenubutton', background=[('active', '#E8E8E8'), ('pressed', '#DCDCDC')], bordercolor=[('active', '#B8B8B8')])
+        style.configure('Primary.TMenubutton', background='#1683D8', foreground='#FFFFFF', bordercolor='#4CA3DF', arrowcolor='#FFFFFF', font=(family, max(8, size - 1), 'bold'), padding=(10, 2), relief='flat')
+        style.map('Primary.TMenubutton', background=[('active', '#0F76C5'), ('pressed', '#0B67AD'), ('disabled', '#C8C8C8')], foreground=[('disabled', '#F3F3F3')], bordercolor=[('disabled', '#C8C8C8')], arrowcolor=[('disabled', '#F3F3F3')])
+        # clam には角丸指定がないため、共通ボタン用の小さな9スライス画像で
+        # 控えめな角丸を描画する。画像参照はアプリの寿命中保持する必要がある。
+        self._rounded_button_images: list[tk.PhotoImage] = []
+
+        def rounded_image(fill: str, border: str, radius: int=6) -> tk.PhotoImage:
+            size_px = 20
+            image = tk.PhotoImage(master=self.root, width=size_px, height=size_px)
+
+            def inside_rounded(x: int, y: int, inset: int, radius: int) -> bool:
+                low, high = inset, size_px - 1 - inset
+                if not (low <= x <= high and low <= y <= high):
+                    return False
+                center_x = low + radius if x < low + radius else high - radius if x > high - radius else x
+                center_y = low + radius if y < low + radius else high - radius if y > high - radius else y
+                return (x - center_x) ** 2 + (y - center_y) ** 2 <= radius ** 2
+
+            for y in range(size_px):
+                for x in range(size_px):
+                    if not inside_rounded(x, y, 0, radius):
+                        continue
+                    color = fill if inside_rounded(x, y, 1, max(1, radius - 1)) else border
+                    image.put(color, (x, y))
+            self._rounded_button_images.append(image)
+            return image
+
+        def rounded_style(
+                style_name: str,
+                element_name: str,
+                colors: tuple[tuple[str, str], tuple[str, str], tuple[str, str], tuple[str, str]],
+                menubutton: bool=False,
+                corner_radius: int=6,
+                slice_border: int=7,
+        ) -> None:
+            normal, active, pressed, disabled = (
+                rounded_image(*pair, radius=corner_radius) for pair in colors
+            )
+            style.element_create(
+                element_name,
+                'image',
+                normal,
+                ('pressed', pressed),
+                ('active', active),
+                ('disabled', disabled),
+                border=slice_border,
+                sticky='nsew',
+            )
+            widget = 'Menubutton' if menubutton else 'Button'
+            if menubutton:
+                children = [
+                    (f'{widget}.indicator', {'side': 'right', 'sticky': ''}),
+                    (f'{widget}.label', {'side': 'left', 'sticky': 'nswe'}),
+                ]
+            else:
+                children = [(f'{widget}.label', {'sticky': 'nswe'})]
+            style.layout(style_name, [
+                (element_name, {'sticky': 'nswe', 'children': [
+                    (f'{widget}.padding', {'sticky': 'nswe', 'children': children}),
+                ]}),
+            ])
+
+        rounded_style('Primary.TButton', 'Rounded.Primary', (
+            ('#1683D8', '#4CA3DF'), ('#0F76C5', '#3B94D2'),
+            ('#0B67AD', '#2E82BF'), ('#C8C8C8', '#A8A8A8'),
+        ), corner_radius=9, slice_border=9)
+        rounded_style('Secondary.TButton', 'Rounded.Secondary', (
+            ('#F1F5F9', '#DDE4EB'), ('#E1EAF3', '#C8D7E5'),
+            ('#D4E1ED', '#B9CCDD'), ('#F4F5F6', '#E5E5E5'),
+        ))
+        rounded_style('Danger.TButton', 'Rounded.Danger', (
+            ('#FFF4F4', '#F2D5D8'), ('#FBE3E5', '#E7AEB4'),
+            ('#F6D3D6', '#E7AEB4'), ('#F6F6F6', '#E5E5E5'),
+        ))
+        rounded_style('Toolbar.TButton', 'Rounded.Toolbar', (
+            ('#F7F9FB', '#DDE3E9'), ('#E8EEF4', '#C5D1DD'),
+            ('#DDE6EF', '#C5D1DD'), ('#F4F5F6', '#E5E5E5'),
+        ))
+        rounded_style('PopupMenu.TButton', 'Rounded.PopupMenu', (
+            ('#FFFFFF', '#FFFFFF'), ('#E5F1FB', '#E5F1FB'),
+            ('#D7EAF8', '#D7EAF8'), ('#F4F5F6', '#F4F5F6'),
+        ))
+        rounded_style('Primary.TMenubutton', 'Rounded.PrimaryMenu', (
+            ('#1683D8', '#4CA3DF'), ('#0F76C5', '#3B94D2'),
+            ('#0B67AD', '#2E82BF'), ('#C8C8C8', '#A8A8A8'),
+        ), menubutton=True, corner_radius=9, slice_border=9)
+        rounded_style('Toolbar.TMenubutton', 'Rounded.ToolbarMenu', (
+            ('#FFFFFF', '#D9E0E7'), ('#E8E8E8', '#B8B8B8'),
+            ('#DCDCDC', '#B8B8B8'), ('#F4F5F6', '#E5E5E5'),
+        ), menubutton=True)
+
+        def dropdown_arrow(color: str) -> tk.PhotoImage:
+            image = tk.PhotoImage(master=self.root, width=16, height=8)
+            for y in range(7):
+                half_width = 5 - y
+                for x in range(8 - half_width, 9 + half_width):
+                    image.put(color, (x, y))
+            return image
+
+        self._dropdown_arrow_dark = dropdown_arrow('#3D3D3D')
+        self._dropdown_arrow_light = dropdown_arrow('#FFFFFF')
         style.configure('Treeview', background='#FFFFFF', fieldbackground='#FFFFFF', foreground='#3D3D3D', rowheight=28, font=font, borderwidth=1, bordercolor='#D4D4D4')
         style.map('Treeview', background=[('selected', '#CFE8FF')], foreground=[('selected', '#3D3D3D')])
         style.configure('Status.Treeview', background='#FFFFFF', fieldbackground='#FFFFFF', foreground='#3D3D3D', rowheight=28, font=font, borderwidth=0, relief='flat')
@@ -469,9 +650,10 @@ class FlowManagerApp:
         style.configure('TEntry', font=base)
         style.configure('TCombobox', font=base)
         style.configure('TSpinbox', font=base)
-        for button_style in ('TButton', 'Toolbar.TButton', 'ExecutionAction.TButton', 'Action.TButton', 'Secondary.TButton', 'DialogAction.TButton'):
+        for button_style in ('TButton', 'Toolbar.TButton', 'PopupMenu.TButton', 'ExecutionAction.TButton', 'Action.TButton', 'Secondary.TButton', 'DialogAction.TButton'):
             style.configure(button_style, font=small)
         style.configure('Toolbar.TMenubutton', font=small)
+        style.configure('Primary.TMenubutton', font=(family, max(8, size - 1), 'bold'))
         style.configure('Primary.TButton', font=(family, max(8, size - 1), 'bold'))
         style.configure('MessagePrimary.TButton', font=(family, max(8, size - 1), 'bold'))
         style.configure('MessageSecondary.TButton', font=(family, max(8, size - 1), 'bold'))
@@ -679,28 +861,33 @@ class FlowManagerApp:
         workflow_buttons.pack(fill='x')
         ttk.Button(
             workflow_buttons, text='msg.0008', command=self._add_workflow,
-            style='Action.TButton',
-        ).grid(row=0, column=0, padx=3, pady=3, sticky='ew')
-        ttk.Button(
-            workflow_buttons, text='msg.0013', command=self._toggle_workflow,
-            style='Secondary.TButton',
-        ).grid(row=0, column=1, padx=3, pady=3, sticky='ew')
-        ttk.Button(
-            workflow_buttons, text='msg.0403', command=self._edit_workflow_guard,
-            style='Secondary.TButton',
-        ).grid(row=1, column=0, padx=3, pady=3, sticky='ew')
+            style='Primary.TButton', width=9,
+        ).pack(side='left', padx=(3, 4), pady=3)
         ttk.Button(
             workflow_buttons, text='msg.0010', command=self._delete_workflow,
-            style='Danger.TButton',
-        ).grid(row=1, column=1, padx=3, pady=3, sticky='ew')
-        for column in range(2):
-            workflow_buttons.columnconfigure(column, weight=1, uniform='workflow_action')
-        collection_buttons = ttk.Frame(left, style='EmbeddedCardBody.TFrame')
-        collection_buttons.pack(fill='x', pady=(12, 0))
-        ttk.Separator(collection_buttons).pack(fill='x', pady=(0, 8))
-        ttk.Label(collection_buttons, text='msg.0015', style='EmbeddedCardSubtle.TLabel').pack(anchor='w', pady=(0, 5))
-        ttk.Button(collection_buttons, text='msg.0016', command=self._import, style='Toolbar.TButton').pack(fill='x', pady=2)
-        ttk.Button(collection_buttons, text='msg.0017', command=self._export, style='Toolbar.TButton').pack(fill='x', pady=2)
+            style='Danger.TButton', width=8,
+        ).pack(side='left', padx=4, pady=3)
+        self.workflow_more_button = ttk.Button(
+            workflow_buttons, text='⋯', width=3, style='Toolbar.TButton',
+        )
+        self.workflow_more_button.configure(command=lambda: self._show_toolbar_popup(
+            self.workflow_more_button,
+            (('msg.0013', self._toggle_workflow), ('msg.0403', self._edit_workflow_guard)),
+        ))
+        self.workflow_more_button.pack(side='right', padx=(4, 3), pady=3)
+        self.flow_json_button = ttk.Button(
+            workflow_buttons,
+            text='msg.0596',
+            image=self._dropdown_arrow_dark,
+            compound='right',
+            style='Toolbar.TButton',
+            width=12,
+        )
+        self.flow_json_button.configure(command=lambda: self._show_toolbar_popup(
+            self.flow_json_button,
+            (('msg.0016', self._import), ('msg.0017', self._export)),
+        ))
+        self.flow_json_button.pack(side='right', padx=4, pady=3)
         header = ttk.Frame(right, style='EmbeddedCardBody.TFrame')
         header.pack(fill='x')
         self.title_label = ttk.Label(header, text='msg.0018', style='PageTitle.TLabel')
@@ -744,26 +931,49 @@ class FlowManagerApp:
         self._bind_drag_sort(self.event_tree, 'event')
         event_buttons = ttk.Frame(event_tab, style='EmbeddedCardBody.TFrame')
         event_buttons.pack(fill='x')
+        self.add_event_button = ttk.Button(
+            event_buttons,
+            text='msg.0594',
+            image=self._dropdown_arrow_light,
+            compound='right',
+            style='Primary.TButton',
+            width=9,
+        )
+        self.add_event_button.configure(command=lambda: self._show_toolbar_popup(
+            self.add_event_button,
+            (('msg.0034', self._add_event), ('msg.0413', self._add_event_group)),
+        ))
+        self.add_event_button.pack(side='left', padx=(3, 4), pady=2)
         event_actions = (
-            ('msg.0034', self._add_event, 'Action.TButton'),
-            ('msg.0413', self._add_event_group, 'Action.TButton'),
             ('msg.0035', self._edit_event, 'TButton'),
-            ('msg.0011', lambda: self._move_event(-1), 'TButton'),
-            ('msg.0012', lambda: self._move_event(1), 'TButton'),
             ('msg.0010', self._delete_event, 'Danger.TButton'),
         )
-        for index, (text, command, button_style) in enumerate(event_actions):
+        for text, command, button_style in event_actions:
             if button_style == 'TButton':
                 button_style = 'Secondary.TButton'
-            ttk.Button(event_buttons, text=text, command=command, style=button_style).grid(
-                row=0, column=index, padx=3, pady=2, sticky='ew'
+            ttk.Button(event_buttons, text=text, command=command, style=button_style, width=8).pack(
+                side='left', padx=4, pady=2
             )
-            event_buttons.columnconfigure(index, weight=1, uniform='event_action')
-        toggle_column = len(event_actions)
-        tree_toggle_all_button(
-            event_buttons, self.event_tree, style='Secondary.TButton',
-        ).grid(row=0, column=toggle_column, padx=3, pady=2, sticky='ew')
-        event_buttons.columnconfigure(toggle_column, weight=1, uniform='event_action')
+        self.event_move_up_button = ttk.Button(
+            event_buttons, text='↑', width=3, command=lambda: self._move_event(-1),
+            style='Secondary.TButton',
+        )
+        self.event_move_down_button = ttk.Button(
+            event_buttons, text='↓', width=3, command=lambda: self._move_event(1),
+            style='Secondary.TButton',
+        )
+        event_toggle_button = tree_toggle_all_button(
+            event_buttons,
+            self.event_tree,
+            expand_text='⊞',
+            collapse_text='⊟',
+            width=3,
+            style='Secondary.TButton',
+        )
+        event_toggle_button.pack(side='right', padx=(2, 3), pady=2)
+        self.event_move_down_button.pack(side='right', padx=2, pady=2)
+        self.event_move_up_button.pack(side='right', padx=2, pady=2)
+        self.event_toggle_button = event_toggle_button
 
         execution_header = ttk.Frame(execution_page, padding=(30, 14, 30, 12), style='PageHeader.TFrame')
         execution_header.pack(fill='x')
