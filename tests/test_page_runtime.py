@@ -523,6 +523,59 @@ class PageRuntimeTests(unittest.TestCase):
 
         self.assertEqual(element.calls, 1)
 
+    def test_explicit_iframe_path_keeps_event_lookup_inside_saved_frame(self) -> None:
+        match = object()
+        frame = object()
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        executor._event_frame = lambda *_args: frame
+        calls = []
+
+        def lookup(page, target, selector_type, selector, timeout, require_actionable=True):
+            calls.append((target, selector_type, selector, timeout, require_actionable))
+            return match
+
+        executor._unique_locator_in_frame = lookup
+        executor._unique_locator = lambda *_args, **_kwargs: self.fail(
+            '保存済み iframe の外を検索してはいけません。'
+        )
+        result = executor._event_locator(
+            object(),
+            {
+                'selector_type': 'role',
+                'fallback_selector_type': 'none',
+                'iframe_path': '["#detail-frame"]',
+            },
+            'button|選択', '', 30000,
+        )
+
+        self.assertIs(result, match)
+        self.assertEqual(calls, [(frame, 'role', 'button|選択', 30000, True)])
+
+    def test_explicit_iframe_path_keeps_fast_lookup_inside_saved_frame(self) -> None:
+        match = object()
+        frame = object()
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        executor._event_frame = lambda *_args: frame
+        executor._unique_locator_in_frame = lambda *_args, **_kwargs: match
+        executor._cached_input_locator = lambda *_args, **_kwargs: self.fail(
+            '保存済み iframe がある場合はキャッシュへ切り替えてはいけません。'
+        )
+        executor._event_locator = lambda *_args, **_kwargs: self.fail(
+            '保存済み iframe がある場合は全 frame 検索へ切り替えてはいけません。'
+        )
+
+        result = executor._fast_event_locator(
+            object(),
+            {
+                'selector_type': 'css',
+                'fallback_selector_type': 'none',
+                'iframe_path': '["#detail-frame"]',
+            },
+            '#name', '', 30000,
+        )
+
+        self.assertIs(result, match)
+
     def test_locator_lookup_retries_after_dynamic_target_replacement(self) -> None:
         class Page:
             def __init__(self):

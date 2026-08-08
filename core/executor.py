@@ -577,6 +577,41 @@ class WorkflowExecutor:
             raise RuntimeError(f'msg.0204{len(all_matches)}msg.0205{len(visible)}msg.0206{len(actionable)}msg.0073')
         return actionable[0]
 
+    def _unique_locator_in_frame(
+        self, page: Any, frame: Any, selector_type: str, selector: str,
+        timeout: int=10000, require_actionable: bool=True,
+    ) -> Any:
+        """指定された frame の外へ探索範囲を広げず、一意な要素が現れるまで待機する。"""
+        deadline = time.monotonic() + timeout / 1000
+        matches: list[Any] = []
+        visible: list[Any] = []
+        actionable: list[Any] = []
+        while True:
+            try:
+                locator = self._locator(frame, selector_type, selector)
+                matches = [locator.nth(index) for index in range(locator.count())]
+                if len(matches) == 1 and not require_actionable:
+                    return matches[0]
+                visible = [item for item in matches if item.is_visible()]
+                if len(matches) == 1 and len(visible) == 1:
+                    visible[0].scroll_into_view_if_needed(
+                        timeout=max(1, int((deadline - time.monotonic()) * 1000)),
+                    )
+                    actionable = [visible[0]] if is_topmost(visible[0]) else []
+                    if actionable:
+                        return actionable[0]
+                else:
+                    actionable = []
+            except Exception as error:
+                if not self._is_transient_target_error(error):
+                    raise
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f'msg.0204{len(matches)}msg.0205{len(visible)}'
+                    f'msg.0206{len(actionable)}msg.0073'
+                )
+            active_page(page).wait_for_timeout(100)
+
     def _cached_input_locator(self, page: Any, selector_type: str, selector: str, timeout: int) -> Any | None:
         """連続した軽量操作時、直前に確認済みの frame 内だけを高速に検索する。"""
         if self._input_frame_cache is None:
@@ -690,11 +725,25 @@ class WorkflowExecutor:
     ) -> Any:
         """軽量操作向けに、重複する操作可能性検査を省いて一意な要素を取得する。"""
         selector_type = event['selector_type']
+        fallback_type = str(event.get('fallback_selector_type', 'none'))
+        if str(event.get('iframe_path', '')).strip():
+            frame = self._event_frame(page, event)
+            try:
+                return self._unique_locator_in_frame(
+                    page, frame, selector_type, selector, timeout,
+                    require_actionable=False,
+                )
+            except RuntimeError:
+                if fallback_type == 'none' or not fallback_selector:
+                    raise
+                return self._unique_locator_in_frame(
+                    page, frame, fallback_type, fallback_selector, timeout,
+                    require_actionable=False,
+                )
         locator = self._locator_in_saved_frame(
             page, event, selector_type, selector, timeout,
             require_actionable=False,
         )
-        fallback_type = str(event.get('fallback_selector_type', 'none'))
         if locator is None and fallback_type != 'none' and fallback_selector:
             locator = self._locator_in_saved_frame(
                 page, event, fallback_type, fallback_selector, timeout,
@@ -1062,13 +1111,28 @@ class WorkflowExecutor:
         fallback_selector: str, timeout: int=10000,
         require_actionable: bool=True,
     ) -> Any:
+        fallback_type = str(event.get('fallback_selector_type', 'none'))
+        if str(event.get('iframe_path', '')).strip():
+            frame = self._event_frame(page, event)
+            try:
+                return self._unique_locator_in_frame(
+                    page, frame, event['selector_type'], selector, timeout,
+                    require_actionable,
+                )
+            except RuntimeError:
+                if fallback_type == 'none' or not fallback_selector:
+                    raise
+                self.logger(f'msg.0212{fallback_type}: "{fallback_selector}"')
+                return self._unique_locator_in_frame(
+                    page, frame, fallback_type, fallback_selector, timeout,
+                    require_actionable,
+                )
         saved = self._locator_in_saved_frame(
             page, event, event['selector_type'], selector, timeout,
             require_actionable,
         )
         if saved is not None:
             return saved
-        fallback_type = str(event.get('fallback_selector_type', 'none'))
         if fallback_type != 'none' and fallback_selector:
             saved_fallback = self._locator_in_saved_frame(
                 page, event, fallback_type, fallback_selector, timeout,
@@ -1099,16 +1163,17 @@ class WorkflowExecutor:
         fallback_type = str(event.get('fallback_selector_type', 'none'))
         if frame is not None:
             try:
-                locator = self._locator(frame, event['selector_type'], selector)
-                if locator.count() == 1:
-                    return locator.nth(0)
-                if fallback_type != 'none' and fallback_selector:
-                    fallback = self._locator(frame, fallback_type, fallback_selector)
-                    if fallback.count() == 1:
-                        return fallback.nth(0)
-            except Exception:
-                # 保存経路内の検索に失敗した場合は従来の全 frame 検索へ戻す。
-                pass
+                return self._unique_locator_in_frame(
+                    page, frame, event['selector_type'], selector, timeout,
+                    require_actionable=False,
+                )
+            except RuntimeError:
+                if fallback_type == 'none' or not fallback_selector:
+                    raise
+                return self._unique_locator_in_frame(
+                    page, frame, fallback_type, fallback_selector, timeout,
+                    require_actionable=False,
+                )
         deadline = time.monotonic() + timeout / 1000
         matches: list[Any] = []
         while time.monotonic() < deadline:
