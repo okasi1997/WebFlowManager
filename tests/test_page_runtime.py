@@ -231,6 +231,8 @@ class PageRuntimeTests(unittest.TestCase):
 
         self.assertEqual(path, '["div[data-id=\\"stable-area\\"] > iframe:nth-of-type(1)"]')
         self.assertIn('const stableId = value =>', element.script)
+        self.assertIn('const fuzzyNumericIdSelector = node =>', element.script)
+        self.assertIn("id.split(/\\d{4,}/)", element.script)
         self.assertIn("['data-testid', 'data-id', 'name', 'title']", element.script)
         self.assertIn("if (stableId(elementId))", element.script)
 
@@ -242,6 +244,13 @@ class PageRuntimeTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             EventDialog._normalize_iframe_path('#outer')
+
+    def test_explicit_iframe_path_does_not_fall_back_to_all_frames(self) -> None:
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        executor._saved_event_frame = lambda *_args: None
+
+        with self.assertRaisesRegex(RuntimeError, 'msg.0592'):
+            executor._event_frame(object(), {'iframe_path': '["iframe"]'})
 
     def test_event_execution_does_not_run_spinner_scan_while_disabled(self) -> None:
         class Context:

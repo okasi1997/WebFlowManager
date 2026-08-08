@@ -107,6 +107,20 @@ class ElementPicker:
                         && !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(value)
                         && !hasDynamicToken;
                 };
+                const fuzzyNumericIdSelector = node => {
+                    const id = String(node.getAttribute('id') || '');
+                    if (!/\\d{4,}/.test(id)) return '';
+                    const parts = id.split(/\\d{4,}/).filter(part => part.length >= 2);
+                    if (!parts.length) return '';
+                    const conditions = parts.map((part, index) => {
+                        const operator = index === 0 && !/^\\d{4,}/.test(id)
+                            ? '^=' : index === parts.length - 1 && !/\\d{4,}$/.test(id)
+                            ? '$=' : '*=';
+                        return `[id${operator}"${escape(part)}"]`;
+                    }).join('');
+                    const selector = `${node.localName}${conditions}`;
+                    return unique(selector) ? selector : '';
+                };
                 for (const name of ['data-testid', 'data-id', 'name', 'title']) {
                     const value = element.getAttribute(name);
                     if (!value) continue;
@@ -118,6 +132,8 @@ class ElementPicker:
                     const selector = `#${escape(elementId)}`;
                     if (unique(selector)) return selector;
                 }
+                const fuzzyElementId = fuzzyNumericIdSelector(element);
+                if (fuzzyElementId) return fuzzyElementId;
                 const segment = node => {
                     const siblings = Array.from(node.parentElement.children)
                         .filter(item => item.localName === node.localName);
@@ -135,6 +151,8 @@ class ElementPicker:
                         const selector = `#${escape(id)}`;
                         if (unique(selector)) return selector;
                     }
+                    const fuzzyId = fuzzyNumericIdSelector(node);
+                    if (fuzzyId) return fuzzyId;
                     return '';
                 };
                 let node = element;
