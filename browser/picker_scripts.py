@@ -164,6 +164,37 @@ _PICKER_SCRIPT = r"""
       candidates.push(nodeTag);
       return [...new Set(candidates)];
     };
+    const resolvesTarget = (xpath) => {
+      const result = document.evaluate(
+        xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
+      );
+      return result.snapshotLength === 1 && result.snapshotItem(0) === element;
+    };
+    const semanticAnchoredCandidate = () => {
+      const semanticSelector = [
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'legend', 'label',
+        '[role="heading"]'
+      ].join(',');
+      let scope = element.parentElement;
+      for (let depth = 0; scope && depth < 7; depth += 1, scope = scope.parentElement) {
+        const scopeTag = scope.tagName.toLowerCase();
+        const anchors = Array.from(scope.querySelectorAll(semanticSelector))
+          .filter(anchor => anchor !== element && (anchor.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING))
+          .reverse();
+        for (const anchor of anchors) {
+          const anchorTag = anchor.tagName.toLowerCase();
+          for (const text of elementTextCandidates(anchor)) {
+            const anchorPath = `//${anchorTag}[normalize-space(.)=${xpathLiteral(text)}]`;
+            if (xpathCount(anchorPath) !== 1) continue;
+            for (const targetCandidate of targetCandidates) {
+              const candidate = `//${scopeTag}[.//${anchorTag}[normalize-space(.)=${xpathLiteral(text)}]]//${targetCandidate}`;
+              if (resolvesTarget(candidate)) return candidate;
+            }
+          }
+        }
+      }
+      return '';
+    };
     const segment = (node) => {
       const nodeTag = node.tagName.toLowerCase();
       if (!node.parentElement) return `${nodeTag}[1]`;
@@ -175,6 +206,9 @@ _PICKER_SCRIPT = r"""
     const parts = [];
     const plainParts = [];
     const targetCandidates = scopedTargetCandidates(element);
+    // 同名要素が複数ある場合は、位置番号より先に近隣の見出しを意味的な起点として利用する。
+    const semanticCandidate = semanticAnchoredCandidate();
+    if (semanticCandidate) return semanticCandidate;
     let current = element;
     while (current && current.nodeType === Node.ELEMENT_NODE) {
       parts.unshift(segment(current));

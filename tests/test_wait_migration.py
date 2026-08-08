@@ -1,0 +1,77 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from core.database import Database
+from core.settings import SUPPORTED_ACTIONS, SUPPORTED_SELECTOR_TYPES
+
+
+class WaitMigrationTests(unittest.TestCase):
+    def test_existing_wait_hidden_event_is_migrated_when_database_opens(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'test.db'
+            database = Database(path)
+            workflow_id = database.add_workflow('test')
+            database.add_event(workflow_id, {
+                'name': 'hidden', 'action': 'wait_hidden', 'selector_type': 'css',
+                'selector': '.spinner', 'value': '', 'timeout_ms': 1000,
+                'enabled': 1, 'continue_on_error': 0,
+            })
+            database.close()
+
+            database = Database(path)
+            event = dict(database.list_events(workflow_id)[0])
+            database.close()
+
+        self.assertEqual(event['action'], 'wait')
+        self.assertEqual(event['value'], 'hidden')
+
+    def test_import_converts_legacy_wait_hidden_before_validation(self) -> None:
+        payload = {
+            'version': 2,
+            'type': 'web-flow-collection',
+            'workflows': [{
+                'name': 'test',
+                'events': [{
+                    'name': 'hidden', 'action': 'wait_hidden',
+                    'selector_type': 'css', 'selector': '.spinner', 'value': '',
+                }],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            folder_path = Path(folder)
+            source = folder_path / 'legacy.json'
+            source.write_text(json.dumps(payload), encoding='utf-8')
+            database = Database(folder_path / 'test.db')
+            database.import_workflow_collection(source, SUPPORTED_ACTIONS, SUPPORTED_SELECTOR_TYPES)
+            workflow = database.list_workflows()[0]
+            event = dict(database.list_events(workflow['id'])[0])
+            database.close()
+
+        self.assertNotIn('wait_hidden', SUPPORTED_ACTIONS)
+        self.assertEqual(event['action'], 'wait')
+        self.assertEqual(event['value'], 'hidden')
+
+    def test_existing_detailed_wait_condition_is_combined_as_operable(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'test.db'
+            database = Database(path)
+            workflow_id = database.add_workflow('test')
+            database.add_event(workflow_id, {
+                'name': 'editable', 'action': 'wait', 'selector_type': 'css',
+                'selector': 'input', 'value': 'editable', 'timeout_ms': 1000,
+                'enabled': 1, 'continue_on_error': 0,
+            })
+            database.close()
+
+            database = Database(path)
+            event = dict(database.list_events(workflow_id)[0])
+            database.close()
+
+        self.assertEqual(event['action'], 'wait')
+        self.assertEqual(event['value'], 'operable')
+
+
+if __name__ == '__main__':
+    unittest.main()

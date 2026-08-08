@@ -10,7 +10,6 @@ SUPPORTED_ACTIONS = (
     'fill',
     'select',
     'wait',
-    'wait_hidden',
     'press',
     'get_text',
     'screenshot',

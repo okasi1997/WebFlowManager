@@ -738,7 +738,19 @@ class WorkflowExecutor:
             else:
                 locator.select_option(value)
         elif action == 'wait':
-            self._event_locator(page, event, selector, fallback_selector, timeout)
+            legacy_operable = {'clickable', 'editable', 'selectable'}
+            condition = 'operable' if value in legacy_operable else value
+            if condition not in {'visible', 'operable', 'hidden'}:
+                condition = 'visible'
+            if condition == 'hidden':
+                self._wait_until_hidden(
+                    page, event['selector_type'], selector, timeout, event,
+                )
+            else:
+                self._wait_until_ready(
+                    page, event, selector, fallback_selector,
+                    condition, timeout,
+                )
         elif action == 'wait_hidden':
             self._wait_until_hidden(
                 page, event['selector_type'], selector, timeout, event,
@@ -809,6 +821,81 @@ class WorkflowExecutor:
             if time.monotonic() >= deadline:
                 raise RuntimeError(f'msg.0566{visible_count}msg.0567')
             page.wait_for_timeout(100)
+
+    def _wait_until_ready(
+            self, page: Any, event: dict[str, Any], selector: str,
+            fallback_selector: str, condition: str, timeout: int,
+    ) -> None:
+        """複数の一致要素から指定状態を満たす最初の要素が現れるまで待機する。"""
+        deadline = time.monotonic() + timeout / 1000
+        fallback_type = str(event.get('fallback_selector_type', 'none'))
+        while True:
+            page = active_page(page)
+            frame = self._saved_event_frame(page, event)
+            try:
+                locators = (
+                    [self._locator(frame, event['selector_type'], selector)]
+                    if frame is not None
+                    else self._locators(page, event['selector_type'], selector)
+                )
+                matches = [
+                    locator.nth(index)
+                    for locator in locators
+                    for index in range(locator.count())
+                ]
+                if not matches and fallback_type != 'none' and fallback_selector:
+                    fallback_locators = (
+                        [self._locator(frame, fallback_type, fallback_selector)]
+                        if frame is not None
+                        else self._locators(page, fallback_type, fallback_selector)
+                    )
+                    matches = [
+                        locator.nth(index)
+                        for locator in fallback_locators
+                        for index in range(locator.count())
+                    ]
+                for match in matches:
+                    if self._matches_wait_condition(match, condition, deadline):
+                        return
+            except Exception as error:
+                if not self._is_transient_target_error(error):
+                    raise
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f'msg.0588{condition}')
+            page.wait_for_timeout(100)
+
+    @staticmethod
+    def _matches_wait_condition(match: Any, condition: str, deadline: float) -> bool:
+        """一つの要素が選択された待機状態を満たすか判定する。"""
+        if not match.is_visible():
+            return False
+        if condition == 'visible':
+            return True
+        if condition == 'operable':
+            if not match.is_enabled():
+                return False
+            operation = match.evaluate("""element => {
+                const tag = element.localName;
+                const role = element.getAttribute('role');
+                const type = String(element.getAttribute('type') || '').toLowerCase();
+                if (tag === 'select' || role === 'combobox') return 'select';
+                if (tag === 'textarea' || element.isContentEditable
+                    || (tag === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image'].includes(type))) {
+                    return 'input';
+                }
+                return 'click';
+            }""")
+            if operation == 'input':
+                return bool(match.is_editable())
+            if operation == 'select':
+                return True
+            remaining_ms = max(1, min(100, int((deadline - time.monotonic()) * 1000)))
+            try:
+                match.click(trial=True, timeout=remaining_ms)
+                return True
+            except Exception:
+                return False
+        return False
 
     @staticmethod
     def _requires_spinner_check(event: dict[str, Any]) -> bool:

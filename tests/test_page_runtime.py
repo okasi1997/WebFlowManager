@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import call, patch
 
@@ -665,6 +666,92 @@ class PageRuntimeTests(unittest.TestCase):
 
         self.assertEqual(page.polls, 3)
 
+    def test_wait_visible_accepts_the_first_visible_element_from_multiple_matches(self) -> None:
+        class Context:
+            pages = []
+
+        class Element:
+            def __init__(self, visible):
+                self.visible = visible
+
+            def is_visible(self):
+                return self.visible
+
+        class Collection:
+            elements = [Element(False), Element(True)]
+
+            def count(self):
+                return len(self.elements)
+
+            def nth(self, index):
+                return self.elements[index]
+
+        class Page:
+            context = Context()
+
+            def is_closed(self):
+                return False
+
+            def wait_for_timeout(self, _milliseconds):
+                raise AssertionError('visible element should complete immediately')
+
+        page = Page()
+        page.context.pages = [page]
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        executor._locators = lambda *_args: [Collection()]
+
+        executor._wait_until_ready(
+            page,
+            {'selector_type': 'css', 'fallback_selector_type': 'none'},
+            '.item', '', 'visible', 1000,
+        )
+
+    def test_wait_operable_uses_playwright_trial_click_for_button(self) -> None:
+        class Element:
+            clicked = None
+
+            def is_visible(self):
+                return True
+
+            def is_enabled(self):
+                return True
+
+            def evaluate(self, _script):
+                return 'click'
+
+            def click(self, **kwargs):
+                self.clicked = kwargs
+
+        element = Element()
+
+        self.assertTrue(
+            WorkflowExecutor._matches_wait_condition(
+                element, 'operable', time.monotonic() + 1,
+            )
+        )
+        self.assertTrue(element.clicked['trial'])
+        self.assertGreater(element.clicked['timeout'], 0)
+
+    def test_wait_operable_checks_editability_for_input(self) -> None:
+        class Element:
+            def is_visible(self):
+                return True
+
+            def is_enabled(self):
+                return True
+
+            def evaluate(self, _script):
+                return 'input'
+
+            def is_editable(self):
+                return True
+
+        self.assertTrue(
+            WorkflowExecutor._matches_wait_condition(
+                Element(), 'operable', time.monotonic() + 1,
+            )
+        )
+
     def test_wait_hidden_prefers_the_saved_iframe(self) -> None:
         class Match:
             def is_visible(self):
@@ -885,6 +972,10 @@ class PageRuntimeTests(unittest.TestCase):
         self.assertIn('unique(`${anchor}//${suffix}`)', script)
         self.assertIn('const anchorCandidate = (node)', script)
         self.assertIn('const scopedTargetCandidates = (node)', script)
+        self.assertIn('const semanticAnchoredCandidate = ()', script)
+        self.assertIn('const resolvesTarget = (xpath)', script)
+        self.assertIn('normalize-space(.)=${xpathLiteral(text)}', script)
+        self.assertIn('if (resolvesTarget(candidate)) return candidate', script)
         self.assertIn("'data-target-selection-name', 'data-testid', 'data-id', 'name', 'role'", script)
         self.assertIn('//${nodeTag}[@${attr}=${xpathLiteral(value)}]', script)
         self.assertIn('unique(`${anchor}//${targetCandidate}`)', script)

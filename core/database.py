@@ -53,6 +53,12 @@ class Database:
             self.connection.execute('ALTER TABLE events ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0')
         if 'retry_interval_ms' not in event_columns:
             self.connection.execute('ALTER TABLE events ADD COLUMN retry_interval_ms INTEGER NOT NULL DEFAULT 0')
+        # 旧待機操作を統合後の形式へ移行し、画面と保存形式を一つにそろえる。
+        self.connection.execute("UPDATE events SET action='wait', value='hidden' WHERE action='wait_hidden'")
+        self.connection.execute(
+            "UPDATE events SET value='operable' "
+            "WHERE action='wait' AND value IN ('clickable', 'editable', 'selectable')"
+        )
         global_record_columns = {row['name'] for row in self.connection.execute('PRAGMA table_info(global_data_records)').fetchall()}
         if 'enabled' not in global_record_columns:
             self.connection.execute('ALTER TABLE global_data_records ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1')
@@ -392,6 +398,13 @@ class Database:
             for event_index, event in enumerate(events, 1):
                 if not isinstance(event, dict) or any((not isinstance(event.get(key), str) for key in required)):
                     raise ValueError(f'msg.0119{name}msg.0121{event_index}msg.0122')
+                if event['action'] == 'wait_hidden':
+                    event = dict(event)
+                    event['action'] = 'wait'
+                    event['value'] = 'hidden'
+                elif event['action'] == 'wait' and event['value'] in {'clickable', 'editable', 'selectable'}:
+                    event = dict(event)
+                    event['value'] = 'operable'
                 if event['action'] not in allowed_actions:
                     raise ValueError(f"msg.0119{name}msg.0123{event['action']}")
                 if event['selector_type'] not in allowed_selector_types:

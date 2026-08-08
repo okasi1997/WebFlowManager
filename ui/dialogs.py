@@ -450,6 +450,13 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         self.field_widgets: dict[str, tk.Widget] = {}
         self.field_labels: dict[str, ttk.Label] = {}
         event = event or {}
+        if event.get('action') == 'wait_hidden':
+            event = dict(event)
+            event['action'] = 'wait'
+            event['value'] = 'hidden'
+        elif event.get('action') == 'wait' and event.get('value') in {'clickable', 'editable', 'selectable'}:
+            event = dict(event)
+            event['value'] = 'operable'
         self.iframe_path = str(event.get('iframe_path', ''))
         self.guard = decode_guard(event.get('guard', event.get('guard_json', '')))
         self.select_first = tk.BooleanVar(
@@ -458,8 +465,16 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         self.failure_action_labels = {'stop': tr('msg.0432'), 'continue': tr('msg.0433'), 'refresh': tr('msg.0425'), 'goto': tr('msg.0426')}
         stored_failure_action = str(event.get('failure_action', 'none'))
         failure_key = 'continue' if stored_failure_action == 'none' and event.get('continue_on_error', 0) else ('stop' if stored_failure_action == 'none' else stored_failure_action)
-        initial_value = '' if self.select_first.get() else str(event.get('value', ''))
+        stored_event_value = str(event.get('value', ''))
+        initial_value = '' if self.select_first.get() or event.get('action') == 'wait' else stored_event_value
         self.values = {'name': tk.StringVar(value=str(event.get('name', ''))), 'action': tk.StringVar(value=str(event.get('action', ''))), 'selector_type': tk.StringVar(value=str(event.get('selector_type', 'role' if 'role' in selector_types else selector_types[0]))), 'selector': tk.StringVar(value=str(event.get('selector', ''))), 'fallback_selector_type': tk.StringVar(value=str(event.get('fallback_selector_type', 'none'))), 'fallback_selector': tk.StringVar(value=str(event.get('fallback_selector', ''))), 'value': tk.StringVar(value=initial_value), 'timeout_ms': tk.StringVar(value=str(event.get('timeout_ms', default_timeout_ms))), 'retry_count': tk.StringVar(value=str(event.get('retry_count', 0))), 'retry_interval_ms': tk.StringVar(value=str(event.get('retry_interval_ms', 0))), 'enabled': tk.BooleanVar(value=bool(event.get('enabled', 1))), 'failure_action': tk.StringVar(value=self.failure_action_labels.get(failure_key, self.failure_action_labels['stop'])), 'failure_target': tk.StringVar(value=str(event.get('failure_target', ''))), 'data_path': tk.StringVar(value=str(event.get('data_path', ''))), 'target_url': tk.StringVar(value=default_url)}
+        self.wait_condition_labels = {
+            'visible': tr('msg.0583'),
+            'hidden': tr('msg.0587'),
+            'operable': tr('msg.0584'),
+        }
+        stored_wait_condition = stored_event_value if stored_event_value in self.wait_condition_labels else 'visible'
+        self.wait_condition = tk.StringVar(value=self.wait_condition_labels[stored_wait_condition])
 
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
@@ -541,6 +556,15 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         operation.columnconfigure(1, weight=1)
         operation.columnconfigure(3, weight=0, minsize=120)
         add_field(operation, 2, 'msg.0133', 'value', columnspan=2)
+        self.wait_condition_box = ttk.Combobox(
+            operation,
+            textvariable=self.wait_condition,
+            values=tuple(self.wait_condition_labels.values()),
+            state='readonly',
+            style='Dialog.TCombobox',
+        )
+        self.wait_condition_box.grid(row=2, column=1, columnspan=2, padx=(0, 10), pady=4, sticky='ew')
+        self.wait_condition_box.grid_remove()
         self.file_choose_button = ttk.Button(operation, text='msg.0419', command=self._choose_upload_file, style='DialogInline.TButton')
         self.file_choose_button.grid(row=2, column=3, padx=(8, 10), pady=5, sticky='ew')
         self.value_data_reference_button = ttk.Button(
@@ -731,7 +755,7 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         # retry/loop の旧境界イベントでは失敗時動作を設定しない。
         action = self.values['action'].get()
         locator_actions = {'click', 'fill', 'select', 'wait', 'wait_hidden', 'press', 'get_text', 'upload_file'}
-        value_actions = {'goto', 'fill', 'select', 'press', 'get_text', 'screenshot', 'pause', 'retry_start', 'upload_file'}
+        value_actions = {'goto', 'fill', 'select', 'wait', 'press', 'get_text', 'screenshot', 'pause', 'retry_start', 'upload_file'}
         timeout_actions = {'goto', 'click', 'fill', 'select', 'wait', 'wait_hidden', 'press', 'get_text', 'pause', 'upload_file'}
         data_actions = {'fill', 'select', 'get_text', 'loop_start', 'upload_file'}
         select_first = action == 'select' and self.select_first.get()
@@ -739,6 +763,14 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         self._set_field_enabled('selector_type', can_locate)
         self._set_field_enabled('selector', can_locate)
         self._set_field_enabled('value', action in value_actions and not select_first)
+        if action == 'wait':
+            self.field_widgets['value'].grid_remove()
+            self.wait_condition_box.grid()
+            self.field_labels['value'].configure(text='msg.0582')
+        else:
+            self.wait_condition_box.grid_remove()
+            self.field_widgets['value'].grid()
+            self.field_labels['value'].configure(text='msg.0133')
         self._set_field_enabled('timeout_ms', action in timeout_actions)
         structural = action in {'loop_start', 'loop_end', 'retry_start', 'retry_end', 'group_start', 'group_end'}
         self._set_field_enabled('retry_count', not structural)
@@ -795,6 +827,14 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         path = filedialog.askopenfilename(parent=self)
         if path:
             self.values['value'].set(path)
+
+    def _wait_condition_key(self) -> str:
+        """画面表示中の待機状態を保存用の識別子へ変換する。"""
+        selected = self.wait_condition.get()
+        return next(
+            (key for key, label in self.wait_condition_labels.items() if label == selected),
+            'visible',
+        )
 
     def _pick(self) -> None:
         self._clear_error()
@@ -940,6 +980,8 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
             'value': (
                 SELECT_FIRST_VALUE
                 if self.values['action'].get() == 'select' and self.select_first.get()
+                else self._wait_condition_key()
+                if self.values['action'].get() == 'wait'
                 else self.values['value'].get()
             ),
             'timeout_ms': self.values['timeout_ms'].get(),
@@ -996,13 +1038,14 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         if failure_action == 'goto' and not failure_target.startswith(('http://', 'https://')):
             messagebox.showerror('msg.0159', 'msg.0429', parent=self)
             return
-        self.result = {'name': name, 'action': self.values['action'].get(), 'selector_type': self.values['selector_type'].get(), 'selector': self.values['selector'].get().strip(), 'fallback_selector_type': self.values['fallback_selector_type'].get(), 'fallback_selector': self.values['fallback_selector'].get().strip(), 'iframe_path': getattr(self, 'iframe_path', ''), 'value': self.values['value'].get(), 'timeout_ms': timeout, 'retry_count': event_retry_count, 'retry_interval_ms': event_retry_interval_ms, 'enabled': int(self.values['enabled'].get()), 'continue_on_error': continue_on_error, 'failure_action': failure_action, 'failure_target': failure_target if failure_action == 'goto' else '', 'data_path': self.values['data_path'].get(), 'guard': self.guard}
+        saved_value = self._wait_condition_key() if self.values['action'].get() == 'wait' else self.values['value'].get()
+        self.result = {'name': name, 'action': self.values['action'].get(), 'selector_type': self.values['selector_type'].get(), 'selector': self.values['selector'].get().strip(), 'fallback_selector_type': self.values['fallback_selector_type'].get(), 'fallback_selector': self.values['fallback_selector'].get().strip(), 'iframe_path': getattr(self, 'iframe_path', ''), 'value': saved_value, 'timeout_ms': timeout, 'retry_count': event_retry_count, 'retry_interval_ms': event_retry_interval_ms, 'enabled': int(self.values['enabled'].get()), 'continue_on_error': continue_on_error, 'failure_action': failure_action, 'failure_target': failure_target if failure_action == 'goto' else '', 'data_path': self.values['data_path'].get(), 'guard': self.guard}
         if self.result['action'] == 'select' and self.select_first.get():
             self.result['value'] = SELECT_FIRST_VALUE
             self.result['data_path'] = ''
         action = self.result['action']
         locator_actions = {'click', 'fill', 'select', 'wait', 'wait_hidden', 'press', 'get_text', 'upload_file'}
-        value_actions = {'goto', 'fill', 'select', 'press', 'get_text', 'screenshot', 'pause', 'retry_start', 'upload_file'}
+        value_actions = {'goto', 'fill', 'select', 'wait', 'press', 'get_text', 'screenshot', 'pause', 'retry_start', 'upload_file'}
         data_actions = {'fill', 'select', 'get_text', 'loop_start', 'upload_file'}
         if action not in locator_actions:
             self.result.update(selector_type='none', selector='', fallback_selector_type='none', fallback_selector='', iframe_path='')
