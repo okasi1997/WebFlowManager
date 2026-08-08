@@ -473,5 +473,6 @@
   "msg.0589": "iframe 定位信息",
   "msg.0590": "主页面",
   "msg.0591": "iframe 定位信息请输入 CSS selector 字符串数组。例如：[\"#main-frame\", \"iframe[name=detail]\"]",
-  "msg.0592": "iframe 定位信息无法唯一解析。请确认每一层 selector 只定位一个 iframe。"
+  "msg.0592": "iframe 定位信息无法唯一解析。请确认每一层 selector 只定位一个 iframe。",
+  "msg.0593": "无法为选中的 iframe 生成唯一定位信息。"
 }

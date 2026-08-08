@@ -216,16 +216,19 @@ class PageRuntimeTests(unittest.TestCase):
         class Element:
             script = ''
 
-            def evaluate(self, script):
+            def evaluate(self, script, selector=None):
+                if selector is not None:
+                    return True
                 self.script = script
                 return 'div[data-id="stable-area"] > iframe:nth-of-type(1)'
 
-        parent = type('ParentFrame', (), {'parent_frame': None})()
+        parent = type('ParentFrame', (), {'parent_frame': None, 'child_frames': []})()
         element = Element()
         frame = type(
             'ChildFrame', (),
             {'parent_frame': parent, 'frame_element': lambda _self: element},
         )()
+        parent.child_frames = [frame]
 
         path = ElementPicker._iframe_path(frame)
 
@@ -244,6 +247,25 @@ class PageRuntimeTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             EventDialog._normalize_iframe_path('#outer')
+
+    def test_iframe_picker_rejects_selector_matching_another_sibling_frame(self) -> None:
+        class Element:
+            def evaluate(self, _script, selector=None):
+                return True if selector is not None else 'iframe[id^="dynamic-"]'
+
+        parent = type('ParentFrame', (), {'parent_frame': None, 'child_frames': []})()
+        selected = type(
+            'ChildFrame', (),
+            {'parent_frame': parent, 'frame_element': lambda _self: Element()},
+        )()
+        duplicate = type(
+            'ChildFrame', (),
+            {'parent_frame': parent, 'frame_element': lambda _self: Element()},
+        )()
+        parent.child_frames = [selected, duplicate]
+
+        with self.assertRaisesRegex(RuntimeError, 'msg.0593'):
+            ElementPicker._iframe_path(selected)
 
     def test_explicit_iframe_path_does_not_fall_back_to_all_frames(self) -> None:
         executor = WorkflowExecutor(Path('.'), lambda _message: None)

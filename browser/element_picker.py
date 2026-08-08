@@ -164,14 +164,29 @@ class ElementPicker:
                     if (parentAnchor) {
                         const shortSelector = `${parentAnchor} ${element.localName}`;
                         if (unique(shortSelector)) return shortSelector;
-                        return `${parentAnchor} > ${selector}`;
+                        const anchoredSelector = `${parentAnchor} > ${selector}`;
+                        if (unique(anchoredSelector)) return anchoredSelector;
                     }
                     selector = `${segment(node)} > ${selector}`;
                     if (!positionalSelector && unique(selector)) positionalSelector = selector;
                 }
-                return positionalSelector || selector;
+                return positionalSelector || (unique(selector) ? selector : '');
             }""")
-            selectors.append(str(selector))
+            selector = str(selector)
+            if not selector:
+                raise RuntimeError('msg.0593')
+            matches = []
+            for child in current.parent_frame.child_frames:
+                try:
+                    if child.frame_element().evaluate(
+                        '(element, selector) => element.matches(selector)', selector,
+                    ):
+                        matches.append(child)
+                except Exception:
+                    continue
+            if len(matches) != 1 or matches[0] is not current:
+                raise RuntimeError('msg.0593')
+            selectors.append(selector)
             current = current.parent_frame
         selectors.reverse()
         return json.dumps(selectors, ensure_ascii=False)
