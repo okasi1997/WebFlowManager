@@ -18,35 +18,73 @@ from i18n import tr
 class ElementPicker:
     """F2 で選択モードへ入り、操作可能な要素だけを候補として返す。"""
 
-    def _choose_unique_locator(self, page: Any, info: dict[str, str], picked_frame: Any | None=None) -> dict[str, str]:
+    def _choose_unique_locator(
+            self, page: Any, info: dict[str, str], picked_frame: Any | None=None,
+            action: str='',
+    ) -> dict[str, str]:
         # 人が理解しやすい locator から順に試し、XPath は予備として保持する。
         tag = str(info.get('tag', '')).casefold()
-        action = {'select': 'select', 'input': 'fill', 'button': 'click'}.get(tag, '')
+        suggested_action = {'select': 'select', 'input': 'fill', 'button': 'click'}.get(tag, '')
         display = info.get('label') or info.get('name') or info.get('text') or info.get('tag')
         candidates: list[tuple[str, str]] = []
-        if info.get('label'):
-            candidates.append(('label', info['label']))
-        if info.get('role') and info.get('name'):
-            candidates.append(('role', f"{info['role']}|{info['name']}"))
-        if info.get('placeholder'):
-            candidates.append(('placeholder', info['placeholder']))
-        if info.get('text'):
-            candidates.append(('text', info['text']))
-        if info.get('css'):
-            candidates.append(('css', info['css']))
-        if info.get('xpath'):
-            candidates.append(('xpath', info['xpath']))
-        for selector_type, selector in candidates:
+        fallback_xpath = info.get('xpath', '')
+        if action == 'get_text':
+            # 取得対象の文字列自体を定位条件にせず、安定属性と構造だけを使用する。
+            fallback_xpath = info.get('stable_xpath', '')
+            if fallback_xpath:
+                candidates.append(('xpath', fallback_xpath))
+            if info.get('stable_css'):
+                candidates.append(('css', info['stable_css']))
+        else:
+            if info.get('label'):
+                candidates.append(('label', info['label']))
+            if info.get('role') and info.get('name'):
+                candidates.append(('role', f"{info['role']}|{info['name']}"))
+            if info.get('placeholder'):
+                candidates.append(('placeholder', info['placeholder']))
+            if info.get('text'):
+                candidates.append(('text', info['text']))
+            if info.get('css'):
+                candidates.append(('css', info['css']))
+            if info.get('xpath'):
+                candidates.append(('xpath', info['xpath']))
+        valid_candidates: list[tuple[str, str]] = []
+        for selector_type, selector in dict.fromkeys(candidates):
             # 可視性は現在のスクロール位置に左右される。現在操作可能な一致が一件でも、
             # label／text が画面外の複数要素を指す場合があるため、DOM 全体で一意な
             # 定位だけを採用し、実行時の表示位置による対象の入れ替わりを防ぐ。
-            matches = self._matches_in_page(page, selector_type, selector)
+            matches = (
+                self._matches_in_context(picked_frame, selector_type, selector)
+                if picked_frame is not None
+                else self._matches_in_page(page, selector_type, selector)
+            )
             if len(matches) != 1:
                 continue
-            actionable = self._actionable_matches_in_page(page, selector_type, selector)
+            actionable = (
+                self._actionable_matches_in_context(picked_frame, selector_type, selector)
+                if picked_frame is not None
+                else self._actionable_matches_in_page(page, selector_type, selector)
+            )
             if len(actionable) == 1:
-                return {'selector_type': selector_type, 'selector': selector, 'fallback_selector_type': 'xpath' if selector_type != 'xpath' and info.get('xpath') else 'none', 'fallback_selector': info.get('xpath', '') if selector_type != 'xpath' else '', 'iframe_path': self._iframe_path(picked_frame), 'display': display, 'suggested_action': action, 'match_count': '1'}
-        raise RuntimeError('msg.0172')
+                valid_candidates.append((selector_type, selector))
+        if not valid_candidates:
+            raise RuntimeError('msg.0172')
+        selector_type, selector = valid_candidates[0]
+        fallback_candidates = valid_candidates[1:]
+        fallback = next(
+            (candidate for candidate in fallback_candidates if candidate[0] == 'xpath'),
+            fallback_candidates[0] if fallback_candidates else ('none', ''),
+        )
+        return {
+            'selector_type': selector_type,
+            'selector': selector,
+            'fallback_selector_type': fallback[0],
+            'fallback_selector': fallback[1],
+            'iframe_path': self._iframe_path(picked_frame),
+            'display': display,
+            'suggested_action': suggested_action,
+            'match_count': '1',
+        }
 
     @staticmethod
     def _iframe_path(frame: Any | None) -> str:
@@ -115,8 +153,23 @@ class ElementPicker:
         return actionable_matches_across_frames(page, selector_type, selector)
 
     @classmethod
+    def _actionable_matches_in_context(
+            cls, context: Any, selector_type: str, selector: str,
+    ) -> list[Any]:
+        """選択元の frame 内だけで操作可能な一致要素を返す。"""
+        return cls._actionable_matches(cls._locator(context, selector_type, selector))
+
+    @classmethod
     def _matches_in_page(cls, page: Any, selector_type: str, selector: str) -> list[Any]:
         return matches_across_frames(page, selector_type, selector)
+
+    @classmethod
+    def _matches_in_context(
+            cls, context: Any, selector_type: str, selector: str,
+    ) -> list[Any]:
+        """選択元の frame 内だけで全一致要素を返す。"""
+        locator = cls._locator(context, selector_type, selector)
+        return [locator.nth(index) for index in range(locator.count())]
 
     @staticmethod
     def _visible_matches(locator: Any) -> list[Any]:
@@ -247,7 +300,7 @@ class DebugBrowserSession:
             bring_page_to_front(page)
         self._submit(task)
 
-    def pick(self, target_url: str='') -> dict[str, str]:
+    def pick(self, target_url: str='', action: str='') -> dict[str, str]:
         self._cancel_requested.clear()
 
         def task() -> dict[str, str]:
@@ -274,7 +327,7 @@ class DebugBrowserSession:
                     if result:
                         if result.get('cancelled'):
                             raise RuntimeError('msg.0170')
-                        return picker._choose_unique_locator(page, result, frame)
+                        return picker._choose_unique_locator(page, result, frame, action)
         return self._submit(task)
 
     def test(self, selector_type: str, selector: str, target_url: str='') -> int:

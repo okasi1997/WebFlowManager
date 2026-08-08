@@ -821,7 +821,10 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
                 if not self.values['name'].get().strip():
                     self.values['name'].set(result['display'])
                 self.pick_status.config(text=f"msg.0147{result['display']}msg.0148")
-        self.pick_element(self.values['target_url'].get().strip(), completed)
+        self.pick_element(
+            self.values['target_url'].get().strip(), completed,
+            self.values['action'].get(),
+        )
 
     def _restore_focus(self) -> None:
         """ブラウザー操作後にイベント編集画面を前面へ戻す。"""

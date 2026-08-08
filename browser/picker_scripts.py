@@ -66,12 +66,13 @@ _PICKER_SCRIPT = r"""
     hovered.classList.add('__sf-flow-hover');
   };
   const esc = (value) => CSS.escape(String(value));
-  const cssCandidate = (element) => {
+  const cssCandidate = (element, stable = false) => {
     if (element.id && !/\d{4,}/.test(element.id)) return `#${esc(element.id)}`;
-    for (const attr of [
-      'data-target-selection-name', 'data-id', 'name',
-      'aria-label', 'placeholder', 'title'
-    ]) {
+    const attributes = stable
+      ? ['data-target-selection-name', 'data-testid', 'data-id', 'name', 'role']
+      : ['data-target-selection-name', 'data-testid', 'data-id', 'name',
+          'aria-label', 'placeholder', 'title'];
+    for (const attr of attributes) {
       const value = element.getAttribute(attr);
       if (value) return `${element.tagName.toLowerCase()}[${attr}="${esc(value)}"]`;
     }
@@ -92,11 +93,15 @@ _PICKER_SCRIPT = r"""
     element.value || ''
   ].map(value => String(value).trim().replace(/\s+/g, ' '))
     .filter(value => value && value.length <= 120))];
-  const xpathCandidate = (element) => {
+  const xpathCandidate = (element, allowText = true) => {
     const root = element.getRootNode();
     if (root instanceof ShadowRoot) return '';
     const tag = element.tagName.toLowerCase();
     const unique = (xpath) => xpathCount(xpath) === 1 ? xpath : '';
+    const locatorAttributes = allowText
+      ? ['data-target-selection-name', 'data-testid', 'data-id', 'name',
+          'aria-label', 'placeholder', 'title']
+      : ['data-target-selection-name', 'data-testid', 'data-id', 'name', 'role'];
 
     // 短く読みやすい定位を優先する。属性はアプリ固有の識別子を、
     // アクセシビリティ／表示用の文言より先に評価する。
@@ -105,20 +110,19 @@ _PICKER_SCRIPT = r"""
       const candidate = unique(`//*[@id=${xpathLiteral(id)}]`);
       if (candidate) return candidate;
     }
-    for (const attr of [
-      'data-target-selection-name', 'data-id', 'name',
-      'aria-label', 'placeholder', 'title'
-    ]) {
+    for (const attr of locatorAttributes) {
       const value = element.getAttribute(attr);
       if (!value) continue;
       const candidate = unique(`//${tag}[@${attr}=${xpathLiteral(value)}]`);
       if (candidate) return candidate;
     }
-    for (const exactText of elementTextCandidates(element)) {
-      const candidate = unique(
-        `//${tag}[normalize-space(.)=${xpathLiteral(exactText)}]`
-      );
-      if (candidate) return candidate;
+    if (allowText) {
+      for (const exactText of elementTextCandidates(element)) {
+        const candidate = unique(
+          `//${tag}[normalize-space(.)=${xpathLiteral(exactText)}]`
+        );
+        if (candidate) return candidate;
+      }
     }
 
     // 簡潔で一意な定位がない場合は、一意に特定できる親要素を起点とする
@@ -130,18 +134,17 @@ _PICKER_SCRIPT = r"""
         const candidate = unique(`//*[@id=${xpathLiteral(nodeId)}]`);
         if (candidate) return candidate;
       }
-      for (const attr of [
-        'data-target-selection-name', 'data-id', 'name', 'role',
-        'aria-label', 'placeholder', 'title'
-      ]) {
+      for (const attr of locatorAttributes) {
         const value = node.getAttribute(attr);
         if (!value) continue;
         const candidate = unique(`//${nodeTag}[@${attr}=${xpathLiteral(value)}]`);
         if (candidate) return candidate;
       }
-      for (const nodeText of elementTextCandidates(node)) {
-        const candidate = unique(`//${nodeTag}[normalize-space(.)=${xpathLiteral(nodeText)}]`);
-        if (candidate) return candidate;
+      if (allowText) {
+        for (const nodeText of elementTextCandidates(node)) {
+          const candidate = unique(`//${nodeTag}[normalize-space(.)=${xpathLiteral(nodeText)}]`);
+          if (candidate) return candidate;
+        }
       }
       return '';
     };
@@ -149,14 +152,11 @@ _PICKER_SCRIPT = r"""
       const nodeTag = node.tagName.toLowerCase();
       const candidates = [];
       // ボタンやリンクは表示文言を最優先し、入力項目などは安定属性を優先する。
-      const textCandidates = elementTextCandidates(node).map(
+      const textCandidates = allowText ? elementTextCandidates(node).map(
         text => `${nodeTag}[normalize-space(.)=${xpathLiteral(text)}]`
-      );
+      ) : [];
       if (['button', 'a'].includes(nodeTag)) candidates.push(...textCandidates);
-      for (const attr of [
-        'data-target-selection-name', 'data-id', 'name', 'role',
-        'aria-label', 'placeholder', 'title'
-      ]) {
+      for (const attr of locatorAttributes) {
         const value = node.getAttribute(attr);
         if (value) candidates.push(`${nodeTag}[@${attr}=${xpathLiteral(value)}]`);
       }
@@ -240,7 +240,11 @@ _PICKER_SCRIPT = r"""
     window.__sfFlowPicked = {
       tag, role, name, label,
       placeholder: element.getAttribute('placeholder') || '',
-      text, css: cssCandidate(element), xpath: xpathCandidate(element)
+      text,
+      css: cssCandidate(element),
+      stable_css: cssCandidate(element, true),
+      xpath: xpathCandidate(element),
+      stable_xpath: xpathCandidate(element, false)
     };
     clean();
   };

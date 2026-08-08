@@ -2263,12 +2263,12 @@ class FlowManagerApp:
         self.root.wait_window(dialog)
         return dialog.result
 
-    def _pick_element(self, target_url: str, completed: object) -> None:
+    def _pick_element(self, target_url: str, completed: object, action: str='') -> None:
 
         def worker() -> None:
             try:
                 self.auth_browser.close_browser()
-                result = self.debug_browser.pick(target_url)
+                result = self.debug_browser.pick(target_url, action)
                 self.root.after(0, lambda: completed(result, None))
             except Exception as error:
                 message = str(error)

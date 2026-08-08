@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from browser.auth_session import AuthBrowserSession
 from browser.element_picker import DebugBrowserSession, ElementPicker
@@ -153,6 +153,62 @@ class PageRuntimeTests(unittest.TestCase):
                     object(), {'tag': tag, 'css': f'#{tag}'},
                 )
                 self.assertEqual(result['suggested_action'], action)
+
+    def test_get_text_picker_uses_xpath_without_dynamic_text(self) -> None:
+        picker = ElementPicker()
+        stable_xpath = "//*[@id='price-area']//span"
+        stable_css = "span[data-id=price]"
+        info = {
+            'tag': 'span',
+            'role': 'status',
+            'name': '1,000円',
+            'text': '1,000円',
+            'css': 'span',
+            'xpath': "//span[normalize-space(.)='1,000円']",
+            'stable_xpath': stable_xpath,
+            'stable_css': stable_css,
+        }
+        chosen = object()
+        page = object()
+
+        with (
+            patch.object(picker, '_matches_in_page', return_value=[chosen]) as matches,
+            patch.object(picker, '_actionable_matches_in_page', return_value=[chosen]),
+        ):
+            result = picker._choose_unique_locator(
+                page, info, action='get_text',
+            )
+
+        self.assertEqual(result['selector_type'], 'xpath')
+        self.assertEqual(result['selector'], stable_xpath)
+        self.assertNotIn('1,000円', result['selector'])
+        self.assertEqual(result['fallback_selector_type'], 'css')
+        self.assertEqual(result['fallback_selector'], stable_css)
+        self.assertEqual(
+            matches.call_args_list,
+            [call(page, 'xpath', stable_xpath), call(page, 'css', stable_css)],
+        )
+
+    def test_picker_checks_uniqueness_only_in_selected_frame(self) -> None:
+        class Frame:
+            parent_frame = None
+
+        picker = ElementPicker()
+        frame = Frame()
+        chosen = object()
+
+        with (
+            patch.object(picker, '_matches_in_page', side_effect=AssertionError),
+            patch.object(picker, '_actionable_matches_in_page', side_effect=AssertionError),
+            patch.object(picker, '_matches_in_context', return_value=[chosen]) as matches,
+            patch.object(picker, '_actionable_matches_in_context', return_value=[chosen]),
+        ):
+            result = picker._choose_unique_locator(
+                object(), {'tag': 'button', 'css': '#save'}, frame,
+            )
+
+        self.assertEqual(result['selector'], '#save')
+        matches.assert_called_once_with(frame, 'css', '#save')
 
     def test_event_execution_does_not_run_spinner_scan_while_disabled(self) -> None:
         class Context:
@@ -816,7 +872,8 @@ class PageRuntimeTests(unittest.TestCase):
         self.assertIn('__webFlowPickerCleanup', script)
         self.assertIn('"run-123"', script)
         self.assertIn('event.composedPath()', script)
-        self.assertIn("'data-target-selection-name', 'data-id', 'name'", script)
+        self.assertIn("'data-target-selection-name', 'data-testid', 'data-id', 'name'", script)
+        self.assertIn('stable_xpath: xpathCandidate(element, false)', script)
         self.assertIn('//${tag}[@${attr}=${xpathLiteral(value)}]', script)
         self.assertIn('//${tag}[normalize-space(.)=${xpathLiteral(exactText)}]', script)
         self.assertIn('const elementTextCandidates = (element)', script)
@@ -828,7 +885,7 @@ class PageRuntimeTests(unittest.TestCase):
         self.assertIn('unique(`${anchor}//${suffix}`)', script)
         self.assertIn('const anchorCandidate = (node)', script)
         self.assertIn('const scopedTargetCandidates = (node)', script)
-        self.assertIn("'data-target-selection-name', 'data-id', 'name', 'role'", script)
+        self.assertIn("'data-target-selection-name', 'data-testid', 'data-id', 'name', 'role'", script)
         self.assertIn('//${nodeTag}[@${attr}=${xpathLiteral(value)}]', script)
         self.assertIn('unique(`${anchor}//${targetCandidate}`)', script)
         self.assertIn('const plainParts = []', script)
