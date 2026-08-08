@@ -246,8 +246,12 @@ _PICKER_SCRIPT = r"""
       }
       const plainRelative = unique(`//${plainParts.join('/')}`);
       if (plainRelative) return plainRelative;
-      const relative = unique(`//${parts.join('/')}`);
-      if (relative) return relative;
+      // 単一タグの位置指定（例: //input[2]）は、別の親配下にも一致するため使用しない。
+      // 親要素を含む構造パスになるまで探索を続ける。
+      if (parts.length > 1) {
+        const relative = unique(`//${parts.join('/')}`);
+        if (relative) return relative;
+      }
       current = current.parentElement;
     }
     return `/${parts.join('/')}`;

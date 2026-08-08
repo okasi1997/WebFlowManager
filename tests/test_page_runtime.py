@@ -685,6 +685,39 @@ class PageRuntimeTests(unittest.TestCase):
 
         self.assertIs(result, match)
 
+    def test_saved_frame_lookup_uses_the_only_visible_match(self) -> None:
+        class Match:
+            def __init__(self, visible):
+                self.visible = visible
+
+            def is_visible(self):
+                return self.visible
+
+        class Locator:
+            def __init__(self, matches):
+                self.matches = matches
+
+            def count(self):
+                return len(self.matches)
+
+            def nth(self, index):
+                return self.matches[index]
+
+        hidden_first = Match(False)
+        target = Match(True)
+        hidden_last = Match(False)
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        executor._locator = lambda *_args: Locator(
+            [hidden_first, target, hidden_last]
+        )
+
+        result = executor._unique_locator_in_frame(
+            object(), object(), 'xpath', '//input[2]', 1000,
+            require_actionable=False,
+        )
+
+        self.assertIs(result, target)
+
     def test_locator_lookup_retries_after_dynamic_target_replacement(self) -> None:
         class Page:
             def __init__(self):

@@ -593,7 +593,9 @@ class WorkflowExecutor:
                 if len(matches) == 1 and not require_actionable:
                     return matches[0]
                 visible = [item for item in matches if item.is_visible()]
-                if len(matches) == 1 and len(visible) == 1:
+                if len(visible) == 1 and not require_actionable:
+                    return visible[0]
+                if len(visible) == 1:
                     visible[0].scroll_into_view_if_needed(
                         timeout=max(1, int((deadline - time.monotonic()) * 1000)),
                     )
