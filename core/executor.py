@@ -886,15 +886,12 @@ class WorkflowExecutor:
                 return 'click';
             }""")
             if operation == 'input':
-                return bool(match.is_editable())
+                return bool(match.is_editable() and is_topmost(match))
             if operation == 'select':
-                return True
-            remaining_ms = max(1, min(100, int((deadline - time.monotonic()) * 1000)))
-            try:
-                match.click(trial=True, timeout=remaining_ms)
-                return True
-            except Exception:
-                return False
+                return is_topmost(match)
+            # trial click でもマウス移動により hover や focus が発火する画面があるため、
+            # 要素への入力を一切行わず hit-test だけで操作可能性を判定する。
+            return is_topmost(match)
         return False
 
     @staticmethod

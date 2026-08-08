@@ -706,10 +706,8 @@ class PageRuntimeTests(unittest.TestCase):
             '.item', '', 'visible', 1000,
         )
 
-    def test_wait_operable_uses_playwright_trial_click_for_button(self) -> None:
+    def test_wait_operable_does_not_interact_with_button(self) -> None:
         class Element:
-            clicked = None
-
             def is_visible(self):
                 return True
 
@@ -719,18 +717,18 @@ class PageRuntimeTests(unittest.TestCase):
             def evaluate(self, _script):
                 return 'click'
 
-            def click(self, **kwargs):
-                self.clicked = kwargs
+            def click(self, **_kwargs):
+                raise AssertionError('待機判定中にボタンを操作してはいけない')
 
         element = Element()
 
-        self.assertTrue(
-            WorkflowExecutor._matches_wait_condition(
-                element, 'operable', time.monotonic() + 1,
+        with patch('core.executor.is_topmost', return_value=True) as topmost:
+            self.assertTrue(
+                WorkflowExecutor._matches_wait_condition(
+                    element, 'operable', time.monotonic() + 1,
+                )
             )
-        )
-        self.assertTrue(element.clicked['trial'])
-        self.assertGreater(element.clicked['timeout'], 0)
+        topmost.assert_called_once_with(element)
 
     def test_wait_operable_checks_editability_for_input(self) -> None:
         class Element:
@@ -746,11 +744,14 @@ class PageRuntimeTests(unittest.TestCase):
             def is_editable(self):
                 return True
 
-        self.assertTrue(
-            WorkflowExecutor._matches_wait_condition(
-                Element(), 'operable', time.monotonic() + 1,
+        element = Element()
+        with patch('core.executor.is_topmost', return_value=True) as topmost:
+            self.assertTrue(
+                WorkflowExecutor._matches_wait_condition(
+                    element, 'operable', time.monotonic() + 1,
+                )
             )
-        )
+        topmost.assert_called_once_with(element)
 
     def test_wait_hidden_prefers_the_saved_iframe(self) -> None:
         class Match:
