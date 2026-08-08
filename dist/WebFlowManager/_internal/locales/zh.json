@@ -471,5 +471,6 @@
   "msg.0587": "隐藏",
   "msg.0588": "未找到满足等待条件的元素：",
   "msg.0589": "iframe 定位信息",
-  "msg.0590": "主页面"
+  "msg.0590": "主页面",
+  "msg.0591": "iframe 定位信息请输入 CSS selector 字符串数组。例如：[\"#main-frame\", \"iframe[name=detail]\"]"
 }

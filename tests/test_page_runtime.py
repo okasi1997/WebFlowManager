@@ -13,6 +13,7 @@ from browser.picker_scripts import picker_script
 from browser.profile_runtime import persistent_profile_dir
 from core.executor import WorkflowExecutor
 from core.settings import SELECT_FIRST_VALUE
+from ui.dialogs import EventDialog
 
 
 class FakeFrame:
@@ -210,6 +211,37 @@ class PageRuntimeTests(unittest.TestCase):
 
         self.assertEqual(result['selector'], '#save')
         matches.assert_called_once_with(frame, 'css', '#save')
+
+    def test_iframe_picker_avoids_dynamic_ids_before_building_relative_path(self) -> None:
+        class Element:
+            script = ''
+
+            def evaluate(self, script):
+                self.script = script
+                return 'div[data-id="stable-area"] > iframe:nth-of-type(1)'
+
+        parent = type('ParentFrame', (), {'parent_frame': None})()
+        element = Element()
+        frame = type(
+            'ChildFrame', (),
+            {'parent_frame': parent, 'frame_element': lambda _self: element},
+        )()
+
+        path = ElementPicker._iframe_path(frame)
+
+        self.assertEqual(path, '["div[data-id=\\"stable-area\\"] > iframe:nth-of-type(1)"]')
+        self.assertIn('const stableId = value =>', element.script)
+        self.assertIn("['data-testid', 'data-id', 'name', 'title']", element.script)
+        self.assertIn("if (stableId(elementId))", element.script)
+
+    def test_iframe_path_manual_input_is_validated_and_normalized(self) -> None:
+        self.assertEqual(EventDialog._normalize_iframe_path('[]'), '')
+        self.assertEqual(
+            EventDialog._normalize_iframe_path(' [ " #outer " , "iframe[name=detail]" ] '),
+            '["#outer", "iframe[name=detail]"]',
+        )
+        with self.assertRaises(ValueError):
+            EventDialog._normalize_iframe_path('#outer')
 
     def test_event_execution_does_not_run_spinner_scan_while_disabled(self) -> None:
         class Context:

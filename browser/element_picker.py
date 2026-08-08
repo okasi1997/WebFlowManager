@@ -96,12 +96,26 @@ class ElementPicker:
             selector = element.evaluate("""element => {
                 const escape = value => CSS.escape(String(value));
                 const unique = selector => element.ownerDocument.querySelectorAll(selector).length === 1;
-                for (const name of ['id', 'name', 'title']) {
+                const stableId = value => {
+                    value = String(value || '');
+                    const hasDynamicToken = value.split(/[-_:]/).some(token =>
+                        token.length >= 8 && /[a-z]/i.test(token) && /\\d/.test(token)
+                    );
+                    return Boolean(value) && value.length <= 80
+                        && !/\\d{4,}/.test(value)
+                        && !/(^|[-_:])[0-9a-f]{8,}($|[-_:])/i.test(value)
+                        && !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(value)
+                        && !hasDynamicToken;
+                };
+                for (const name of ['data-testid', 'data-id', 'name', 'title']) {
                     const value = element.getAttribute(name);
                     if (!value) continue;
-                    const selector = name === 'id'
-                        ? `#${escape(value)}`
-                        : `${element.localName}[${name}="${escape(value)}"]`;
+                    const selector = `${element.localName}[${name}="${escape(value)}"]`;
+                    if (unique(selector)) return selector;
+                }
+                const elementId = element.getAttribute('id');
+                if (stableId(elementId)) {
+                    const selector = `#${escape(elementId)}`;
                     if (unique(selector)) return selector;
                 }
                 const segment = node => {
@@ -110,15 +124,15 @@ class ElementPicker:
                     return `${node.localName}:nth-of-type(${siblings.indexOf(node) + 1})`;
                 };
                 const anchor = node => {
-                    const id = node.getAttribute('id');
-                    if (id) {
-                        const selector = `#${escape(id)}`;
-                        if (unique(selector)) return selector;
-                    }
                     for (const name of ['data-testid', 'data-id', 'name', 'title']) {
                         const value = node.getAttribute(name);
                         if (!value) continue;
                         const selector = `${node.localName}[${name}="${escape(value)}"]`;
+                        if (unique(selector)) return selector;
+                    }
+                    const id = node.getAttribute('id');
+                    if (stableId(id)) {
+                        const selector = `#${escape(id)}`;
                         if (unique(selector)) return selector;
                     }
                     return '';

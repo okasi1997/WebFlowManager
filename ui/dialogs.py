@@ -1,5 +1,6 @@
 """イベント編集と実行時変数入力のダイアログを定義する。"""
 from __future__ import annotations
+import json
 import re
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -437,8 +438,8 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
     def __init__(self, parent: tk.Misc, actions: tuple[str, ...], selector_types: tuple[str, ...], pick_element: Callable[..., None], test_element: Callable[..., None], verify_event: Callable[..., None], close_debug: Callable[..., None], execute_to_event: Callable[..., None] | None, choose_data_path: Callable[[str], str | None], default_url: str, event: dict[str, Any] | None=None, default_timeout_ms: int=10000) -> None:
         super().__init__(parent)
         self.title('msg.0131' if event else 'msg.0034')
-        self.geometry('1000x660')
-        self.minsize(900, 620)
+        self.geometry('1000x720')
+        self.minsize(900, 660)
         self.resizable(False, False)
         self.result: dict[str, Any] | None = None
         self.pick_element = pick_element
@@ -621,11 +622,11 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
             style='DialogCard.TLabel',
         ).grid(row=2, column=0, padx=(10, 8), pady=5, sticky='w')
         self.iframe_path_display = tk.StringVar(
-            value=self.iframe_path or tr('msg.0590'),
+            value=self.iframe_path,
         )
         self.iframe_path_entry = ttk.Entry(
             locator, textvariable=self.iframe_path_display,
-            state='readonly', style='Dialog.TEntry',
+            style='Dialog.TEntry',
         )
         self.iframe_path_entry.grid(
             row=2, column=1, columnspan=3,
@@ -797,6 +798,7 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
             widget.configure(state='normal' if can_locate else 'disabled')
         self.target_url_label.state(['!disabled'] if can_locate else ['disabled'])
         self.selector_data_reference_button.configure(state='normal' if can_locate else 'disabled')
+        self.iframe_path_entry.configure(state='normal' if can_locate else 'disabled')
         self.pick_status.state(['!disabled'] if can_locate else ['disabled'])
         can_execute_to_event = self.execute_to_event is not None and can_locate
         self.execute_to_event_button.configure(state='normal' if can_execute_to_event else 'disabled')
@@ -851,6 +853,21 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
             'visible',
         )
 
+    @staticmethod
+    def _normalize_iframe_path(raw_path: str) -> str:
+        """手入力された iframe の CSS セレクター配列を検証して保存形式へそろえる。"""
+        try:
+            selectors = json.loads(raw_path.strip() or '[]')
+        except json.JSONDecodeError as error:
+            raise ValueError from error
+        if (
+            not isinstance(selectors, list)
+            or not all(isinstance(selector, str) and selector.strip() for selector in selectors)
+        ):
+            raise ValueError
+        normalized = [selector.strip() for selector in selectors]
+        return json.dumps(normalized, ensure_ascii=False) if normalized else ''
+
     def _pick(self) -> None:
         self._clear_error()
         self.pick_button.config(state='disabled')
@@ -870,7 +887,7 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
                 self.values['fallback_selector_type'].set(result.get('fallback_selector_type', 'none'))
                 self.values['fallback_selector'].set(result.get('fallback_selector', ''))
                 self.iframe_path = result.get('iframe_path', '')
-                self.iframe_path_display.set(self.iframe_path or tr('msg.0590'))
+                self.iframe_path_display.set(self.iframe_path)
                 if not self.values['action'].get() and result.get('suggested_action') in ('click', 'fill', 'select'):
                     self.values['action'].set(result['suggested_action'])
                     self._update_action_fields()
@@ -985,6 +1002,12 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
         self._clear_error()
         self.verify_event_button.configure(state='disabled')
         self.pick_status.configure(text='msg.0494')
+        try:
+            iframe_path = self._normalize_iframe_path(self.iframe_path_display.get())
+        except ValueError:
+            self.verify_event_button.configure(state='normal')
+            self._show_error('msg.0591')
+            return
         event = {
             'id': 0,
             'action': self.values['action'].get(),
@@ -992,7 +1015,7 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
             'selector': self.values['selector'].get().strip(),
             'fallback_selector_type': self.values['fallback_selector_type'].get(),
             'fallback_selector': self.values['fallback_selector'].get().strip(),
-            'iframe_path': getattr(self, 'iframe_path', ''),
+            'iframe_path': iframe_path,
             'value': (
                 SELECT_FIRST_VALUE
                 if self.values['action'].get() == 'select' and self.select_first.get()
@@ -1055,12 +1078,21 @@ class EventDialog(_GuardEditorMixin, tk.Toplevel):
             messagebox.showerror('msg.0159', 'msg.0429', parent=self)
             return
         saved_value = self._wait_condition_key() if self.values['action'].get() == 'wait' else self.values['value'].get()
-        self.result = {'name': name, 'action': self.values['action'].get(), 'selector_type': self.values['selector_type'].get(), 'selector': self.values['selector'].get().strip(), 'fallback_selector_type': self.values['fallback_selector_type'].get(), 'fallback_selector': self.values['fallback_selector'].get().strip(), 'iframe_path': getattr(self, 'iframe_path', ''), 'value': saved_value, 'timeout_ms': timeout, 'retry_count': event_retry_count, 'retry_interval_ms': event_retry_interval_ms, 'enabled': int(self.values['enabled'].get()), 'continue_on_error': continue_on_error, 'failure_action': failure_action, 'failure_target': failure_target if failure_action == 'goto' else '', 'data_path': self.values['data_path'].get(), 'guard': self.guard}
+        action = self.values['action'].get()
+        locator_actions = {'click', 'fill', 'select', 'wait', 'wait_hidden', 'press', 'get_text', 'upload_file'}
+        if action in locator_actions:
+            try:
+                iframe_path = self._normalize_iframe_path(self.iframe_path_display.get())
+            except ValueError:
+                messagebox.showerror('msg.0159', 'msg.0591', parent=self)
+                return
+        else:
+            iframe_path = ''
+        self.result = {'name': name, 'action': self.values['action'].get(), 'selector_type': self.values['selector_type'].get(), 'selector': self.values['selector'].get().strip(), 'fallback_selector_type': self.values['fallback_selector_type'].get(), 'fallback_selector': self.values['fallback_selector'].get().strip(), 'iframe_path': iframe_path, 'value': saved_value, 'timeout_ms': timeout, 'retry_count': event_retry_count, 'retry_interval_ms': event_retry_interval_ms, 'enabled': int(self.values['enabled'].get()), 'continue_on_error': continue_on_error, 'failure_action': failure_action, 'failure_target': failure_target if failure_action == 'goto' else '', 'data_path': self.values['data_path'].get(), 'guard': self.guard}
         if self.result['action'] == 'select' and self.select_first.get():
             self.result['value'] = SELECT_FIRST_VALUE
             self.result['data_path'] = ''
         action = self.result['action']
-        locator_actions = {'click', 'fill', 'select', 'wait', 'wait_hidden', 'press', 'get_text', 'upload_file'}
         value_actions = {'goto', 'fill', 'select', 'wait', 'press', 'get_text', 'screenshot', 'pause', 'retry_start', 'upload_file'}
         data_actions = {'fill', 'select', 'get_text', 'loop_start', 'upload_file'}
         if action not in locator_actions:
