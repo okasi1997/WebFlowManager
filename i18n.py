@@ -3,9 +3,7 @@ from __future__ import annotations
 
 import json
 import re
-import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
 
@@ -60,6 +58,8 @@ def _translate_values(values: Any) -> Any:
 
 def install_tk_translation() -> None:
     """Tk の生成・更新経路へ翻訳処理を一度だけ組み込む。"""
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, ttk
     global _installed
     if _installed:
         return

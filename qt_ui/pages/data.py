@@ -1,0 +1,451 @@
+from __future__ import annotations
+
+import copy
+import json
+from pathlib import Path
+from typing import Any
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QBrush, QColor
+from PySide6.QtWidgets import (
+    QAbstractItemView, QDialog, QDialogButtonBox, QFileDialog, QFrame, QHeaderView,
+    QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QPushButton,
+    QSizePolicy, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+)
+
+from core.database import Database
+from .structured import default_value, empty_record
+from ..table_view import (
+    HierarchicalReorderTreeWidget, capture_scroll_position,
+    capture_tree_display_state, configure_table_view, order_with_inserted_after,
+    restore_scroll_position, restore_tree_display_state,
+)
+from ..ui_loader import (
+    confirm_deletion, load_ui_into, localize_dialog_buttons, require,
+    show_information, show_warning,
+)
+
+
+class RecordMetadataDialog(QDialog):
+    def __init__(self, parent: QWidget, record: dict[str, Any] | None = None) -> None:
+        super().__init__(parent)
+        load_ui_into(self, 'record_dialog.ui')
+        self.setFixedSize(480, 172)
+        require(self, QFrame, 'recordCard').setProperty('card', True)
+        self.name = require(self, QLineEdit, 'nameEdit')
+        self.summary = require(self, QLineEdit, 'summaryEdit')
+        self.name.setText(str((record or {}).get('name', '')))
+        self.summary.setText(str((record or {}).get('summary', '')))
+        # 実行グループは「実行管理」でのみ編集するため、この画面では行ごと非表示にする。
+        require(self, QLabel, 'groupLabel').hide()
+        require(self, QLineEdit, 'groupEdit').hide()
+        buttons = require(self, QDialogButtonBox, 'buttonBox')
+        localize_dialog_buttons(buttons)
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+
+    def _save(self) -> None:
+        if not self.name.text().strip():
+            show_warning(self, '実行データ', '名称を入力してください。')
+            return
+        self.accept()
+
+    def value(self) -> tuple[str, str]:
+        return self.name.text().strip(), self.summary.text().strip()
+
+
+class DataPage(QWidget):
+    PATH_ROLE = Qt.ItemDataRole.UserRole + 1
+    SCHEMA_ROLE = Qt.ItemDataRole.UserRole + 2
+    LIST_INDEX_ROLE = Qt.ItemDataRole.UserRole + 3
+
+    def __init__(self, db: Database) -> None:
+        super().__init__()
+        self.db = db
+        self.current_record: dict[str, Any] | None = None
+        self.current_data: dict[str, Any] = {}
+        load_ui_into(self, 'data.ui')
+        require(self, QVBoxLayout, 'rootLayout').setStretch(2, 1)
+        require(self, QLabel, 'titleLabel').setProperty('pageTitle', True)
+        require(self, QLabel, 'subtitleLabel').setProperty('muted', True)
+        record_card = require(self, QFrame, 'recordCard')
+        value_card = require(self, QFrame, 'valueCard')
+        for card in (record_card, value_card):
+            card.setProperty('card', True)
+            # ツールバーの推奨幅に拘束されず、スプリッターで幅を変更できるようにする。
+            card.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        record_card.setMinimumWidth(280)
+        value_card.setMinimumWidth(360)
+        for name in ('recordTitle', 'valueTitle'):
+            require(self, QLabel, name).setProperty('cardTitle', True)
+        splitter = require(self, QSplitter, 'dataSplitter')
+        splitter.setChildrenCollapsible(False)
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 3)
+        splitter.setHandleWidth(6)
+        splitter.setSizes([430, 700])
+        designer_tree = require(self, QTreeWidget, 'recordTree')
+        tree_layout = designer_tree.parentWidget().layout()
+        self.tree = HierarchicalReorderTreeWidget(designer_tree.parentWidget())
+        self.tree.setObjectName('recordTree')
+        tree_layout.replaceWidget(designer_tree, self.tree)
+        designer_tree.setObjectName('recordTreeDesignerPlaceholder')
+        designer_tree.setParent(None)
+        designer_tree.deleteLater()
+        self.tree.setColumnCount(2)
+        self.tree.setHeaderLabels(['名称', '概要'])
+        configure_table_view(self.tree, reorder=True)
+        self.tree.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.tree.setDefaultDropAction(Qt.DropAction.CopyAction)
+        self.tree.setContainerTest(lambda _item: False)
+        self.tree.orderChanged.connect(self._persist_record_order)
+        for column, width in enumerate((180, 260)):
+            self.tree.setColumnWidth(column, width)
+        self.tree.currentItemChanged.connect(lambda *_: self._select_record())
+        self.tree.itemDoubleClicked.connect(self._record_double_clicked)
+        self.values = require(self, QTreeWidget, 'valueTree')
+        configure_table_view(self.values)
+        self.values.headerItem().setText(2, '値  ✎')
+        self.values.headerItem().setToolTip(2, '鉛筆マークの値はダブルクリックで編集できます')
+        for column, width in enumerate((190, 100, 260, 260)):
+            self.values.setColumnWidth(column, width)
+        self.values.itemDoubleClicked.connect(lambda *_: self.edit_value())
+        callbacks = {
+            'addRecordButton': self.add_record, 'editRecordButton': self.edit_record,
+            'copyRecordButton': self.copy_record, 'deleteRecordButton': self.delete_record,
+            'toggleRecordButton': self.toggle_enabled, 'editValueButton': self.edit_value,
+            'addListItemButton': self.add_list_item, 'deleteListItemButton': self.delete_list_item,
+            'saveRecordButton': self.save_record,
+        }
+        for name, callback in callbacks.items():
+            require(self, QPushButton, name).clicked.connect(callback)
+        for name in ('addRecordButton', 'saveRecordButton'):
+            require(self, QPushButton, name).setProperty('primary', True)
+        for name in ('deleteRecordButton', 'deleteListItemButton'):
+            require(self, QPushButton, name).setProperty('danger', True)
+
+        # 左側はデータ自体の作成・編集・複製だけに絞る。
+        require(self, QPushButton, 'deleteRecordButton').hide()
+        require(self, QPushButton, 'toggleRecordButton').hide()
+
+        list_button = require(self, QPushButton, 'addListItemButton')
+        list_button.setText('リスト操作')
+        list_menu = QMenu(list_button)
+        list_menu.addAction('リスト項目を追加', self.add_list_item)
+        list_menu.addAction('リスト項目を削除', self.delete_list_item)
+        list_button.setMenu(list_menu)
+        require(self, QPushButton, 'deleteListItemButton').hide()
+        self.value_toggle_button = QPushButton('⏵')
+        self.value_toggle_button.setObjectName('valueToggleButton')
+        self.value_toggle_button.setFixedWidth(42)
+        self.value_toggle_button.clicked.connect(self._toggle_values)
+        value_toolbar = require(self, QHBoxLayout, 'valueToolbar')
+        value_toolbar.insertWidget(3, self.value_toggle_button)
+        self.values.itemExpanded.connect(lambda *_: self._sync_value_toggle_button())
+        self.values.itemCollapsed.connect(lambda *_: self._sync_value_toggle_button())
+        io_button = require(self, QPushButton, 'exportDataJsonButton')
+        io_button.setText('データ入出力')
+        io_menu = QMenu(io_button)
+        io_menu.addAction('JSON を出力', self.export_json)
+        io_menu.addAction('JSON を読み込む', self.import_json)
+        io_menu.addSeparator()
+        io_menu.addAction('Excel を出力', self.export_excel)
+        io_menu.addAction('Excel を読み込む', self.import_excel)
+        io_button.setMenu(io_menu)
+        require(self, QPushButton, 'importDataJsonButton').hide()
+        require(self, QPushButton, 'excelButton').hide()
+        self.reload()
+
+    def reload(self, select_id: int | None = None) -> None:
+        scroll = capture_scroll_position(self.tree)
+        self.tree.blockSignals(True)
+        self.tree.clear()
+        selected = None
+        for record in self.db.list_data_records():
+            item = QTreeWidgetItem([record['name'], record['summary']])
+            item.setData(0, Qt.ItemDataRole.UserRole, record)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
+            self.tree.addTopLevelItem(item)
+            if record['id'] == select_id:
+                selected = item
+        self.tree.blockSignals(False)
+        if selected is not None:
+            self.tree.setCurrentItem(selected)
+        elif self.tree.topLevelItemCount():
+            self.tree.setCurrentItem(self.tree.topLevelItem(0))
+        else:
+            self.current_record, self.current_data = None, {}
+            self.values.clear()
+        restore_scroll_position(self.tree, scroll)
+
+    def selected(self) -> dict[str, Any] | None:
+        item = self.tree.currentItem()
+        return dict(item.data(0, Qt.ItemDataRole.UserRole)) if item else None
+
+    def _persist_record_order(self) -> None:
+        """画面上の行順をデータベースへ保存し、移動行の選択を維持する。"""
+        current = self.tree.currentItem()
+        selected_id = (
+            current.data(0, Qt.ItemDataRole.UserRole)['id'] if current is not None else None
+        )
+        record_ids = [
+            int(self.tree.topLevelItem(index).data(0, Qt.ItemDataRole.UserRole)['id'])
+            for index in range(self.tree.topLevelItemCount())
+        ]
+        self.db.reorder_data_records(record_ids)
+        self.reload(selected_id)
+
+    def _select_record(self) -> None:
+        self.current_record = self.selected()
+        self.current_data = copy.deepcopy((self.current_record or {}).get('data', {}))
+        self.render_values()
+
+    def render_values(self) -> None:
+        display_state = capture_tree_display_state(
+            self.values,
+            lambda item: tuple(item.data(0, self.PATH_ROLE) or ()),
+        )
+        self.values.clear()
+        schema = self.db.get_data_schema()
+
+        def add(parent, node: dict[str, Any], value: Any, path: list[Any], label: str | None = None, list_index: int | None = None) -> None:
+            kind = node['type']
+            shown = f'{len(value or [])} 件' if kind == 'list' else ('' if kind == 'object' else ('はい' if value is True else 'いいえ' if value is False else str(value or '')))
+            item = QTreeWidgetItem([label or node['name'], kind, shown, '.'.join(map(str, path))])
+            item.setData(0, self.PATH_ROLE, path)
+            item.setData(0, self.SCHEMA_ROLE, node)
+            item.setData(0, self.LIST_INDEX_ROLE, list_index)
+            self._show_value_editability(item)
+            parent.addChild(item) if isinstance(parent, QTreeWidgetItem) else parent.addTopLevelItem(item)
+            if kind == 'object':
+                mapping = value if isinstance(value, dict) else {}
+                for child in node.get('children', []):
+                    add(item, child, mapping.get(child['name'], default_value(child)), path + [child['name']])
+            elif kind == 'list':
+                for index, entry in enumerate(value if isinstance(value, list) else []):
+                    entry_item = QTreeWidgetItem([f'[{index}]', 'item', '' if node.get('children') else str(entry), '.'.join(map(str, path + [index]))])
+                    entry_item.setData(0, self.PATH_ROLE, path + [index])
+                    entry_item.setData(0, self.SCHEMA_ROLE, node)
+                    entry_item.setData(0, self.LIST_INDEX_ROLE, index)
+                    self._show_value_editability(entry_item)
+                    item.addChild(entry_item)
+                    mapping = entry if isinstance(entry, dict) else {}
+                    for child in node.get('children', []):
+                        add(entry_item, child, mapping.get(child['name'], default_value(child)), path + [index, child['name']])
+
+        for child in schema.get('children', []):
+            add(self.values, child, self.current_data.get(child['name'], default_value(child)), [child['name']])
+        restore_tree_display_state(
+            self.values, display_state,
+            lambda item: tuple(item.data(0, self.PATH_ROLE) or ()),
+        )
+        self._sync_value_toggle_button()
+
+    @staticmethod
+    def _editable_value_kind(item: QTreeWidgetItem) -> str | None:
+        """値セルを編集できる場合、その入力種別を返す。"""
+        node = item.data(0, DataPage.SCHEMA_ROLE)
+        if not node:
+            return None
+        kind = str(node.get('type', ''))
+        if kind not in ('object', 'list'):
+            return kind
+        # 子定義のない list の各 item は文字列値として直接編集できる。
+        if kind == 'list' and item.data(0, DataPage.LIST_INDEX_ROLE) is not None and not node.get('children'):
+            return 'text'
+        return None
+
+    def _show_value_editability(self, item: QTreeWidgetItem) -> None:
+        """編集可能な値だけを鉛筆マークと文字色で控えめに示す。"""
+        if self._editable_value_kind(item) is None:
+            return
+        item.setText(2, f'✎  {item.text(2)}'.rstrip())
+        item.setForeground(2, QBrush(QColor('#0b6fae')))
+        item.setToolTip(2, 'ダブルクリックで値を編集')
+
+    def _expandable_value_items(self) -> list[QTreeWidgetItem]:
+        """データ内容ツリーの展開可能な項目を表示順で取得する。"""
+        items: list[QTreeWidgetItem] = []
+        stack = [
+            self.values.topLevelItem(index)
+            for index in reversed(range(self.values.topLevelItemCount()))
+        ]
+        while stack:
+            item = stack.pop()
+            if item.childCount():
+                items.append(item)
+            stack.extend(item.child(index) for index in reversed(range(item.childCount())))
+        return items
+
+    def _sync_value_toggle_button(self) -> None:
+        """展開状態に合わせて、次に行う一括操作をボタンへ表示する。"""
+        items = self._expandable_value_items()
+        all_expanded = bool(items) and all(item.isExpanded() for item in items)
+        self.value_toggle_button.setEnabled(bool(items))
+        self.value_toggle_button.setText('⏵' if all_expanded else '⏷')
+        self.value_toggle_button.setToolTip('すべて折りたたむ' if all_expanded else 'すべて展開')
+
+    def _toggle_values(self) -> None:
+        """データ内容の全項目を現在と反対の状態へ切り替える。"""
+        items = self._expandable_value_items()
+        if not items:
+            return
+        if all(item.isExpanded() for item in items):
+            self.values.collapseAll()
+        else:
+            self.values.expandAll()
+        self._sync_value_toggle_button()
+
+    def _resolve(self, path: list[Any]) -> tuple[Any, Any]:
+        target: Any = self.current_data
+        for key in path[:-1]:
+            target = target[key]
+        return target, path[-1]
+
+    def edit_value(self) -> None:
+        item = self.values.currentItem()
+        if item is None:
+            return
+        node, path = item.data(0, self.SCHEMA_ROLE), item.data(0, self.PATH_ROLE)
+        kind = self._editable_value_kind(item)
+        if not node or kind is None:
+            return
+        parent, key = self._resolve(path)
+        current = parent[key]
+        if kind == 'boolean':
+            text, ok = QInputDialog.getItem(self, '値を編集', item.text(0), ['はい', 'いいえ'], 0 if current else 1, False)
+            value = text == 'はい'
+        elif kind == 'number':
+            value, ok = QInputDialog.getDouble(self, '値を編集', item.text(0), float(current or 0), decimals=6)
+        else:
+            value, ok = QInputDialog.getText(self, '値を編集', item.text(0), text=str(current or ''))
+        if ok:
+            parent[key] = value
+            self.render_values()
+
+    def _selected_list(self):
+        item = self.values.currentItem() if self.values.selectedItems() else None
+        selected_index = None
+        while item:
+            if selected_index is None and item.data(0, self.LIST_INDEX_ROLE) is not None:
+                selected_index = int(item.data(0, self.LIST_INDEX_ROLE))
+            node = item.data(0, self.SCHEMA_ROLE)
+            if node and node['type'] == 'list' and item.text(1) == 'list':
+                parent, key = self._resolve(item.data(0, self.PATH_ROLE))
+                return parent[key], node, selected_index
+            item = item.parent()
+        return None
+
+    def add_list_item(self) -> None:
+        selected = self._selected_list()
+        if selected:
+            values, node, selected_index = selected
+            value = ({child['name']: default_value(child) for child in node.get('children', [])}
+                     if node.get('children') else '')
+            insert_at = len(values) if selected_index is None else selected_index + 1
+            values.insert(insert_at, value)
+            self.render_values()
+
+    def delete_list_item(self) -> None:
+        item = self.values.currentItem()
+        while item and item.data(0, self.LIST_INDEX_ROLE) is None:
+            item = item.parent()
+        if item:
+            path = item.data(0, self.PATH_ROLE)
+            if path and isinstance(path[-1], int):
+                parent, index = self._resolve(path)
+                parent.pop(index)
+                self.render_values()
+
+    def _metadata(self, record):
+        dialog = RecordMetadataDialog(self, record)
+        return dialog.value() if dialog.exec() == QDialog.DialogCode.Accepted else None
+
+    def add_record(self) -> None:
+        metadata = self._metadata(None)
+        if metadata:
+            selected = self.selected() if self.tree.selectedItems() else None
+            name, summary = metadata
+            record_id = self.db.add_data_record(0, name, empty_record(self.db.get_data_schema()), summary)
+            self._place_new_record(record_id, selected['id'] if selected else None)
+
+    def edit_record(self) -> None:
+        record = self.selected()
+        metadata = self._metadata(record) if record else None
+        if metadata:
+            name, summary = metadata
+            self.db.update_data_record(record['id'], name, self.current_data)
+            self.db.set_data_record_summary(record['id'], summary)
+            self.reload(record['id'])
+
+    def copy_record(self) -> None:
+        record = self.selected()
+        if record:
+            record_id = self.db.add_data_record(0, f'{record["name"]} - Copy', copy.deepcopy(record['data']), record['summary'])
+            self.db.set_data_record_group(record_id, record['execution_group'])
+            self._place_new_record(record_id, record['id'])
+
+    def _place_new_record(self, record_id: int, selected_id: int | None) -> None:
+        """新規・複製データを選択行の直後、未選択時は末尾へ配置する。"""
+        record_ids = order_with_inserted_after(
+            (record['id'] for record in self.db.list_data_records()),
+            [record_id], selected_id,
+        )
+        self.db.reorder_data_records(record_ids)
+        self.reload(record_id)
+
+    def delete_record(self) -> None:
+        record = self.selected()
+        if record and confirm_deletion(self, f'{record["name"]} を削除しますか？'):
+            self.db.delete_data_record(0, record['id'])
+            self.reload()
+
+    def toggle_enabled(self) -> None:
+        record = self.selected()
+        if record:
+            self.db.set_data_record_enabled(record['id'], not record['enabled'])
+            self.reload(record['id'])
+
+    def _record_double_clicked(self, _item, column: int) -> None:
+        self.edit_record()
+
+    def save_record(self) -> None:
+        record = self.selected()
+        if record:
+            self.db.update_data_record(record['id'], record['name'], self.current_data)
+            self.reload(record['id'])
+            show_information(self, '保存', '実行データを保存しました。')
+
+    def export_json(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, 'JSON 出力', 'data_records.json', 'JSON (*.json)')
+        if path:
+            Path(path).write_text(json.dumps(self.db.list_data_records(), ensure_ascii=False, indent=2), encoding='utf-8')
+
+    def import_json(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, 'JSON 読込', '', 'JSON (*.json)')
+        if not path:
+            return
+        try:
+            records = json.loads(Path(path).read_text(encoding='utf-8'))
+            if not isinstance(records, list):
+                raise ValueError('JSON の最上位は配列である必要があります。')
+            self.db.replace_data_records(records)
+            self.reload()
+        except (OSError, ValueError, json.JSONDecodeError, KeyError) as error:
+            show_warning(self, 'JSON 読込', str(error))
+
+    def export_excel(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, 'Excel 出力', 'data_records.xlsx', 'Excel (*.xlsx)')
+        if path:
+            from ui.structured_data import write_records_excel
+            write_records_excel(path, self.db.get_data_schema(), self.db.list_data_records())
+
+    def import_excel(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, 'Excel 読込', '', 'Excel (*.xlsx)')
+        if path:
+            try:
+                from ui.structured_data import read_records_excel
+                self.db.replace_data_records(read_records_excel(path, self.db.get_data_schema()))
+                self.reload()
+            except Exception as error:
+                show_warning(self, 'Excel 読込', str(error))

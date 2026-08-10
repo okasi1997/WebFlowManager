@@ -194,7 +194,8 @@ class ElementPicker:
             selectors.append(selector)
             current = current.parent_frame
         selectors.reverse()
-        return json.dumps(selectors, ensure_ascii=False)
+        # メインフレームの場合は空配列ではなく、未指定として空文字を返す。
+        return json.dumps(selectors, ensure_ascii=False) if selectors else ''
 
     @staticmethod
     def _locator(page: Any, selector_type: str, selector: str) -> Any:
@@ -240,7 +241,7 @@ class _DebugPause(BaseException):
 
 
 class DebugBrowserSession:
-    """固定スレッド上でブラウザーを保持し、選択と検証で現在ページを再利用する。"""
+    """固定スレッド上でブラウザーを保持し、選択と試行で現在ページを再利用する。"""
 
     def __init__(self, project_dir: Path, start_url: str, logger: Callable[[str, str], None],
                  storage_state_getter: Callable[[], Path | None] | None=None) -> None:
@@ -380,18 +381,6 @@ class DebugBrowserSession:
                         if result.get('cancelled'):
                             raise RuntimeError('msg.0170')
                         return picker._choose_unique_locator(page, result, frame, action)
-        return self._submit(task)
-
-    def test(self, selector_type: str, selector: str, target_url: str='') -> int:
-        def task() -> int:
-            _context, page = self._ensure_page(target_url)
-            page = active_page(page)
-            bring_page_to_front(page)
-            picker = ElementPicker()
-            actionable = picker._actionable_matches_in_page(page, selector_type, selector)
-            if len(actionable) == 1:
-                actionable[0].highlight()
-            return len(actionable)
         return self._submit(task)
 
     def execute_event(self, event: dict[str, Any], target_url: str='') -> None:

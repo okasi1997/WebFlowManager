@@ -41,7 +41,7 @@ if "%INSTALL_DEPENDENCIES%"=="1" (
   if errorlevel 1 goto :error
 ) else (
   echo [2/6] Checking installed build dependencies...
-  "%PYTHON%" -c "import PyInstaller, playwright, openpyxl"
+  "%PYTHON%" -c "import PyInstaller, playwright, openpyxl, PySide6"
   if errorlevel 1 goto :missing_dependencies
 )
 
@@ -51,7 +51,7 @@ if exist "dist\%APP_NAME%" rmdir /s /q "dist\%APP_NAME%"
 if exist "%APP_NAME%.spec" del /q "%APP_NAME%.spec"
 
 echo [4/6] Building %APP_NAME%.exe...
-"%PYTHON%" -m PyInstaller --noconfirm --clean --windowed --onedir --contents-directory "_internal" --name "%APP_NAME%" --icon "assets\app.ico" --add-data "locales;locales" --add-data "assets;assets" --collect-all playwright "main.py"
+"%PYTHON%" -m PyInstaller --noconfirm --clean --windowed --onedir --contents-directory "_internal" --name "%APP_NAME%" --icon "assets\app-icon.png" --add-data "locales;locales" --add-data "assets;assets" --add-data "qt_ui\theme.qss;qt_ui" --add-data "qt_ui\forms;qt_ui\forms" --add-data "qt_ui\icons;qt_ui\icons" --collect-all playwright "main.py"
 if errorlevel 1 goto :error
 
 echo [5/6] Preparing writable folders...
@@ -107,7 +107,7 @@ echo   Python: %PYTHON%
 if errorlevel 1 goto :error
 if not exist "main.py" goto :missing_input
 if not exist "locales" goto :missing_input
-if not exist "assets\app.ico" goto :missing_input
+if not exist "assets\app-icon.png" goto :missing_input
 for /d %%D in (*) do if exist "%%D\index.html" if exist "%%D\style.css" echo   Manual: %%D
 echo Build script check passed.
 exit /b 0

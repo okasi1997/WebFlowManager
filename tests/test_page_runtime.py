@@ -239,6 +239,9 @@ class PageRuntimeTests(unittest.TestCase):
         self.assertIn("['data-testid', 'data-id', 'name', 'title']", element.script)
         self.assertIn("if (stableId(elementId))", element.script)
 
+    def test_iframe_picker_returns_empty_text_for_main_frame(self) -> None:
+        self.assertEqual(ElementPicker._iframe_path(None), '')
+
     def test_iframe_path_manual_input_is_validated_and_normalized(self) -> None:
         self.assertEqual(EventDialog._normalize_iframe_path('[]'), '')
         self.assertEqual(

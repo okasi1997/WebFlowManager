@@ -1,5 +1,22 @@
 # Webフロー管理
 
+> 正式界面已迁移到 PySide6/Qt，使用 `python main.py` 启动。迁移期间的 Tk 版可通过 `python main_tk.py` 临时回退。
+
+## Qt Designer 画面编辑
+
+全部主画面和弹窗均位于 `qt_ui/forms/`，可以直接使用 Qt Designer 打开 `.ui` 文件编辑。程序运行时通过 `qt_ui/ui_loader.py` 动态加载，不需要每次修改后生成 Python 文件。
+
+- `main_window.ui`: 主窗口和左侧导航
+- `flow_design.ui`: Flow 设计
+- `event_editor.ui` / `guard_dialog.ui`: 事件与执行条件
+- `auth.ui`: 登录状态
+- `settings.ui`: 设置
+- `schema.ui` / `field_dialog.ui`: 数据结构与字段编辑
+- `data.ui` / `record_dialog.ui`: 数据管理与记录编辑
+- `execution.ui`: 执行管理
+
+控件的 `objectName` 是 Python 控制器的绑定接口。调整布局、文字、尺寸和样式时可以自由修改；重命名控件前需要同步修改对应控制器中的名称。
+
 Google Chrome の操作を業務フローとして登録し、Playwright で実行するデスクトップアプリです。ページ移動、クリック、文字入力、値の取得、ファイルアップロードなどを組み合わせ、共通データごとに繰り返し実行できます。
 
 ## 主な機能

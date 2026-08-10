@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>AuthForm</class>
+ <widget class="QWidget" name="AuthForm">
+  <layout class="QVBoxLayout" name="rootLayout">
+   <property name="leftMargin"><number>30</number></property>
+   <property name="topMargin"><number>24</number></property>
+   <property name="rightMargin"><number>30</number></property>
+   <property name="bottomMargin"><number>24</number></property>
+   <property name="spacing"><number>8</number></property>
+   <item><widget class="QLabel" name="titleLabel"><property name="text"><string>ログイン状態</string></property></widget></item>
+   <item><widget class="QLabel" name="subtitleLabel"><property name="text"><string>ブラウザーのログイン情報とサイト権限をプロファイルごとに管理します</string></property></widget></item>
+   <item>
+    <layout class="QHBoxLayout" name="bodyLayout">
+     <property name="spacing"><number>14</number></property>
+     <item>
+      <widget class="QFrame" name="profileCard">
+       <layout class="QVBoxLayout" name="profileLayout">
+        <item><widget class="QLabel" name="profileTitle"><property name="text"><string>ログイン状態設定</string></property></widget></item>
+        <item>
+         <widget class="QTreeWidget" name="profileTree">
+          <property name="rootIsDecorated"><bool>false</bool></property>
+          <property name="alternatingRowColors"><bool>false</bool></property>
+          <column><property name="text"><string>現在の状態</string></property></column>
+          <column><property name="text"><string>状態</string></property></column>
+         </widget>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="profileActions">
+          <item><widget class="QPushButton" name="newProfileButton"><property name="text"><string>新規</string></property></widget></item>
+          <item><widget class="QPushButton" name="deleteProfileButton"><property name="text"><string>削除</string></property></widget></item>
+         </layout>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QFrame" name="browserCard">
+       <layout class="QVBoxLayout" name="browserLayout">
+        <item><widget class="QLabel" name="browserTitle"><property name="text"><string>認証ブラウザー操作</string></property></widget></item>
+        <item>
+         <layout class="QGridLayout" name="browserInfoLayout">
+          <item row="0" column="0"><widget class="QLabel" name="currentStateCaption"><property name="text"><string>現在の状態</string></property></widget></item>
+          <item row="0" column="1"><widget class="QLabel" name="selectedLabel"><property name="text"><string>default</string></property></widget></item>
+          <item row="1" column="0"><widget class="QLabel" name="urlCaption"><property name="text"><string>URL</string></property></widget></item>
+          <item row="1" column="1"><widget class="QLineEdit" name="urlEdit"><property name="placeholderText"><string>開始 URL</string></property></widget></item>
+          <item row="2" column="0" colspan="2"><widget class="QLabel" name="pathLabel"><property name="text"><string/></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="browserActions">
+          <item><widget class="QPushButton" name="openBrowserButton"><property name="text"><string>認証ブラウザーを開く</string></property></widget></item>
+          <item><widget class="QPushButton" name="closeBrowserButton"><property name="text"><string>認証ブラウザーを閉じる</string></property></widget></item>
+         </layout>
+        </item>
+        <item><widget class="QFrame" name="statusSeparator"><property name="frameShape"><enum>QFrame::HLine</enum></property><property name="frameShadow"><enum>QFrame::Sunken</enum></property></widget></item>
+        <item><widget class="QLabel" name="statusTitle"><property name="text"><string>操作状況</string></property></widget></item>
+        <item><widget class="QLabel" name="statusLabel"><property name="text"><string>待機中</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+        <item><spacer name="browserStretch"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint"><size><width>20</width><height>40</height></size></property></spacer></item>
+        <item>
+         <layout class="QHBoxLayout" name="saveActions">
+          <item><spacer name="saveStretch"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint"><size><width>40</width><height>20</height></size></property></spacer></item>
+          <item><widget class="QPushButton" name="saveStateButton"><property name="text"><string>現在の状態を保存</string></property></widget></item>
+         </layout>
+        </item>
+       </layout>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

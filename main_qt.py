@@ -1,5 +1,3 @@
-"""Web Flow Manager Qt entry point."""
-
 from qt_ui import QtFlowManagerApplication
 
 

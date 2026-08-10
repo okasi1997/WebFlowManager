@@ -634,6 +634,12 @@ class Database:
         if set(record_ids) != existing or len(record_ids) != len(existing):
             raise ValueError('msg.0096')
         with self.connection:
+            # position は UNIQUE のため、入れ替え途中の衝突を避けて一度負数へ退避する。
+            for temporary_position, record_id in enumerate(record_ids, 1):
+                self.connection.execute(
+                    'UPDATE global_data_records SET position=? WHERE id=?',
+                    (-temporary_position, record_id),
+                )
             for position, record_id in enumerate(record_ids, 1):
                 self.connection.execute(
                     'UPDATE global_data_records SET position=? WHERE id=?',

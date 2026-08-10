@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>GuardConditionForm</class>
+ <widget class="QDialog" name="GuardConditionForm">
+  <property name="windowTitle"><string>実行条件設定</string></property>
+  <property name="geometry"><rect><x>0</x><y>0</y><width>700</width><height>390</height></rect></property>
+  <layout class="QVBoxLayout" name="rootLayout">
+   <property name="leftMargin"><number>20</number></property>
+   <property name="topMargin"><number>16</number></property>
+   <property name="rightMargin"><number>20</number></property>
+   <property name="bottomMargin"><number>16</number></property>
+   <property name="spacing"><number>10</number></property>
+   <item>
+    <layout class="QHBoxLayout" name="logicLayout">
+     <item><widget class="QLabel" name="logicLabel"><property name="text"><string>条件の組み合わせ</string></property></widget></item>
+     <item><widget class="QComboBox" name="logicCombo"/></item>
+     <item><spacer name="logicStretch"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint"><size><width>40</width><height>20</height></size></property></spacer></item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QTreeWidget" name="ruleTree">
+     <property name="rootIsDecorated"><bool>false</bool></property>
+     <column><property name="text"><string>データ項目</string></property></column>
+     <column><property name="text"><string>比較方法</string></property></column>
+     <column><property name="text"><string>比較値</string></property></column>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="footerLayout">
+     <property name="spacing"><number>8</number></property>
+     <item><widget class="QPushButton" name="addRuleButton"><property name="text"><string>条件追加</string></property></widget></item>
+     <item><widget class="QPushButton" name="editRuleButton"><property name="text"><string>編集</string></property></widget></item>
+     <item><widget class="QPushButton" name="deleteRuleButton"><property name="text"><string>削除</string></property></widget></item>
+     <item><spacer name="footerStretch"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint"><size><width>40</width><height>20</height></size></property></spacer></item>
+     <item><widget class="QDialogButtonBox" name="buttonBox"><property name="standardButtons"><set>QDialogButtonBox::Cancel|QDialogButtonBox::Save</set></property></widget></item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
