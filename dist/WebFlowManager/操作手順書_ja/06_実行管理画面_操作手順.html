@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>実行管理画面 操作手順</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>実行管理画面 操作手順</h1>
+<p class="sub">実行対象データ、実行グループ、同時 Session 数を確認し、進捗とログを管理します。</p>
+<div class="figure">
+  <img src="images/06_execution_20260805.png" alt="実行管理画面">
+  <div class="legend">実行管理画面です。実行予定、対象件数、並列 Session 数、進捗、実行ログを確認できます。</div>
+</div>
+<div class="note"><b>実行単位：</b>すべての有効な業務フローが、各「今回実行」データに対してフロー順・イベント順に実行されます。同じ実行グループのデータは逐次、異なるグループは並列に処理されます。</div>
+
+<h2>実行前の設定</h2>
+<table><thead><tr><th>項目</th><th>操作内容</th><th>注意</th></tr></thead><tbody>
+<tr><td>グループ（編集）</td><td>選択したデータの実行グループを変更します。</td><td>同じグループ内は一覧順に逐次実行されます。</td></tr>
+<tr><td>今回実行（切替）</td><td>選択データを実行／スキップへ切り替えます。</td><td>ダブルクリックでも切り替えられます。</td></tr>
+<tr><td>並列 Session 数</td><td>同時に動かす実行グループ数の上限を1～20で指定します。</td><td>グループ数を超える値を指定しても、実際の同時数はグループ数までです。</td></tr>
+</tbody></table>
+
+<h2>実行する</h2>
+<div class="step"><b>手順 1</b>　実行予定一覧で対象データ、概要、グループ、「実行／スキップ」を確認します。</div>
+<div class="step"><b>手順 2</b>　並列 Session 数を設定します。初回は <code>1</code> を推奨します。</div>
+<div class="step"><b>手順 3</b>　<span class="button">▶ 順番に実行</span> を押します。必要な変数がある場合は値を入力します。</div>
+<div class="step"><b>手順 4</b>　「実行状況」で実行中タスク、データ、フロー、イベント、進捗を確認します。</div>
+<div class="step"><b>手順 5</b>　「実行ログ」で開始、成功、スキップ、再試行、失敗を確認します。</div>
+<div class="step"><b>手順 6</b>　完了後、必要に応じて <span class="button">結果をクリア</span> で画面上の結果表示を初期化します。</div>
+
+<h2>停止と失敗確認</h2>
+<div class="warning"><b>停止：</b><span class="button">停止</span> を押すと新しい処理の継続を止めます。確認のため表示中 Chrome が残る場合は、画面を確認してから閉じてください。</div>
+<div class="note"><b>失敗ログ：</b>失敗したイベントでは、エラー内容、<code>Failure URL</code>、エラー画像の保存先が記録されます。URL をブラウザーで確認してから locator、待機、ログイン状態、入力データを修正します。</div>
+<div class="note"><b>イベント再試行ログ：</b>イベントに再試行を設定した場合は、失敗した試行番号、エラー内容、次の試行までの待機時間が記録されます。最終試行も失敗したときだけ Failure URL とエラー画像を記録します。</div>
+<div class="note"><b>実行グループのログイン状態：</b>並列 group ごとに <code>_group_*</code> の状態ファイルと Chrome プロファイルを使用します。同じ名前は次回実行で再利用され、新しい group 名を増やさない限り状態ファイルが毎回増えることはありません。</div>
+<div class="tip"><b>再実行：</b>失敗したデータだけを「実行」、その他を「スキップ」にして確認すると原因を絞り込みやすくなります。</div>
+<p class="manual-nav"><a href="01_メイン画面_操作手順.html">メイン画面の手順へ</a>　｜　<a href="index.html">全体操作手順へ</a></p>
+</body></html>

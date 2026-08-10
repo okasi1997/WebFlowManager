@@ -8,5 +8,4 @@ data/*.db
 artifacts/
 log/
 build/
-dist/
 *.spec

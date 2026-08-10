@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>データ構造画面 操作手順</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>データ構造画面 操作手順</h1>
+<p class="sub">共通データで使用する項目の設計図を作ります。値は「データ管理」で入力します。</p>
+<div class="figure">
+  <img src="images/03_schema_20260805.png" alt="データ構造画面">
+  <div class="legend">データ構造画面です。サイドバーの「データ構造」から開き、実行データで使用する項目と階層を設計します。</div>
+</div>
+<div class="warning"><b>変更前の確認：</b>既存項目の名前・型・階層を変えると、イベントのデータリンクや保存済みデータに影響します。先に Json 出力でバックアップしてください。</div>
+<h2>ボタンの説明</h2>
+<table><thead><tr><th>ボタン</th><th>操作内容</th><th>注意</th></tr></thead><tbody>
+<tr><td>フィールド追加</td><td>通常項目の選択時は同じ階層の直後へ、object/list の選択時はその配下の末尾へ追加します。</td><td>「Data」選択時は最上位の末尾へ追加します。</td></tr>
+<tr><td>子フィールド追加</td><td>選択中の object/list の末尾へ子項目を追加します。</td><td>text、number、boolean では使用できません。</td></tr>
+<tr><td>フィールド編集</td><td>項目名や型を変更します。</td><td>「Data」は編集できません。</td></tr>
+<tr class="danger-row"><td>フィールド削除</td><td>選択項目と配下の項目を削除します。</td><td>イベントで使用していないか確認します。</td></tr>
+<tr><td>上へ／下へ</td><td>同じ階層内では1項目ずつ移動し、親の先頭で上へ、末尾で下へ動かすと親構造の外へ移動します。</td><td>object/list は配下の項目を含む構造全体で移動します。</td></tr>
+<tr><td>ドラッグ</td><td>項目の順番や階層を変更します。</td><td>object/list の行中央へドロップすると配下へ移動し、行の上側／下側へドロップすると同じ階層の前／後へ移動します。</td></tr>
+<tr><td>Json 出力</td><td>現在のデータ構造をバックアップします。</td><td>大きな変更の前に実行します。</td></tr>
+<tr><td>Json 読込</td><td>Json の構造で現在の構造を置き換えます。</td><td>一致しない既存項目が見えなくなる場合があります。</td></tr>
+<tr><td>保存</td><td>構造を保存し、既存データを新しい構造に合わせます。</td><td>埋め込み画面は閉じず、追加・編集後に保存します。</td></tr>
+</tbody></table>
+<h2>項目を追加する</h2>
+<div class="step"><b>手順 1</b>　追加位置を選びます。同じ階層へ追加する場合は、追加後に下へ送る現在行を選びます。</div>
+<div class="step"><b>手順 2</b>　同じ階層へ追加する場合は <span class="button">フィールド追加</span>、object/list の配下へ追加する場合は <span class="button">子フィールド追加</span> を押します。</div>
+<div class="step"><b>手順 3</b>　フィールド名とデータ型を設定し、<span class="button">OK</span> を押します。</div>
+<div class="step"><b>手順 4</b>　必要な項目を追加したら、<span class="button">保存</span> を押します。</div>
+<div class="success"><b>完了確認：</b>データ管理画面を開き、追加した項目が表示され、既存データの値が保持されていることを確認します。</div>
+<h2>ドラッグで階層を変更する</h2>
+<div class="step"><b>手順 1</b>　移動する項目をドラッグします。</div>
+<div class="step"><b>手順 2</b>　object/list の中へ移す場合は対象行の中央へ、同じ階層で並べ替える場合は対象行の上側または下側へドロップします。</div>
+<div class="step"><b>手順 3</b>　最上位へ戻す場合は、スクロール領域の最上端にドロップします。</div>
+<div class="note"><b>Data 行：</b>ルートの「Data」は画面上部へ固定されます。Data を選択すると最上位の子フィールドを追加できますが、Data 自体の編集・削除・移動はできません。</div>
+<div class="warning"><b>移動できない場合：</b>同じ階層に同名項目がある場合や、親項目を自分自身の子孫へ入れようとした場合は移動できません。</div>
+<div class="note"><b>未保存の変更：</b>保存前に別画面へ移動するかアプリを閉じると、保存／破棄／キャンセルを選ぶ確認画面が表示されます。キャンセルすると現在の画面に留まります。</div>
+<h2>型の選び方</h2>
+<table><tbody>
+<tr><td>text</td><td>氏名、コード、URL などの文字。</td></tr>
+<tr><td>number</td><td>数量、金額などの数値。</td></tr>
+<tr><td>boolean</td><td>はい／いいえ、ON／OFF。</td></tr>
+<tr><td>object</td><td>住所など、複数項目をまとめるグループ。</td></tr>
+<tr><td>list</td><td>商品明細など、0件以上繰り返す項目。</td></tr>
+</tbody></table>
+<div class="tip"><b>安全な作業順：</b>Json 出力 → 構造を編集 → 保存 → 共通データを確認。</div>
+<p class="manual-nav"><a href="04_データ管理画面_操作手順.html">データ管理の手順へ</a>　｜　<a href="index.html">全体操作手順へ</a></p>
+</body></html>

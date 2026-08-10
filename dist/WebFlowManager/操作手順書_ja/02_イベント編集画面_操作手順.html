@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>イベント編集画面 操作手順</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>イベント編集画面 操作手順</h1>
+<p class="sub">ブラウザーで行う一つの操作を登録します。操作種別に応じて、使用できる欄が変わります。</p>
+<div class="figure">
+  <img src="images/02_event_editor_resilience_20260805.png" alt="イベント編集画面">
+  <div class="legend">イベント編集画面です。操作種別を選ぶと、必要な入力欄とボタンだけが有効になります。</div>
+</div>
+<div class="note"><b>操作前の確認：</b>対象ページへログインが必要な場合は、先にメイン画面の「ログイン状態」で認証状態を保存します。要素選択・検証用 Chrome は、「実行時に Chrome を表示」の設定にかかわらず表示されます。</div>
+<h2>主なボタン</h2>
+<table><thead><tr><th>ボタン</th><th>操作内容</th></tr></thead><tbody>
+<tr><td>ファイル選択</td><td>upload_file で使用する固定ファイルを選びます。</td></tr>
+<tr><td>データ参照</td><td>「入力値 / URL / キー」または「検出内容」のカーソル位置へ <code>${data:項目パス}</code> を挿入します。固定文字とデータ値を一つの欄で組み合わせる場合に使用します。</td></tr>
+<tr><td>先頭を選択</td><td>select で選択肢の先頭項目を選びます。有効にすると固定値とデータリンクは使用しません。</td></tr>
+<tr><td>実行条件</td><td>このイベントを実行する条件を設定します。</td></tr>
+<tr><td>画面から選択</td><td>対象 URL をデバッグ用 Chrome で開き、ページ上で選んだ対象から検出方法と検出内容を自動設定します。</td></tr>
+<tr><td>画面を閉じる</td><td>要素選択・検証用 Chrome を閉じます。</td></tr>
+<tr><td>現在ページで検証</td><td>登録した検出内容で対象が一意に見つかるか確認します。</td></tr>
+<tr><td>イベントを試す</td><td>現在編集中の設定で、そのイベントだけを現在ページ上で実行します。</td></tr>
+<tr><td>このイベントまで実行</td><td>先行イベントを実行し、対象イベントの直前で停止します。</td></tr>
+<tr><td>構造から選択</td><td>入力値または取得値を共通データの項目と結び付けます。</td></tr>
+<tr><td>クリア</td><td>設定中のデータリンクを外します。</td></tr>
+<tr><td>保存／キャンセル</td><td>設定を確定して閉じる／変更を保存せず閉じる操作です。</td></tr>
+</tbody></table>
+<div class="warning"><b>イベントを試すとデータリンク：</b>単発確認では PCL データのリンク先を解決しません。データリンクが設定されていても、画面の「入力値 / URL / キー」に表示されている値を使用します。PCL ごとの最終入力値を確認する機能ではありません。</div>
+<h2>クリックや入力欄を登録する</h2>
+<div class="step"><b>手順 1</b>　「イベント名」を入力し、「操作種別」を選びます。</div>
+<div class="step"><b>手順 2</b>　「対象 URL」に操作するページの URL を入力します。</div>
+<div class="step"><b>手順 3</b>　<span class="button">画面から選択</span> を押します。Chrome が対象 URL を開いたら、必要に応じて目的の画面まで移動します。</div>
+<div class="step"><b>手順 4</b>　Chrome で F2 を押し、対象をクリックします。</div>
+<div class="step"><b>手順 5</b>　<span class="button">現在ページで検証</span> を押し、Chrome で F2 を押します。「一意の要素を検出」を確認します。</div>
+<div class="step"><b>手順 6</b>　必要な入力値、タイムアウト、再試行回数、再試行間隔、実行条件、失敗時の動作を設定し、必要に応じて <span class="button">イベントを試す</span> で単発確認します。</div>
+<div class="step"><b>手順 7</b>　共通データを欄全体の値として使う場合は <span class="button">構造から選択</span>、文字列の一部へ埋め込む場合は <span class="button">データ参照</span> を使い、最後に <span class="button">保存</span> を押します。</div>
+<div class="success"><b>完了確認：</b>メイン画面のイベント一覧へ戻り、イベント名、操作種別、データリンク、有効状態を確認します。</div>
+<h2>操作種別ごとの登録方法</h2>
+<p>「操作種別」を選ぶと、その操作で必要な入力欄だけが有効になります。対象要素を操作するイベントでは、<span class="button">画面から選択</span> で対象を設定する方法を推奨します。</p>
+<table><thead><tr><th>操作種別</th><th>設定する項目</th><th>入力例</th><th>動作と登録時の注意</th></tr></thead><tbody>
+<tr><td><code>goto</code></td><td>値、タイムアウト</td><td><code>https://example.com/login</code></td><td>「値」に入力した URL を開きます。対象要素と検出方法は設定しません。</td></tr>
+<tr><td><code>click</code></td><td>検出方法、検出内容、タイムアウト</td><td><code>role</code> ／ <code>button|ログイン</code></td><td>ボタン、リンク、チェックボックスなどをクリックします。検証結果が1件になるように設定します。</td></tr>
+<tr><td><code>fill</code></td><td>検出方法、検出内容、値、タイムアウト</td><td><code>label</code> ／ <code>メールアドレス</code> ／ <code>sample@example.com</code></td><td>入力欄の現在値を消してから「値」を入力します。「構造から選択」で共通データの値を使用できます。</td></tr>
+<tr><td><code>select</code></td><td>検出方法、検出内容、値、タイムアウト</td><td><code>label</code> ／ <code>都道府県</code> ／ <code>13</code></td><td>HTML の選択リストから項目を選びます。「値」には通常、対象 option の <code>value</code> を入力します。共通データとの連携も可能です。</td></tr>
+<tr><td><code>wait</code></td><td>検出方法、検出内容、タイムアウト</td><td><code>text</code> ／ <code>登録が完了しました</code></td><td>指定した対象が一意に操作可能な状態で見つかることを確認します。固定時間の待機には <code>pause</code> を使用します。</td></tr>
+<tr><td><code>wait_hidden</code></td><td>検出方法、検出内容、タイムアウト</td><td><code>css</code> ／ <code>.custom-loading</code></td><td>一致する要素がすべて非表示または削除されるまで明示的に待機します。Salesforce 標準 spinner は全イベントの前後で自動確認されるため、通常は追加不要です。標準以外の Loading 表示に使用します。</td></tr>
+<tr><td><code>press</code></td><td>検出方法、検出内容、値、タイムアウト</td><td><code>Enter</code></td><td>対象要素にキーを送ります。「値」には <code>Enter</code>、<code>Tab</code>、<code>Escape</code>、<code>ArrowDown</code>、<code>Control+A</code> などを入力できます。</td></tr>
+<tr><td><code>get_text</code></td><td>検出方法、検出内容、値、タイムアウト</td><td><code>order_number</code></td><td>対象のテキストを取得します。「値」に英字またはアンダースコアから始まる変数名を入力すると、後続イベントで <code>${order_number}</code> として使用できます。「構造から選択」を使うと共通データの項目へ保存します。</td></tr>
+<tr><td><code>screenshot</code></td><td>値</td><td><code>result.png</code></td><td>外側ページ全体を <code>artifacts/yyyyMMdd_HHmmss/</code> へ保存します。「値」を空欄にすると自動ファイル名になります。iframe や要素自体の内部スクロール領域は、表示中の範囲だけになる場合があります。</td></tr>
+<tr><td><code>pause</code></td><td>値、タイムアウト</td><td><code>1500</code></td><td>指定ミリ秒だけ待機します。例の <code>1500</code> は1.5秒です。「値」が空欄の場合はタイムアウトの値を待機時間として使用します。</td></tr>
+<tr><td><code>upload_file</code></td><td>検出方法、検出内容、値、タイムアウト</td><td><code>files\sample.xlsx</code></td><td><code>input type="file"</code> を指定し、ファイルを設定します。固定ファイルは <span class="button">ファイル選択</span> で選べます。共通データのパスをリンクすれば、同じイベントでも PCL ごとに異なるファイルを設定できます。相対パスはプログラムのフォルダーを基準にします。</td></tr>
+</tbody></table>
+<h2>単一イベントを間隔付きで再試行する</h2>
+<table><thead><tr><th>項目</th><th>設定内容</th><th>例</th></tr></thead><tbody>
+<tr><td>再試行回数</td><td>最初の実行が失敗した後に、そのイベントだけを再実行する最大回数です。<code>0</code> は再試行なしです。</td><td><code>2</code>（最大3回実行）</td></tr>
+<tr><td>再試行間隔 (ms)</td><td>失敗してから次の試行を始めるまでの待機時間です。</td><td><code>2000</code>（2秒）</td></tr>
+</tbody></table>
+<div class="note"><b>処理順：</b>設定回数までイベントを再試行し、途中の失敗は実行ログへ記録します。最後の試行も失敗した場合だけ、エラー画像を保存して「失敗時の動作」を実行します。</div>
+<div class="warning"><b>更新系操作：</b><code>click</code> や送信操作は、サーバー側では成功していても応答待ちだけが失敗する場合があります。同じ登録や送信が重複しても問題ないことを確認してから再試行を設定してください。</div>
+<div class="note"><b>Salesforce spinner の自動待機：</b>すべての通常イベントは、実行前と成功後に <code>.slds-spinner, lightning-spinner</code> を確認します。可視 spinner がある場合だけ、イベントのタイムアウトまで消えるのを待ちます。存在しない場合は待機せず、すぐに処理を続けます。</div>
+<h2>データ参照とデータリンクの違い</h2>
+<table><thead><tr><th>機能</th><th>使用する場面</th><th>保存される内容</th></tr></thead><tbody>
+<tr><td>データ参照</td><td>URL、入力文字、キー、スクリーンショット名、locator などの一部分へデータ値を埋め込みます。</td><td><code>https://example.com/${data:PCL_NO}</code> のようなテンプレート文字列。</td></tr>
+<tr><td>構造から選択（データリンク）</td><td>fill、select、upload_file の入力値全体をデータ項目から取得する場合、または get_text の取得結果をデータ項目へ保存する場合に使用します。</td><td>読み取りまたは書き込み対象となるデータ項目のパス。</td></tr>
+</tbody></table>
+<div class="note"><b>データ参照が有効になる場所：</b>「入力値 / URL / キー」側では <code>goto</code>、<code>fill</code>、<code>press</code>、<code>screenshot</code> で使用できます。「検出内容」側では対象要素を使う操作で使用できます。ボタンが灰色の場合、その操作種別では使用できません。</div>
+
+<h2>検出方法</h2>
+<table><thead><tr><th>検出方法</th><th>用途と入力例</th></tr></thead><tbody>
+<tr><td><code>role</code></td><td>役割と名称で検出します。例：<code>button|保存</code>。</td></tr>
+<tr><td><code>label</code></td><td>入力欄に関連付けられたラベル文字で検出します。</td></tr>
+<tr><td><code>placeholder</code></td><td>入力欄の placeholder 文字で検出します。</td></tr>
+<tr><td><code>text</code></td><td>ページに表示される文字列で検出します。</td></tr>
+<tr><td><code>css</code></td><td>CSS selector を直接指定します。</td></tr>
+<tr><td><code>xpath</code></td><td>XPath を直接指定します。</td></tr>
+<tr><td><code>none</code></td><td>対象要素を使用しない操作の内部値です。通常は goto、pause、screenshot などで自動設定されます。</td></tr>
+</tbody></table>
+
+<h2>失敗時の動作</h2>
+<table><thead><tr><th>選択肢</th><th>失敗後の処理</th></tr></thead><tbody>
+<tr><td>実行を停止</td><td>現在のデータ処理を失敗として停止し、後続イベントへ進みません。</td></tr>
+<tr><td>次のイベントへ進む</td><td>失敗をログへ記録し、同じフローの次イベントへ進みます。</td></tr>
+<tr><td>ページを再読み込み</td><td>失敗ページを再読み込みしてから次イベントへ進みます。</td></tr>
+<tr><td>指定 URL へ移動</td><td>「移動先 URL」へ移動してから次イベントへ進みます。</td></tr>
+</tbody></table>
+<h2>繰り返し・再試行を登録する</h2>
+<p>繰り返しと再試行は普通のイベント種別ではありません。メイン画面の <span class="button">グループ追加</span> から登録します。</p>
+<div class="figure">
+  <img src="images/08_event_group_aligned_20260805.png" alt="イベントグループ編集画面">
+  <div class="legend">イベントグループ編集画面です。「基本設定」でグループ機能を選び、「実行制御」でタイムアウト、再試行、実行条件を設定します。</div>
+</div>
+<div class="step"><b>手順 1</b>　メイン画面で、グループを挿入する位置のイベントを選択します。</div>
+<div class="step"><b>手順 2</b>　<span class="button">グループ追加</span> を押し、グループ名を入力します。</div>
+<div class="step"><b>手順 3</b>　共通データの list ごとに処理する場合は「繰り返し」を有効にし、「構造から選択」で対象 list を選びます。</div>
+<div class="step"><b>手順 4</b>　「タイムアウト」にグループ内の1回の試行を完了する上限時間を ms で入力します。</div>
+<div class="step"><b>手順 5</b>　グループ内で失敗した処理をやり直す場合は「失敗時に再試行する」を有効にし、再試行回数と再試行間隔を入力します。<code>3</code> を指定すると、最初の実行に失敗した後、最大3回再試行します。</div>
+<div class="step"><b>手順 6</b>　必要に応じて実行条件を設定して保存し、グループの内側へ実行したいイベントを追加または移動します。</div>
+<div class="note"><b>グループのタイムアウト：</b>グループ内イベントのタイムアウトが残り時間より長い場合は、グループの残り時間までに短縮されます。タイムアウトまたはイベント失敗で再試行する場合は、設定した再試行間隔だけ待ってからグループ先頭へ戻ります。</div>
+<h2>よく使うキー入力の例</h2>
+<table><thead><tr><th>目的</th><th>press の「値」</th></tr></thead><tbody>
+<tr><td>Enter キーで確定・送信</td><td><code>Enter</code></td></tr>
+<tr><td>次の入力欄へ移動</td><td><code>Tab</code></td></tr>
+<tr><td>ダイアログを閉じる</td><td><code>Escape</code></td></tr>
+<tr><td>候補を一つ下へ移動</td><td><code>ArrowDown</code></td></tr>
+<tr><td>入力内容を全選択</td><td><code>Control+A</code></td></tr>
+<tr><td>全選択して削除</td><td><code>Control+A</code> のイベントの後に、別の <code>press</code> イベントで <code>Backspace</code></td></tr>
+</tbody></table>
+<div class="note"><b>変数を使う場合：</b>「値」には <code>${変数名}</code> を入力できます。例：<code>https://example.com/orders/${order_number}</code>。ただし、<code>get_text</code> の「値」は保存先の変数名として扱われます。</div>
+<h2>途中のページにある要素を選ぶ</h2>
+<div class="step"><b>手順 1</b>　対象画面へ到達する直前までのイベントを保存します。</div>
+<div class="step"><b>手順 2</b>　対象イベントで <span class="button">このイベントまで実行</span> を押します。</div>
+<div class="step"><b>手順 3</b>　直前で停止したら <span class="button">画面から選択</span> を押し、F2 → 対象クリックの順に操作します。</div>
+<div class="warning"><b>検出数が2件以上の場合：</b>対象を誤る可能性があります。再選択し、検出数が1件になることを確認してください。</div>
+<div class="tip"><b>検出できない場合：</b>対象 URL、ログイン状態、ページの表示完了、iframe の有無を確認し、対象画面を表示した状態でもう一度選択してください。</div>
+<div class="note"><b>新しいタブ／ポップアップ：</b>リンクのクリックで新しいタブやポップアップページが開いた場合、後続イベントは新しく開いたページを自動的に操作します。URL が一時的に <code>about:blank</code> でも、ページの移動またはスクリプトによる内容生成を待って続行します。</div>
+<div class="note"><b>iframe 内の要素：</b>要素選択、検証、クリック、入力、ファイル設定などは、表示中ページの iframe 内も自動的に検索します。対象 iframe を個別指定する必要はありません。</div>
+<div class="note"><b>失敗時の記録：</b>イベント失敗時は、エラー内容に続いて <code>Failure URL</code> とエラー画像の保存先が実行ログへ出力されます。再試行前に実際の失敗ページを確認できます。</div>
+<div class="note"><b>artifacts フォルダー：</b>フォルダー名は <code>yyyyMMdd_HHmmss</code> です。スクリーンショットまたはエラー画像が発生した場合だけ作成され、画像がない実行では空フォルダーを作成しません。</div>
+<div class="tip"><b>証明書警告：</b>実行用、デバッグ用、認証用の各 Chrome は HTTPS 証明書エラーを無視してページを開きます。接続先 URL が正しいことは利用者側で確認してください。</div>
+<p class="manual-nav"><a href="01_メイン画面_操作手順.html">メイン画面の手順へ</a>　｜　<a href="index.html">全体操作手順へ</a></p>
+</body></html>

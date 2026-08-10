@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>設定画面 操作手順</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>設定画面 操作手順</h1>
+<p class="sub">画面表示と、ブラウザーを開くときの共通初期値を設定します。</p>
+<div class="figure">
+  <img src="images/07_settings_20260805.png" alt="設定画面">
+  <div class="legend">設定画面です。左側で表示設定、右側でブラウザー実行設定を変更します。</div>
+</div>
+
+<h2>表示設定</h2>
+<table><thead><tr><th>項目</th><th>操作内容</th></tr></thead><tbody>
+<tr><td>フォント</td><td>アプリ画面で使用するフォントを変更します。</td></tr>
+<tr><td>文字サイズ</td><td>画面全体の文字サイズを変更します。</td></tr>
+<tr><td>表示言語</td><td>日本語または中国語を選択します。</td></tr>
+<tr><td>フォントを既定に戻す</td><td>フォントと文字サイズを初期値へ戻します。</td></tr>
+<tr><td>ウィンドウサイズを既定に戻す</td><td>メイン画面を <code>1380×820</code> に戻します。</td></tr>
+</tbody></table>
+
+<h2>ブラウザー設定</h2>
+<table><thead><tr><th>項目</th><th>操作内容</th><th>注意</th></tr></thead><tbody>
+<tr><td>既定の開始 URL</td><td>要素選択用ブラウザーと認証ブラウザーの初期ページを設定します。</td><td><code>http://</code> または <code>https://</code> で始めます。</td></tr>
+<tr><td>既定のタイムアウト</td><td>新規イベントに設定する初期タイムアウトをミリ秒で指定します。</td><td>1～3600000 の整数を指定します。</td></tr>
+<tr><td>実行時に Chrome を表示</td><td>正式実行の Chrome を表示／非表示にします。</td><td>非表示でも処理はバックグラウンドで継続します。</td></tr>
+<tr><td>実行設定を保存</td><td>上記のブラウザー設定を保存します。</td><td>入力後に必ず押します。</td></tr>
+</tbody></table>
+
+<div class="note"><b>開始 URL の適用範囲：</b>ログイン状態画面の URL 初期値と、イベント編集画面から要素選択用ブラウザーを開く際に使用します。正式なフロー実行が必ずこの URL から始まるわけではありません。</div>
+<div class="tip"><b>正式実行の開始ページ：</b>フロー内に <code>goto</code> イベントを登録して明示します。ブラウザーに前回のページが残っていることを前提にしないでください。</div>
+<p class="manual-nav"><a href="05_ログイン状態画面_操作手順.html">ログイン状態の手順へ</a>　｜　<a href="index.html">全体操作手順へ</a></p>
+</body></html>

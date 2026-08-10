@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ui version="4.0">
+  <class>FlowDesignForm</class>
+  <widget class="QWidget" name="FlowDesignForm">
+    <layout class="QVBoxLayout" name="rootLayout" stretch="0,0,1">
+      <property name="leftMargin">
+        <number>28</number>
+      </property>
+      <property name="topMargin">
+        <number>22</number>
+      </property>
+      <property name="rightMargin">
+        <number>28</number>
+      </property>
+      <property name="bottomMargin">
+        <number>22</number>
+      </property>
+      <item>
+        <widget class="QLabel" name="titleLabel">
+          <property name="pageTitle" stdset="0">
+            <bool>true</bool>
+          </property>
+          <property name="text">
+            <string>フロー設計</string>
+          </property>
+        </widget>
+      </item>
+      <item>
+        <widget class="QLabel" name="subtitleLabel">
+          <property name="muted" stdset="0">
+            <bool>true</bool>
+          </property>
+          <property name="text">
+            <string>業務フローとイベントの実行順、条件、操作内容を設定します</string>
+          </property>
+        </widget>
+      </item>
+      <item>
+        <widget class="QSplitter" name="mainSplitter">
+          <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+          </property>
+          <widget class="QFrame" name="workflowCard">
+            <property name="card" stdset="0">
+              <bool>true</bool>
+            </property>
+            <layout class="QVBoxLayout" name="workflowLayout">
+              <item>
+                <widget class="QLabel" name="workflowTitle">
+                  <property name="cardTitle" stdset="0">
+                    <bool>true</bool>
+                  </property>
+                  <property name="text">
+                    <string>業務フロー</string>
+                  </property>
+                </widget>
+              </item>
+              <item>
+                <widget class="QLabel" name="workflowHint">
+                  <property name="text">
+                    <string>ドラッグで並べ替え、各項目はダブルクリックで操作</string>
+                  </property>
+                </widget>
+              </item>
+              <item>
+                <widget class="QTableWidget" name="workflowTable" />
+              </item>
+              <item>
+                <layout class="QHBoxLayout" name="workflowToolbar">
+                  <item>
+                    <widget class="QPushButton" name="newWorkflowButton">
+                      <property name="primary" stdset="0">
+                        <bool>true</bool>
+                      </property>
+                      <property name="text">
+                        <string>新規</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="editWorkflowButton">
+                      <property name="text">
+                        <string>編集</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="deleteWorkflowButton">
+                      <property name="danger" stdset="0">
+                        <bool>true</bool>
+                      </property>
+                      <property name="text">
+                        <string>削除</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <spacer name="workflowToolbarStretch">
+                      <property name="orientation">
+                        <enum>Qt::Horizontal</enum>
+                      </property>
+                      <property name="sizeHint">
+                        <size>
+                          <width>40</width>
+                          <height>20</height>
+                        </size>
+                      </property>
+                    </spacer>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="workflowJsonButton">
+                      <property name="text">
+                        <string>Json 入出力</string>
+                      </property>
+                    </widget>
+                  </item>
+                </layout>
+              </item>
+            </layout>
+          </widget>
+          <widget class="QFrame" name="eventCard">
+            <property name="card" stdset="0">
+              <bool>true</bool>
+            </property>
+            <layout class="QVBoxLayout" name="eventLayout">
+              <item>
+                <widget class="QLabel" name="eventTitle">
+                  <property name="cardTitle" stdset="0">
+                    <bool>true</bool>
+                  </property>
+                  <property name="text">
+                    <string>登録</string>
+                  </property>
+                </widget>
+              </item>
+              <item>
+                <widget class="QTreeWidget" name="eventTree">
+                  <column>
+                    <property name="text">
+                      <string>イベント名</string>
+                    </property>
+                  </column>
+                </widget>
+              </item>
+              <item>
+                <layout class="QHBoxLayout" name="eventToolbar">
+                  <item>
+                    <widget class="QPushButton" name="addEventButton">
+                      <property name="primary" stdset="0">
+                        <bool>true</bool>
+                      </property>
+                      <property name="text">
+                        <string>追加</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="editEventButton">
+                      <property name="text">
+                        <string>編集</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="deleteEventButton">
+                      <property name="danger" stdset="0">
+                        <bool>true</bool>
+                      </property>
+                      <property name="text">
+                        <string>削除</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <spacer name="eventToolbarStretch">
+                      <property name="orientation">
+                        <enum>Qt::Horizontal</enum>
+                      </property>
+                      <property name="sizeHint">
+                        <size>
+                          <width>40</width>
+                          <height>20</height>
+                        </size>
+                      </property>
+                    </spacer>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="moveUpButton">
+                      <property name="text">
+                        <string>↑</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="moveDownButton">
+                      <property name="text">
+                        <string>↓</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="groupToggleButton">
+                      <property name="text">
+                        <string>⏷</string>
+                      </property>
+                      <property name="toolTip">
+                        <string>すべて展開</string>
+                      </property>
+                    </widget>
+                  </item>
+                </layout>
+              </item>
+            </layout>
+          </widget>
+        </widget>
+      </item>
+    </layout>
+  </widget>
+  <resources />
+  <connections />
+</ui>

@@ -1,0 +1,385 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ui version="4.0">
+  <class>ExecutionForm</class>
+  <widget class="QWidget" name="ExecutionForm">
+    <layout class="QVBoxLayout" name="rootLayout" stretch="0,0,0,1,0">
+      <property name="spacing"><number>12</number></property>
+      <property name="leftMargin">
+        <number>28</number>
+      </property>
+      <property name="topMargin">
+        <number>22</number>
+      </property>
+      <property name="rightMargin">
+        <number>28</number>
+      </property>
+      <property name="bottomMargin">
+        <number>22</number>
+      </property>
+      <item>
+        <layout class="QHBoxLayout" name="headerLayout">
+          <item>
+            <layout class="QVBoxLayout" name="headerTitles">
+              <item>
+                <widget class="QLabel" name="titleLabel">
+                  <property name="pageTitle" stdset="0">
+                    <bool>true</bool>
+                  </property>
+                  <property name="text">
+                    <string>実行管理</string>
+                  </property>
+                </widget>
+              </item>
+              <item>
+                <widget class="QLabel" name="subtitleLabel">
+                  <property name="muted" stdset="0">
+                    <bool>true</bool>
+                  </property>
+                  <property name="text">
+                    <string>実行対象、進行状況とログを管理します</string>
+                  </property>
+                </widget>
+              </item>
+            </layout>
+          </item>
+          <item>
+            <spacer name="headerStretch">
+              <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint">
+                <size>
+                  <width>40</width>
+                  <height>20</height>
+                </size>
+              </property>
+            </spacer>
+          </item>
+          <item>
+            <widget class="QPushButton" name="runButton">
+              <property name="minimumSize"><size><width>104</width><height>0</height></size></property>
+              <property name="primary" stdset="0">
+                <bool>true</bool>
+              </property>
+              <property name="text">
+                <string>実行開始</string>
+              </property>
+            </widget>
+          </item>
+        </layout>
+      </item>
+      <item>
+        <widget class="QFrame" name="summaryCard">
+          <property name="minimumSize"><size><width>0</width><height>58</height></size></property>
+          <property name="maximumSize"><size><width>16777215</width><height>58</height></size></property>
+          <property name="executionSummary" stdset="0">
+            <bool>true</bool>
+          </property>
+          <property name="card" stdset="0">
+            <bool>true</bool>
+          </property>
+          <layout class="QHBoxLayout" name="summaryLayout">
+            <property name="spacing"><number>10</number></property>
+            <property name="leftMargin"><number>12</number></property>
+            <property name="topMargin"><number>6</number></property>
+            <property name="rightMargin"><number>10</number></property>
+            <property name="bottomMargin"><number>6</number></property>
+            <item>
+              <widget class="QLabel" name="statusLabel">
+                <property name="minimumSize"><size><width>76</width><height>30</height></size></property>
+                <property name="maximumSize"><size><width>16777215</width><height>30</height></size></property>
+                <property name="statusBadge" stdset="0">
+                  <bool>true</bool>
+                </property>
+                <property name="text">
+                  <string>待機中</string>
+                </property>
+              </widget>
+            </item>
+            <item>
+              <widget class="QFrame" name="summarySeparator1">
+                <property name="minimumSize"><size><width>1</width><height>0</height></size></property>
+                <property name="maximumSize"><size><width>1</width><height>16777215</height></size></property>
+                <property name="frameShape">
+                  <enum>QFrame::VLine</enum>
+                </property>
+              </widget>
+            </item>
+            <item>
+              <widget class="QLabel" name="targetSummaryLabel">
+                <property name="summaryValue" stdset="0">
+                  <bool>true</bool>
+                </property>
+                <property name="text">
+                  <string>実行対象を確認しています</string>
+                </property>
+              </widget>
+            </item>
+            <item>
+              <spacer name="summaryStretch">
+                <property name="orientation">
+                  <enum>Qt::Horizontal</enum>
+                </property>
+                <property name="sizeHint">
+                  <size>
+                    <width>20</width>
+                    <height>20</height>
+                  </size>
+                </property>
+              </spacer>
+            </item>
+            <item>
+              <widget class="QLabel" name="sessionLabel">
+                <property name="muted" stdset="0">
+                  <bool>true</bool>
+                </property>
+                <property name="text">
+                  <string>同時セッション数</string>
+                </property>
+              </widget>
+            </item>
+            <item>
+              <widget class="QSpinBox" name="sessionSpin">
+                <property name="minimumSize"><size><width>104</width><height>0</height></size></property>
+                <property name="maximumSize"><size><width>104</width><height>16777215</height></size></property>
+                <property name="minimum">
+                  <number>1</number>
+                </property>
+                <property name="maximum">
+                  <number>20</number>
+                </property>
+              </widget>
+            </item>
+          </layout>
+        </widget>
+      </item>
+      <item>
+        <layout class="QHBoxLayout" name="toolbar">
+          <property name="spacing"><number>8</number></property>
+          <property name="leftMargin"><number>0</number></property>
+          <property name="topMargin"><number>2</number></property>
+          <property name="rightMargin"><number>0</number></property>
+          <property name="bottomMargin"><number>2</number></property>
+          <item>
+            <widget class="QPushButton" name="statusTabButton">
+              <property name="minimumSize"><size><width>78</width><height>34</height></size></property>
+              <property name="maximumSize"><size><width>16777215</width><height>34</height></size></property>
+              <property name="executionTab" stdset="0">
+                <bool>true</bool>
+              </property>
+              <property name="text">
+                <string>実行状況</string>
+              </property>
+            </widget>
+          </item>
+          <item>
+            <widget class="QPushButton" name="logTabButton">
+              <property name="minimumSize"><size><width>78</width><height>34</height></size></property>
+              <property name="maximumSize"><size><width>16777215</width><height>34</height></size></property>
+              <property name="executionTab" stdset="0">
+                <bool>true</bool>
+              </property>
+              <property name="text">
+                <string>ログ</string>
+              </property>
+            </widget>
+          </item>
+          <item>
+            <spacer name="toolbarStretch">
+              <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint">
+                <size>
+                  <width>20</width>
+                  <height>20</height>
+                </size>
+              </property>
+            </spacer>
+          </item>
+          <item>
+            <widget class="QPushButton" name="toggleExecutionButton">
+              <property name="text">
+                <string>実行／スキップ</string>
+              </property>
+            </widget>
+          </item>
+          <item>
+            <widget class="QPushButton" name="setGroupButton">
+              <property name="text">
+                <string>実行グループ設定</string>
+              </property>
+            </widget>
+          </item>
+          <item>
+            <widget class="QPushButton" name="clearResultsButton">
+              <property name="danger" stdset="0">
+                <bool>true</bool>
+              </property>
+              <property name="text">
+                <string>結果をクリア</string>
+              </property>
+            </widget>
+          </item>
+        </layout>
+      </item>
+      <item>
+        <widget class="QStackedWidget" name="executionStack">
+          <widget class="QWidget" name="statusPage">
+            <layout class="QVBoxLayout" name="statusLayout">
+              <property name="leftMargin">
+                <number>0</number>
+              </property>
+              <property name="topMargin">
+                <number>0</number>
+              </property>
+              <property name="rightMargin">
+                <number>0</number>
+              </property>
+              <property name="bottomMargin">
+                <number>0</number>
+              </property>
+              <item>
+                <widget class="QTreeWidget" name="executionTree">
+                  <column>
+                    <property name="text">
+                      <string>実行グループ</string>
+                    </property>
+                  </column>
+                  <column>
+                    <property name="text">
+                      <string>本次実行</string>
+                    </property>
+                  </column>
+                  <column>
+                    <property name="text">
+                      <string>実行データ</string>
+                    </property>
+                  </column>
+                  <column>
+                    <property name="text">
+                      <string>概要</string>
+                    </property>
+                  </column>
+                  <column>
+                    <property name="text">
+                      <string>状態</string>
+                    </property>
+                  </column>
+                </widget>
+              </item>
+            </layout>
+          </widget>
+          <widget class="QWidget" name="logPage">
+            <layout class="QVBoxLayout" name="logLayout">
+              <property name="leftMargin">
+                <number>0</number>
+              </property>
+              <property name="topMargin">
+                <number>0</number>
+              </property>
+              <property name="rightMargin">
+                <number>0</number>
+              </property>
+              <property name="bottomMargin">
+                <number>0</number>
+              </property>
+              <item>
+                <layout class="QHBoxLayout" name="logToolbar">
+                  <item>
+                    <spacer name="logStretch">
+                      <property name="orientation">
+                        <enum>Qt::Horizontal</enum>
+                      </property>
+                      <property name="sizeHint">
+                        <size>
+                          <width>20</width>
+                          <height>20</height>
+                        </size>
+                      </property>
+                    </spacer>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="clearLogButton">
+                      <property name="text">
+                        <string>ログをクリア</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="copyLogButton">
+                      <property name="text">
+                        <string>ログをコピー</string>
+                      </property>
+                    </widget>
+                  </item>
+                </layout>
+              </item>
+              <item>
+                <widget class="QPlainTextEdit" name="logEdit">
+                  <property name="readOnly">
+                    <bool>true</bool>
+                  </property>
+                  <property name="placeholderText">
+                    <string>実行ログ</string>
+                  </property>
+                </widget>
+              </item>
+            </layout>
+          </widget>
+        </widget>
+      </item>
+      <item>
+        <widget class="QFrame" name="progressCard">
+          <property name="executionProgress" stdset="0">
+            <bool>true</bool>
+          </property>
+          <property name="card" stdset="0">
+            <bool>true</bool>
+          </property>
+          <layout class="QHBoxLayout" name="progressLayout">
+            <property name="spacing"><number>10</number></property>
+            <property name="leftMargin"><number>14</number></property>
+            <property name="topMargin"><number>8</number></property>
+            <property name="rightMargin"><number>14</number></property>
+            <property name="bottomMargin"><number>8</number></property>
+            <item>
+              <widget class="QLabel" name="progressLabel">
+                <property name="muted" stdset="0">
+                  <bool>true</bool>
+                </property>
+                <property name="text">
+                  <string>進行状況</string>
+                </property>
+              </widget>
+            </item>
+            <item>
+              <widget class="QProgressBar" name="progressBar">
+                <property name="minimumSize"><size><width>0</width><height>8</height></size></property>
+                <property name="maximumSize"><size><width>16777215</width><height>8</height></size></property>
+                <property name="value">
+                  <number>0</number>
+                </property>
+                <property name="textVisible">
+                  <bool>false</bool>
+                </property>
+              </widget>
+            </item>
+            <item>
+              <widget class="QLabel" name="progressCountLabel">
+                <property name="progressCount" stdset="0">
+                  <bool>true</bool>
+                </property>
+                <property name="text">
+                  <string>0 / 0</string>
+                </property>
+              </widget>
+            </item>
+          </layout>
+        </widget>
+      </item>
+    </layout>
+  </widget>
+  <resources />
+  <connections />
+</ui>

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>GuardRuleForm</class>
+ <widget class="QDialog" name="GuardRuleForm">
+  <property name="minimumSize"><size><width>520</width><height>220</height></size></property>
+  <property name="maximumSize"><size><width>520</width><height>220</height></size></property>
+  <property name="windowTitle"><string>条件編集</string></property>
+  <property name="geometry"><rect><x>0</x><y>0</y><width>520</width><height>220</height></rect></property>
+  <layout class="QVBoxLayout" name="rootLayout">
+   <property name="leftMargin"><number>16</number></property>
+   <property name="topMargin"><number>16</number></property>
+   <property name="rightMargin"><number>16</number></property>
+   <property name="bottomMargin"><number>14</number></property>
+   <property name="spacing"><number>10</number></property>
+   <item>
+    <widget class="QFrame" name="ruleCard"><property name="card" stdset="0"><bool>true</bool></property>
+     <layout class="QFormLayout" name="ruleForm">
+      <property name="leftMargin"><number>16</number></property>
+      <property name="topMargin"><number>14</number></property>
+      <property name="rightMargin"><number>16</number></property>
+      <property name="bottomMargin"><number>14</number></property>
+      <property name="horizontalSpacing"><number>12</number></property>
+      <property name="verticalSpacing"><number>9</number></property>
+      <item row="0" column="0"><widget class="QLabel" name="pathLabel"><property name="text"><string>データ項目</string></property></widget></item>
+      <item row="0" column="1">
+       <layout class="QHBoxLayout" name="pathLayout">
+        <property name="spacing"><number>8</number></property>
+        <item><widget class="QComboBox" name="pathCombo"><property name="editable"><bool>true</bool></property></widget></item>
+        <item><widget class="QPushButton" name="choosePathButton"><property name="text"><string>構造から選択</string></property></widget></item>
+       </layout>
+      </item>
+      <item row="1" column="0"><widget class="QLabel" name="operatorLabel"><property name="text"><string>比較方法</string></property></widget></item>
+      <item row="1" column="1"><widget class="QComboBox" name="operatorCombo"/></item>
+      <item row="2" column="0"><widget class="QLabel" name="valueLabel"><property name="text"><string>比較値</string></property></widget></item>
+      <item row="2" column="1"><widget class="QLineEdit" name="valueEdit"/></item>
+     </layout>
+    </widget>
+   </item>
+   <item><widget class="QDialogButtonBox" name="buttonBox"><property name="standardButtons"><set>QDialogButtonBox::Cancel|QDialogButtonBox::Save</set></property></widget></item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>データ管理画面 操作手順</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>データ管理画面 操作手順</h1>
+<p class="sub">左側で実行1回分のデータを選び、右側で各項目の値を編集します。</p>
+<div class="figure">
+  <img src="images/04_data_20260805.png" alt="データ管理画面">
+  <div class="legend">データ管理画面です。データ名と概要は左側一覧で、階層項目の値は右側で編集します。</div>
+</div>
+<div class="note"><b>画面の見方：</b>左側の1行が実行1回分のデータです。概要は一覧でダブルクリックして編集し、右側で選択中データの値を編集します。今回実行と実行グループは「実行管理」で設定します。</div>
+<h2>左側のボタン</h2>
+<table><thead><tr><th>ボタン</th><th>操作内容</th><th>注意</th></tr></thead><tbody>
+<tr><td>データ追加</td><td>空のデータを1件作ります。</td><td>作成後、右側で値を入力します。</td></tr>
+<tr><td>複製</td><td>選択中のデータをコピーします。</td><td>似たデータの作成に使います。</td></tr>
+<tr><td>名前変更</td><td>選択データの表示名を変更します。</td><td>データ内容は変わりません。</td></tr>
+<tr class="danger-row"><td>削除</td><td>選択データを削除します。</td><td>確認画面の対象名を確認します。</td></tr>
+<tr><td>Json 読込／出力</td><td>データの追加／バックアップを行います。</td><td>同名データの読込時は名前が自動変更されます。</td></tr>
+<tr><td>Excel 読込</td><td>Excel から全データを完全復元します。</td><td>現在の全データが置き換わります。</td></tr>
+<tr><td>Excel 出力</td><td>全データを Excel に出力します。</td><td>バックアップや一括編集に使います。</td></tr>
+</tbody></table>
+<h2>右側の操作</h2>
+<table><tbody>
+<tr><td>値をダブルクリック</td><td>text、number、boolean の値を編集します。</td></tr>
+<tr><td>空の項目を追加</td><td>選択した list に空の項目を追加します。</td></tr>
+<tr><td>構造付き項目を追加</td><td>配下項目を含む一式を list に追加します。</td></tr>
+<tr class="danger-row"><td>リスト項目を削除</td><td>選択した [1]、[2] などのリスト項目を削除します。</td></tr>
+<tr><td>全構造を同期</td><td>全データを現在のデータ構造に合わせます。</td></tr>
+<tr><td>現在のデータを保存</td><td>右側で編集中の1件を保存します。</td></tr>
+</tbody></table>
+<div class="note"><b>保存タイミング：</b>右側の値編集、リスト項目の追加・削除は「現在のデータを保存」で確定します。未保存のまま別データや別画面へ移動するかアプリを閉じると、保存／破棄／キャンセルを選ぶ確認画面が表示されます。</div>
+<div class="note"><b>すぐに反映される操作：</b>データ追加、複製、名前・概要変更、削除、Json／Excel 読込は操作確定時にデータベースへ反映され、右側の保存ボタンを押す必要はありません。</div>
+<h2>データを1件登録する</h2>
+<div class="step"><b>手順 1</b>　<span class="button">データ追加</span> を押し、データ名を入力します。</div>
+<div class="step"><b>手順 2</b>　作成したデータを左側で選択します。</div>
+<div class="step"><b>手順 3</b>　右側の「値」列をダブルクリックし、値を入力します。</div>
+<div class="step"><b>手順 4</b>　list が必要な場合は list 行を選び、<span class="button">構造付き項目を追加</span> を押します。</div>
+<div class="step"><b>手順 5</b>　<span class="button">現在のデータを保存</span> を押し、「保存しました」を確認します。</div>
+<div class="step"><b>手順 6</b>　必要に応じて一覧の「概要」をダブルクリックして説明を入力します。</div>
+<div class="success"><b>完了確認：</b>保存後に別データへ切り替えて戻り、入力値が保持されていることを確認します。</div>
+<h2>Excel で一括更新する</h2>
+<div class="step"><b>手順 1</b>　<span class="button">Excel 出力</span> したファイルをひな形として編集します。</div>
+<div class="step"><b>手順 2</b>　列名を変えずに値を編集して保存します。</div>
+<div class="step"><b>手順 3</b>　<span class="button">Excel 読込</span> を押し、ファイルと復元件数を確認します。</div>
+<div class="note"><b>出力ファイルの見方：</b>すべてのセルは左揃えです。階層型の列見出しは、上位階層を濃い青、下位階層を順に明るい青で表示します。結合された見出し名と列順は変更しないでください。</div>
+<div class="danger"><b>重要：</b>Excel 読込は追加ではなく完全復元です。現在データは先に出力してください。</div>
+<div class="warning"><b>読込後の確認：</b>件数、データ名、概要、list の件数を確認し、「実行管理」で今回実行と実行グループを確認してください。</div>
+<p class="manual-nav"><a href="03_データ構造画面_操作手順.html">データ構造の手順へ</a>　｜　<a href="index.html">全体操作手順へ</a></p>
+</body></html>
