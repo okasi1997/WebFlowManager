@@ -21,7 +21,7 @@ from ..table_view import (
     restore_scroll_position, restore_tree_display_state,
 )
 from ..ui_loader import (
-    confirm_deletion, load_ui_into, localize_dialog_buttons, require,
+    confirm_deletion, confirm_pending_changes, load_ui_into, localize_dialog_buttons, require,
     show_information, show_warning,
 )
 
@@ -30,8 +30,6 @@ class RecordMetadataDialog(QDialog):
     def __init__(self, parent: QWidget, record: dict[str, Any] | None = None) -> None:
         super().__init__(parent)
         load_ui_into(self, 'record_dialog.ui')
-        self.setFixedSize(480, 172)
-        require(self, QFrame, 'recordCard').setProperty('card', True)
         self.name = require(self, QLineEdit, 'nameEdit')
         self.summary = require(self, QLineEdit, 'summaryEdit')
         self.name.setText(str((record or {}).get('name', '')))
@@ -65,19 +63,8 @@ class DataPage(QWidget):
         self.current_record: dict[str, Any] | None = None
         self.current_data: dict[str, Any] = {}
         load_ui_into(self, 'data.ui')
-        require(self, QVBoxLayout, 'rootLayout').setStretch(2, 1)
-        require(self, QLabel, 'titleLabel').setProperty('pageTitle', True)
-        require(self, QLabel, 'subtitleLabel').setProperty('muted', True)
         record_card = require(self, QFrame, 'recordCard')
         value_card = require(self, QFrame, 'valueCard')
-        for card in (record_card, value_card):
-            card.setProperty('card', True)
-            # ツールバーの推奨幅に拘束されず、スプリッターで幅を変更できるようにする。
-            card.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        record_card.setMinimumWidth(280)
-        value_card.setMinimumWidth(360)
-        for name in ('recordTitle', 'valueTitle'):
-            require(self, QLabel, name).setProperty('cardTitle', True)
         splitter = require(self, QSplitter, 'dataSplitter')
         splitter.setChildrenCollapsible(False)
         splitter.setStretchFactor(0, 2)
@@ -119,17 +106,12 @@ class DataPage(QWidget):
         }
         for name, callback in callbacks.items():
             require(self, QPushButton, name).clicked.connect(callback)
-        for name in ('addRecordButton', 'saveRecordButton'):
-            require(self, QPushButton, name).setProperty('primary', True)
-        for name in ('deleteRecordButton', 'deleteListItemButton'):
-            require(self, QPushButton, name).setProperty('danger', True)
 
         # 左側はデータ自体の作成・編集・複製だけに絞る。
         require(self, QPushButton, 'deleteRecordButton').hide()
         require(self, QPushButton, 'toggleRecordButton').hide()
 
         list_button = require(self, QPushButton, 'addListItemButton')
-        list_button.setText('リスト操作')
         list_menu = QMenu(list_button)
         list_menu.addAction('リスト項目を追加', self.add_list_item)
         list_menu.addAction('リスト項目を削除', self.delete_list_item)
@@ -144,7 +126,6 @@ class DataPage(QWidget):
         self.values.itemExpanded.connect(lambda *_: self._sync_value_toggle_button())
         self.values.itemCollapsed.connect(lambda *_: self._sync_value_toggle_button())
         io_button = require(self, QPushButton, 'exportDataJsonButton')
-        io_button.setText('データ入出力')
         io_menu = QMenu(io_button)
         io_menu.addAction('JSON を出力', self.export_json)
         io_menu.addAction('JSON を読み込む', self.import_json)
@@ -199,6 +180,24 @@ class DataPage(QWidget):
         self.current_record = self.selected()
         self.current_data = copy.deepcopy((self.current_record or {}).get('data', {}))
         self.render_values()
+
+    def has_pending_changes(self) -> bool:
+        return bool(
+            self.current_record
+            and self.current_data != self.current_record.get('data', {})
+        )
+
+    def confirm_pending_changes(self) -> bool:
+        if not self.has_pending_changes():
+            return True
+        choice = confirm_pending_changes(self, '実行データに未保存の変更があります。保存しますか？')
+        if choice == 'save':
+            return self.save_record(show_message=False)
+        if choice == 'discard':
+            self.current_data = copy.deepcopy(self.current_record.get('data', {}))
+            self.render_values()
+            return True
+        return False
 
     def render_values(self) -> None:
         display_state = capture_tree_display_state(
@@ -409,12 +408,15 @@ class DataPage(QWidget):
     def _record_double_clicked(self, _item, column: int) -> None:
         self.edit_record()
 
-    def save_record(self) -> None:
+    def save_record(self, _checked: bool = False, *, show_message: bool = True) -> bool:
         record = self.selected()
         if record:
             self.db.update_data_record(record['id'], record['name'], self.current_data)
             self.reload(record['id'])
-            show_information(self, '保存', '実行データを保存しました。')
+            if show_message:
+                show_information(self, '保存', '実行データを保存しました。')
+            return True
+        return False
 
     def export_json(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, 'JSON 出力', 'data_records.json', 'JSON (*.json)')

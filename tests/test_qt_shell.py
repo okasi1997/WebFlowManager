@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -42,6 +43,7 @@ class QtShellTests(unittest.TestCase):
         self.window = MainWindow(self.project_dir, self.db)
 
     def tearDown(self) -> None:
+        self.window._force_close = True
         self.window.close()
         self.db.close()
         self.temp_dir.cleanup()
@@ -74,8 +76,9 @@ class QtShellTests(unittest.TestCase):
         expected = {
             'main_window.ui', 'flow_design.ui', 'flow_editor.ui', 'event_editor.ui', 'guard_dialog.ui',
             'guard_condition.ui', 'guard_rule.ui', 'data_path_picker.ui',
+            'event_group.ui',
             'auth.ui', 'settings.ui', 'schema.ui', 'field_dialog.ui', 'data.ui',
-            'record_dialog.ui', 'execution.ui',
+            'record_dialog.ui', 'execution.ui', 'confirmation.ui',
         }
         self.assertEqual({path.name for path in forms.glob('*.ui')}, expected)
         for path in forms.glob('*.ui'):
@@ -690,6 +693,35 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(page.language.currentText(), '日本語')
         self.assertEqual(page.language.currentData(), 'ja')
         self.assertEqual(page.timeout.suffix(), ' ms')
+
+    def test_settings_edits_are_pending_until_single_save(self) -> None:
+        page = self.window.pages['settings']
+        stored_url = self.db.get_start_url()
+        page.start_url.setText('https://example.com/pending')
+        self.assertTrue(page.has_pending_changes())
+        self.assertEqual(self.db.get_start_url(), stored_url)
+        self.assertTrue(page.save_all(show_message=False))
+        self.assertEqual(self.db.get_start_url(), 'https://example.com/pending')
+        self.assertFalse(page.has_pending_changes())
+
+    def test_navigation_stops_when_current_page_rejects_pending_changes(self) -> None:
+        settings = self.window.pages['settings']
+        self.window.show_page('settings')
+        settings.confirm_pending_changes = lambda: False
+        self.window.show_page('design')
+        self.assertIs(self.window.stack.currentWidget(), settings)
+
+    def test_schema_and_data_pages_detect_unsaved_edits(self) -> None:
+        schema_page = self.window.pages['schema']
+        schema_page.schema.setdefault('children', []).append({'name': 'pending', 'type': 'text'})
+        self.assertTrue(schema_page.has_pending_changes())
+
+        self.db.save_data_schema(0, {'type': 'object', 'children': [{'name': 'value', 'type': 'text'}]})
+        record_id = self.db.add_data_record(0, 'record', {'value': 'before'})
+        data_page = self.window.pages['data']
+        data_page.reload(record_id)
+        data_page.current_data['value'] = 'after'
+        self.assertTrue(data_page.has_pending_changes())
 
     def test_condition_rule_restores_schema_picker_and_primary_save(self) -> None:
         schema = {'type': 'object', 'children': [{'name': 'case_no', 'type': 'text'}]}

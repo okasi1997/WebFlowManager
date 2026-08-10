@@ -1,2 +1,81 @@
-﻿<?xml version="1.0" encoding="UTF-8"?>
-<ui version="4.0"><class>SettingsForm</class><widget class="QWidget" name="SettingsForm"><layout class="QVBoxLayout" name="rootLayout"><property name="leftMargin"><number>30</number></property><property name="topMargin"><number>24</number></property><property name="rightMargin"><number>30</number></property><property name="bottomMargin"><number>24</number></property><item><widget class="QLabel" name="titleLabel"><property name="text"><string>設定</string></property></widget></item><item><widget class="QLabel" name="subtitleLabel"><property name="text"><string>表示と実行環境を設定します</string></property></widget></item><item><layout class="QHBoxLayout" name="cardsLayout"><item><widget class="QFrame" name="displayCard"><layout class="QVBoxLayout" name="displayLayout"><item><widget class="QLabel" name="displayTitle"><property name="text"><string>表示設定</string></property></widget></item><item><layout class="QFormLayout" name="displayForm"><item row="0" column="0"><widget class="QLabel" name="fontFamilyLabel"><property name="text"><string>フォント</string></property></widget></item><item row="0" column="1"><widget class="QComboBox" name="fontFamilyCombo"/></item><item row="1" column="0"><widget class="QLabel" name="fontSizeLabel"><property name="text"><string>サイズ</string></property></widget></item><item row="1" column="1"><widget class="QComboBox" name="fontSizeCombo"/></item><item row="2" column="0"><widget class="QLabel" name="languageLabel"><property name="text"><string>言語</string></property></widget></item><item row="2" column="1"><widget class="QComboBox" name="languageCombo"/></item></layout></item><item><widget class="QPushButton" name="saveDisplayButton"><property name="text"><string>表示設定を保存</string></property></widget></item><item><spacer name="displayStretch"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint"><size><width>20</width><height>40</height></size></property></spacer></item></layout></widget></item><item><widget class="QFrame" name="runtimeCard"><layout class="QVBoxLayout" name="runtimeLayout"><item><widget class="QLabel" name="runtimeTitle"><property name="text"><string>ブラウザーと実行設定</string></property></widget></item><item><layout class="QFormLayout" name="runtimeForm"><item row="0" column="0"><widget class="QLabel" name="startUrlLabel"><property name="text"><string>開始 URL</string></property></widget></item><item row="0" column="1"><widget class="QLineEdit" name="startUrlEdit"/></item><item row="1" column="0"><widget class="QLabel" name="timeoutLabel"><property name="text"><string>既定タイムアウト (ms)</string></property></widget></item><item row="1" column="1"><widget class="QSpinBox" name="timeoutSpin"><property name="maximum"><number>3600000</number></property><property name="minimum"><number>1</number></property></widget></item><item row="2" column="0"><widget class="QLabel" name="sessionLabel"><property name="text"><string>同時 Session 数</string></property></widget></item><item row="2" column="1"><widget class="QSpinBox" name="sessionSpin"><property name="minimum"><number>1</number></property><property name="maximum"><number>20</number></property></widget></item><item row="3" column="1"><widget class="QCheckBox" name="browserVisibleCheck"><property name="text"><string>実行時にブラウザーを表示</string></property></widget></item></layout></item><item><widget class="QPushButton" name="saveRuntimeButton"><property name="text"><string>実行設定を保存</string></property></widget></item><item><spacer name="runtimeStretch"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint"><size><width>20</width><height>40</height></size></property></spacer></item></layout></widget></item></layout></item></layout></widget><resources/><connections/></ui>
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SettingsForm</class>
+ <widget class="QWidget" name="SettingsForm">
+  <layout class="QVBoxLayout" name="rootLayout" stretch="0,0,0,0,1">
+   <property name="spacing"><number>10</number></property>
+   <property name="leftMargin"><number>28</number></property>
+   <property name="topMargin"><number>22</number></property>
+   <property name="rightMargin"><number>28</number></property>
+   <property name="bottomMargin"><number>22</number></property>
+   <item><widget class="QLabel" name="titleLabel"><property name="pageTitle" stdset="0"><bool>true</bool></property><property name="text"><string>設定</string></property></widget></item>
+   <item><widget class="QLabel" name="subtitleLabel"><property name="muted" stdset="0"><bool>true</bool></property><property name="text"><string>表示と実行環境を設定します</string></property></widget></item>
+   <item>
+    <layout class="QHBoxLayout" name="cardsLayout" stretch="1,1">
+     <property name="spacing"><number>12</number></property>
+     <item alignment="Qt::AlignTop">
+      <widget class="QFrame" name="displayCard">
+       <property name="minimumSize"><size><width>0</width><height>330</height></size></property>
+       <property name="maximumSize"><size><width>16777215</width><height>330</height></size></property>
+       <property name="card" stdset="0"><bool>true</bool></property>
+       <layout class="QVBoxLayout" name="displayLayout">
+        <property name="spacing"><number>12</number></property>
+        <property name="leftMargin"><number>16</number></property><property name="topMargin"><number>14</number></property><property name="rightMargin"><number>16</number></property><property name="bottomMargin"><number>14</number></property>
+        <item><widget class="QLabel" name="displayTitle"><property name="cardTitle" stdset="0"><bool>true</bool></property><property name="text"><string>表示設定</string></property></widget></item>
+        <item>
+         <layout class="QFormLayout" name="displayForm">
+          <property name="fieldGrowthPolicy"><enum>QFormLayout::AllNonFixedFieldsGrow</enum></property>
+          <property name="labelAlignment"><set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set></property>
+          <property name="horizontalSpacing"><number>16</number></property><property name="verticalSpacing"><number>10</number></property>
+          <item row="0" column="0"><widget class="QLabel" name="fontFamilyLabel"><property name="text"><string>フォント</string></property></widget></item>
+          <item row="0" column="1"><widget class="QComboBox" name="fontFamilyCombo"/></item>
+          <item row="1" column="0"><widget class="QLabel" name="fontSizeLabel"><property name="text"><string>サイズ</string></property></widget></item>
+          <item row="1" column="1"><widget class="QComboBox" name="fontSizeCombo"/></item>
+          <item row="2" column="0"><widget class="QLabel" name="languageLabel"><property name="text"><string>言語</string></property></widget></item>
+          <item row="2" column="1"><widget class="QComboBox" name="languageCombo"/></item>
+         </layout>
+        </item>
+        <item><spacer name="displayStretch"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint"><size><width>20</width><height>40</height></size></property></spacer></item>
+       </layout>
+      </widget>
+     </item>
+     <item alignment="Qt::AlignTop">
+      <widget class="QFrame" name="runtimeCard">
+       <property name="minimumSize"><size><width>0</width><height>330</height></size></property>
+       <property name="maximumSize"><size><width>16777215</width><height>330</height></size></property>
+       <property name="card" stdset="0"><bool>true</bool></property>
+       <layout class="QVBoxLayout" name="runtimeLayout">
+        <property name="spacing"><number>12</number></property>
+        <property name="leftMargin"><number>16</number></property><property name="topMargin"><number>14</number></property><property name="rightMargin"><number>16</number></property><property name="bottomMargin"><number>14</number></property>
+        <item><widget class="QLabel" name="runtimeTitle"><property name="cardTitle" stdset="0"><bool>true</bool></property><property name="text"><string>ブラウザーと実行設定</string></property></widget></item>
+        <item>
+         <layout class="QFormLayout" name="runtimeForm">
+          <property name="fieldGrowthPolicy"><enum>QFormLayout::AllNonFixedFieldsGrow</enum></property>
+          <property name="labelAlignment"><set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set></property>
+          <property name="horizontalSpacing"><number>16</number></property><property name="verticalSpacing"><number>10</number></property>
+          <item row="0" column="0"><widget class="QLabel" name="startUrlLabel"><property name="text"><string>開始 URL</string></property></widget></item>
+          <item row="0" column="1"><widget class="QLineEdit" name="startUrlEdit"><property name="clearButtonEnabled"><bool>true</bool></property></widget></item>
+          <item row="1" column="0"><widget class="QLabel" name="timeoutLabel"><property name="text"><string>既定タイムアウト</string></property></widget></item>
+          <item row="1" column="1"><widget class="QSpinBox" name="timeoutSpin"><property name="suffix"><string> ms</string></property><property name="minimum"><number>1</number></property><property name="maximum"><number>3600000</number></property><property name="singleStep"><number>1000</number></property></widget></item>
+          <item row="2" column="0"><widget class="QLabel" name="sessionLabel"><property name="text"><string>同時セッション数</string></property></widget></item>
+          <item row="2" column="1"><widget class="QSpinBox" name="sessionSpin"><property name="minimum"><number>1</number></property><property name="maximum"><number>20</number></property></widget></item>
+          <item row="3" column="1"><widget class="QCheckBox" name="browserVisibleCheck"><property name="text"><string>実行時にブラウザーを表示</string></property></widget></item>
+         </layout>
+        </item>
+        <item><spacer name="runtimeStretch"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint"><size><width>20</width><height>40</height></size></property></spacer></item>
+       </layout>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item alignment="Qt::AlignRight">
+    <widget class="QPushButton" name="saveSettingsButton">
+     <property name="minimumSize"><size><width>148</width><height>0</height></size></property><property name="maximumSize"><size><width>148</width><height>16777215</height></size></property>
+     <property name="primary" stdset="0"><bool>true</bool></property><property name="text"><string>設定を保存</string></property>
+    </widget>
+   </item>
+   <item><spacer name="pageStretch"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint"><size><width>20</width><height>40</height></size></property></spacer></item>
+  </layout>
+ </widget>
+ <resources/><connections/>
+</ui>

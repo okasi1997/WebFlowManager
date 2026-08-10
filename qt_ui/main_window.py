@@ -6,15 +6,15 @@ from PySide6.QtCore import QSize
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMainWindow, QPushButton, QStackedWidget, QWidget
 
 from core.database import Database
+from browser.profile_runtime import clear_profile, persistent_profile_dir, profile_has_state
 from i18n import tr
 from .pages.flow_design import FlowDesignPage
-from .pages.auth import AuthPage
-from .pages.placeholder import PlaceholderPage
+from .pages.auth import AuthPage, profile_path
 from .pages.settings import SettingsPage
 from .pages.data import DataPage
 from .pages.structured import SchemaPage
 from .pages.execution import ExecutionPage
-from .ui_loader import load_ui_into, require, set_button_icon
+from .ui_loader import confirm_action, load_ui_into, require, set_button_icon, show_error
 
 
 class MainWindow(QMainWindow):
@@ -22,6 +22,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.project_dir = project_dir
         self.db = db
+        self._force_close = False
         self.setWindowTitle(tr('msg.0002'))
         self.resize(1180, 720)
         self.setMinimumSize(QSize(1180, 720))
@@ -29,11 +30,6 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QApplication.windowIcon())
 
         root = load_ui_into(QWidget(), 'main_window.ui')
-        require(root, QHBoxLayout, 'rootLayout').setStretch(1, 1)
-        require(root, QLabel, 'brandLabel').setObjectName('brand')
-        require(root, QLabel, 'brandSubtitle').setObjectName('brandSubtle')
-        for name in ('environmentSection', 'designSection', 'dataSection', 'executionSection'):
-            require(root, QLabel, name).setProperty('class', 'sidebarSection')
         self.setCentralWidget(root)
         self.stack = require(root, QStackedWidget, 'contentStack')
         self.pages = {
@@ -60,7 +56,6 @@ class MainWindow(QMainWindow):
             'settings': 'nav-settings',
         }
         for key, button in self.nav_buttons.items():
-            button.setProperty('nav', True)
             # 旧画面と同様に、文字だけでなく機能を識別できるアイコンを表示する。
             set_button_icon(button, nav_icons[key], 17)
             button.clicked.connect(lambda _checked=False, page=key: self.show_page(page))
@@ -68,6 +63,11 @@ class MainWindow(QMainWindow):
 
     def show_page(self, key: str) -> None:
         page = self.pages[key]
+        current = self.stack.currentWidget()
+        if current is not None and current is not page:
+            confirm = getattr(current, 'confirm_pending_changes', None)
+            if callable(confirm) and not confirm():
+                return
         self.stack.setCurrentWidget(page)
         for name, button in self.nav_buttons.items():
             button.setProperty('navSelected', name == key)
@@ -78,8 +78,36 @@ class MainWindow(QMainWindow):
             reload_page()
 
     def closeEvent(self, event) -> None:
+        if not self._force_close:
+            current = self.stack.currentWidget()
+            confirm = getattr(current, 'confirm_pending_changes', None)
+            if callable(confirm) and not confirm():
+                event.ignore()
+                return
+            execution = self.pages['execution']
+            if execution.future is not None and not confirm_action(
+                self, '終了確認', '実行中です。処理を中断して終了しますか？', confirm_text='終了',
+            ):
+                event.ignore()
+                return
+
+            state_path = profile_path(self.project_dir, self.db.get_auth_profile())
+            profile_dir = persistent_profile_dir(self.project_dir, state_path)
+            remove_profile = profile_has_state(profile_dir) and confirm_action(
+                self, 'ログイン状態',
+                '保存されているログイン状態があります。終了時に削除しますか？',
+                confirm_text='削除',
+            )
+        else:
+            profile_dir, remove_profile = None, False
+
         for page in self.pages.values():
             shutdown = getattr(page, 'shutdown', None)
             if callable(shutdown):
                 shutdown()
+        if remove_profile and profile_dir is not None:
+            try:
+                clear_profile(self.project_dir, profile_dir)
+            except (OSError, ValueError) as error:
+                show_error(self, 'ログイン状態', str(error))
         super().closeEvent(event)

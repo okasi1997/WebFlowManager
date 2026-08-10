@@ -28,9 +28,9 @@
    <item>
     <layout class="QHBoxLayout" name="footerLayout">
      <property name="spacing"><number>8</number></property>
-     <item><widget class="QPushButton" name="addRuleButton"><property name="text"><string>条件追加</string></property></widget></item>
+     <item><widget class="QPushButton" name="addRuleButton"><property name="primary" stdset="0"><bool>true</bool></property><property name="text"><string>条件追加</string></property></widget></item>
      <item><widget class="QPushButton" name="editRuleButton"><property name="text"><string>編集</string></property></widget></item>
-     <item><widget class="QPushButton" name="deleteRuleButton"><property name="text"><string>削除</string></property></widget></item>
+     <item><widget class="QPushButton" name="deleteRuleButton"><property name="danger" stdset="0"><bool>true</bool></property><property name="text"><string>削除</string></property></widget></item>
      <item><spacer name="footerStretch"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint"><size><width>40</width><height>20</height></size></property></spacer></item>
      <item><widget class="QDialogButtonBox" name="buttonBox"><property name="standardButtons"><set>QDialogButtonBox::Cancel|QDialogButtonBox::Save</set></property></widget></item>
     </layout>

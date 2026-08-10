@@ -1,2 +1,270 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<ui version="4.0"><class>DataForm</class><widget class="QWidget" name="DataForm"><layout class="QVBoxLayout" name="rootLayout"><property name="leftMargin"><number>28</number></property><property name="topMargin"><number>22</number></property><property name="rightMargin"><number>28</number></property><property name="bottomMargin"><number>22</number></property><item><widget class="QLabel" name="titleLabel"><property name="text"><string>データ管理</string></property></widget></item><item><widget class="QLabel" name="subtitleLabel"><property name="text"><string>実行データと構造化された値を編集します</string></property></widget></item><item><widget class="QSplitter" name="dataSplitter"><property name="orientation"><enum>Qt::Horizontal</enum></property><widget class="QFrame" name="recordCard"><layout class="QVBoxLayout" name="recordLayout"><item><widget class="QLabel" name="recordTitle"><property name="text"><string>実行データ</string></property></widget></item><item><widget class="QTreeWidget" name="recordTree"><column><property name="text"><string>名称</string></property></column><column><property name="text"><string>概要</string></property></column><column><property name="text"><string>有効</string></property></column><column><property name="text"><string>実行グループ</string></property></column><column><property name="text"><string>状態</string></property></column></widget></item><item><layout class="QHBoxLayout" name="recordToolbar"><item><widget class="QPushButton" name="addRecordButton"><property name="text"><string>新規</string></property></widget></item><item><widget class="QPushButton" name="editRecordButton"><property name="text"><string>編集</string></property></widget></item><item><widget class="QPushButton" name="copyRecordButton"><property name="text"><string>複製</string></property></widget></item><item><widget class="QPushButton" name="deleteRecordButton"><property name="text"><string>削除</string></property></widget></item><item><spacer name="recordStretch"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint"><size><width>20</width><height>20</height></size></property></spacer></item><item><widget class="QPushButton" name="toggleRecordButton"><property name="text"><string>実行／スキップ</string></property></widget></item></layout></item></layout></widget><widget class="QFrame" name="valueCard"><layout class="QVBoxLayout" name="valueLayout"><item><widget class="QLabel" name="valueTitle"><property name="text"><string>データ内容</string></property></widget></item><item><widget class="QTreeWidget" name="valueTree"><column><property name="text"><string>データ項目</string></property></column><column><property name="text"><string>種別</string></property></column><column><property name="text"><string>値</string></property></column><column><property name="text"><string>データパス</string></property></column></widget></item><item><layout class="QHBoxLayout" name="valueToolbar"><item><widget class="QPushButton" name="editValueButton"><property name="text"><string>値を編集</string></property></widget></item><item><widget class="QPushButton" name="addListItemButton"><property name="text"><string>リスト項目追加</string></property></widget></item><item><widget class="QPushButton" name="deleteListItemButton"><property name="text"><string>リスト項目削除</string></property></widget></item><item><spacer name="valueStretch"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint"><size><width>20</width><height>20</height></size></property></spacer></item><item><widget class="QPushButton" name="exportDataJsonButton"><property name="text"><string>JSON 出力</string></property></widget></item><item><widget class="QPushButton" name="importDataJsonButton"><property name="text"><string>JSON 読込</string></property></widget></item><item><widget class="QPushButton" name="excelButton"><property name="text"><string>Excel 入出力</string></property></widget></item><item><widget class="QPushButton" name="saveRecordButton"><property name="text"><string>保存</string></property></widget></item></layout></item></layout></widget></widget></item></layout></widget><resources/><connections/></ui>
+<?xml version="1.0" encoding="utf-8"?>
+<ui version="4.0">
+  <class>DataForm</class>
+  <widget class="QWidget" name="DataForm">
+    <layout class="QVBoxLayout" name="rootLayout" stretch="0,0,1">
+      <property name="leftMargin">
+        <number>28</number>
+      </property>
+      <property name="topMargin">
+        <number>22</number>
+      </property>
+      <property name="rightMargin">
+        <number>28</number>
+      </property>
+      <property name="bottomMargin">
+        <number>22</number>
+      </property>
+      <item>
+        <widget class="QLabel" name="titleLabel">
+          <property name="pageTitle" stdset="0">
+            <bool>true</bool>
+          </property>
+          <property name="text">
+            <string>データ管理</string>
+          </property>
+        </widget>
+      </item>
+      <item>
+        <widget class="QLabel" name="subtitleLabel">
+          <property name="muted" stdset="0">
+            <bool>true</bool>
+          </property>
+          <property name="text">
+            <string>実行データと構造化された値を編集します</string>
+          </property>
+        </widget>
+      </item>
+      <item>
+        <widget class="QSplitter" name="dataSplitter">
+          <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+          </property>
+          <widget class="QFrame" name="recordCard">
+            <property name="minimumSize"><size><width>280</width><height>0</height></size></property>
+            <property name="sizePolicy"><sizepolicy hsizetype="Ignored" vsizetype="Preferred"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
+            <property name="card" stdset="0">
+              <bool>true</bool>
+            </property>
+            <layout class="QVBoxLayout" name="recordLayout">
+              <item>
+                <widget class="QLabel" name="recordTitle">
+                  <property name="cardTitle" stdset="0">
+                    <bool>true</bool>
+                  </property>
+                  <property name="text">
+                    <string>実行データ</string>
+                  </property>
+                </widget>
+              </item>
+              <item>
+                <widget class="QTreeWidget" name="recordTree">
+                  <column>
+                    <property name="text">
+                      <string>名称</string>
+                    </property>
+                  </column>
+                  <column>
+                    <property name="text">
+                      <string>概要</string>
+                    </property>
+                  </column>
+                  <column>
+                    <property name="text">
+                      <string>有効</string>
+                    </property>
+                  </column>
+                  <column>
+                    <property name="text">
+                      <string>実行グループ</string>
+                    </property>
+                  </column>
+                  <column>
+                    <property name="text">
+                      <string>状態</string>
+                    </property>
+                  </column>
+                </widget>
+              </item>
+              <item>
+                <layout class="QHBoxLayout" name="recordToolbar">
+                  <item>
+                    <widget class="QPushButton" name="addRecordButton">
+                      <property name="primary" stdset="0">
+                        <bool>true</bool>
+                      </property>
+                      <property name="text">
+                        <string>新規</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="editRecordButton">
+                      <property name="text">
+                        <string>編集</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="copyRecordButton">
+                      <property name="text">
+                        <string>複製</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="deleteRecordButton">
+                      <property name="danger" stdset="0">
+                        <bool>true</bool>
+                      </property>
+                      <property name="text">
+                        <string>削除</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <spacer name="recordStretch">
+                      <property name="orientation">
+                        <enum>Qt::Horizontal</enum>
+                      </property>
+                      <property name="sizeHint">
+                        <size>
+                          <width>20</width>
+                          <height>20</height>
+                        </size>
+                      </property>
+                    </spacer>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="toggleRecordButton">
+                      <property name="text">
+                        <string>実行／スキップ</string>
+                      </property>
+                    </widget>
+                  </item>
+                </layout>
+              </item>
+            </layout>
+          </widget>
+          <widget class="QFrame" name="valueCard">
+            <property name="minimumSize"><size><width>360</width><height>0</height></size></property>
+            <property name="sizePolicy"><sizepolicy hsizetype="Ignored" vsizetype="Preferred"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
+            <property name="card" stdset="0">
+              <bool>true</bool>
+            </property>
+            <layout class="QVBoxLayout" name="valueLayout">
+              <item>
+                <widget class="QLabel" name="valueTitle">
+                  <property name="cardTitle" stdset="0">
+                    <bool>true</bool>
+                  </property>
+                  <property name="text">
+                    <string>データ内容</string>
+                  </property>
+                </widget>
+              </item>
+              <item>
+                <widget class="QTreeWidget" name="valueTree">
+                  <column>
+                    <property name="text">
+                      <string>データ項目</string>
+                    </property>
+                  </column>
+                  <column>
+                    <property name="text">
+                      <string>種別</string>
+                    </property>
+                  </column>
+                  <column>
+                    <property name="text">
+                      <string>値</string>
+                    </property>
+                  </column>
+                  <column>
+                    <property name="text">
+                      <string>データパス</string>
+                    </property>
+                  </column>
+                </widget>
+              </item>
+              <item>
+                <layout class="QHBoxLayout" name="valueToolbar">
+                  <item>
+                    <widget class="QPushButton" name="editValueButton">
+                      <property name="text">
+                        <string>値を編集</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="addListItemButton">
+                      <property name="text">
+                        <string>リスト操作</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="deleteListItemButton">
+                      <property name="danger" stdset="0">
+                        <bool>true</bool>
+                      </property>
+                      <property name="text">
+                        <string>リスト項目削除</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <spacer name="valueStretch">
+                      <property name="orientation">
+                        <enum>Qt::Horizontal</enum>
+                      </property>
+                      <property name="sizeHint">
+                        <size>
+                          <width>20</width>
+                          <height>20</height>
+                        </size>
+                      </property>
+                    </spacer>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="exportDataJsonButton">
+                      <property name="text">
+                        <string>データ入出力</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="importDataJsonButton">
+                      <property name="text">
+                        <string>JSON 読込</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="excelButton">
+                      <property name="text">
+                        <string>Excel 入出力</string>
+                      </property>
+                    </widget>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="saveRecordButton">
+                      <property name="primary" stdset="0">
+                        <bool>true</bool>
+                      </property>
+                      <property name="text">
+                        <string>保存</string>
+                      </property>
+                    </widget>
+                  </item>
+                </layout>
+              </item>
+            </layout>
+          </widget>
+        </widget>
+      </item>
+    </layout>
+  </widget>
+  <resources />
+  <connections />
+</ui>

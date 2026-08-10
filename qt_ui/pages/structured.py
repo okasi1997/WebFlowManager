@@ -17,7 +17,7 @@ from ..table_view import (
     HierarchicalReorderTreeWidget, configure_row_move_tooltips, configure_table_view,
 )
 from ..ui_loader import (
-    confirm_deletion, load_ui_into, localize_dialog_buttons, require,
+    confirm_deletion, confirm_pending_changes, load_ui_into, localize_dialog_buttons, require,
     show_information, show_warning,
 )
 
@@ -69,7 +69,6 @@ class FieldDialog(QDialog):
         super().__init__(parent)
         load_ui_into(self, 'field_dialog.ui')
         self.setWindowTitle('フィールド編集' if node else 'フィールド追加')
-        require(self, QFrame, 'fieldCard').setProperty('card', True)
         self.name = require(self, QLineEdit, 'nameEdit')
         self.name.setText(str((node or {}).get('name', '')))
         self.kind = require(self, QComboBox, 'typeCombo')
@@ -79,7 +78,6 @@ class FieldDialog(QDialog):
         localize_dialog_buttons(buttons)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        self.setFixedSize(520, 224)
 
     def value(self) -> dict[str, Any]:
         node: dict[str, Any] = {'name': self.name.text().strip(), 'type': self.kind.currentText()}
@@ -94,10 +92,6 @@ class SchemaPage(QWidget):
         self.db = db
         self.schema: dict[str, Any] = {}
         load_ui_into(self, 'schema.ui')
-        require(self, QVBoxLayout, 'rootLayout').setStretch(2, 1)
-        require(self, QLabel, 'titleLabel').setProperty('pageTitle', True)
-        require(self, QLabel, 'subtitleLabel').setProperty('muted', True)
-        require(self, QFrame, 'schemaCard').setProperty('card', True)
         designer_tree = require(self, QTreeWidget, 'schemaTree')
         tree_layout = designer_tree.parentWidget().layout()
         self.tree = HierarchicalReorderTreeWidget(designer_tree.parentWidget())
@@ -144,19 +138,14 @@ class SchemaPage(QWidget):
         self.tree.itemExpanded.connect(lambda *_: self._sync_toggle_all_button())
         self.tree.itemCollapsed.connect(lambda *_: self._sync_toggle_all_button())
         add_button = require(self, QPushButton, 'addFieldButton')
-        add_button.setText('追加')
-        add_button.setProperty('primary', True)
         add_menu = QMenu(add_button)
         add_menu.addAction('フィールド追加', self.add_field)
         add_menu.addAction('子フィールド追加', self.add_child)
         add_button.setMenu(add_menu)
         require(self, QPushButton, 'addChildButton').hide()
-        require(self, QPushButton, 'deleteFieldButton').setProperty('danger', True)
         export_button = require(self, QPushButton, 'exportSchemaButton')
         import_button = require(self, QPushButton, 'importSchemaButton')
         save = require(self, QPushButton, 'saveSchemaButton')
-        save.setProperty('primary', True)
-        export_button.setText('JSON 入出力')
         io_menu = QMenu(export_button)
         io_menu.addAction('JSON を出力', self.export_json)
         io_menu.addAction('JSON を読み込む', self.import_json)
@@ -167,7 +156,24 @@ class SchemaPage(QWidget):
 
     def reload(self) -> None:
         self.schema = copy.deepcopy(self.db.get_data_schema())
+        self._saved_schema = copy.deepcopy(self.schema)
         self.render()
+
+    def has_pending_changes(self) -> bool:
+        if self._schema_reorder_pending:
+            self._apply_schema_tree_order()
+        return self.schema != getattr(self, '_saved_schema', self.schema)
+
+    def confirm_pending_changes(self) -> bool:
+        if not self.has_pending_changes():
+            return True
+        choice = confirm_pending_changes(self, 'データ構造に未保存の変更があります。保存しますか？')
+        if choice == 'save':
+            return self.save(show_message=False)
+        if choice == 'discard':
+            self.reload()
+            return True
+        return False
 
     def render(self, selected_index_path: tuple[int, ...] | None = None) -> None:
         # Qt の UserRole に格納した dict は QVariant 変換時に複製される場合があるため、
@@ -441,14 +447,17 @@ class SchemaPage(QWidget):
             # ボタン操作は直後の処理からも新順序を参照できるよう、その場で同期を完了する。
             self._apply_schema_tree_order()
 
-    def save(self) -> None:
+    def save(self, _checked: bool = False, *, show_message: bool = True) -> bool:
         try:
             validate_schema(self.schema)
             self.db.save_data_schema(0, self.schema)
         except ValueError as error:
             show_warning(self, '保存', str(error))
-            return
-        show_information(self, '保存', 'データ構造を保存しました。')
+            return False
+        self._saved_schema = copy.deepcopy(self.schema)
+        if show_message:
+            show_information(self, '保存', 'データ構造を保存しました。')
+        return True
 
     def export_json(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, 'JSON 导出', 'data_schema.json', 'JSON (*.json)')
@@ -467,140 +476,3 @@ class SchemaPage(QWidget):
         except (OSError, ValueError, json.JSONDecodeError) as error:
             show_warning(self, 'JSON 読込', str(error))
 
-
-class RecordDialog(QDialog):
-    def __init__(self, parent: QWidget, record: dict[str, Any] | None, schema: dict[str, Any]) -> None:
-        super().__init__(parent)
-        load_ui_into(self, 'record_dialog.ui')
-        self.name = require(self, QLineEdit, 'nameEdit')
-        self.summary = require(self, QLineEdit, 'summaryEdit')
-        self.group = require(self, QLineEdit, 'groupEdit')
-        self.name.setText(str((record or {}).get('name', '')))
-        self.summary.setText(str((record or {}).get('summary', '')))
-        self.group.setText(str((record or {}).get('execution_group', '1')))
-        self.editor = require(self, QPlainTextEdit, 'dataEdit')
-        self.editor.setPlainText(json.dumps((record or {}).get('data', empty_record(schema)), ensure_ascii=False, indent=2))
-        self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        buttons = require(self, QDialogButtonBox, 'buttonBox')
-        localize_dialog_buttons(buttons)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-
-    def value(self) -> tuple[str, str, str, dict[str, Any]]:
-        data = json.loads(self.editor.toPlainText())
-        if not isinstance(data, dict):
-            raise ValueError('数据必须是 JSON object。')
-        name, group = self.name.text().strip(), self.group.text().strip()
-        if not name or not group:
-            raise ValueError('名称和执行组不能为空。')
-        return name, self.summary.text().strip(), group, data
-
-    def accept(self) -> None:
-        try:
-            self.value()
-        except (ValueError, json.JSONDecodeError) as error:
-            show_warning(self, '実行データ', str(error))
-            return
-        super().accept()
-
-
-class LegacyDataPage(QWidget):
-    def __init__(self, db: Database) -> None:
-        super().__init__()
-        self.db = db
-        load_ui_into(self, 'data.ui')
-        require(self, QVBoxLayout, 'rootLayout').setStretch(1, 1)
-        require(self, QLabel, 'titleLabel').setProperty('pageTitle', True)
-        self.tree = require(self, QTreeWidget, 'recordTree')
-        configure_table_view(self.tree)
-        for column, width in enumerate((180, 260, 90, 120, 130)):
-            self.tree.setColumnWidth(column, width)
-        self.tree.setAlternatingRowColors(True)
-        self.tree.itemDoubleClicked.connect(lambda *_: self.edit_record())
-        actions = {
-            'addRecordButton': self.add_record, 'editRecordButton': self.edit_record,
-            'copyRecordButton': self.copy_record, 'deleteRecordButton': self.delete_record,
-            'toggleRecordButton': self.toggle_enabled, 'exportDataJsonButton': self.export_json,
-            'importDataJsonButton': self.import_json, 'exportExcelButton': self.export_excel,
-            'importExcelButton': self.import_excel,
-        }
-        for name, callback in actions.items():
-            require(self, QPushButton, name).clicked.connect(callback)
-        require(self, QPushButton, 'addRecordButton').setProperty('primary', True)
-        require(self, QPushButton, 'deleteRecordButton').setProperty('danger', True)
-        self.reload()
-
-    def reload(self) -> None:
-        self.tree.clear()
-        for record in self.db.list_data_records():
-            item = QTreeWidgetItem([record['name'], record['summary'], '是' if record['enabled'] else '否', record['execution_group'], record['execution_status']])
-            item.setData(0, Qt.ItemDataRole.UserRole, record)
-            self.tree.addTopLevelItem(item)
-
-    def selected(self) -> dict[str, Any] | None:
-        item = self.tree.currentItem()
-        return item.data(0, Qt.ItemDataRole.UserRole) if item else None
-
-    def _edit(self, record: dict[str, Any] | None = None) -> None:
-        dialog = RecordDialog(self, record, self.db.get_data_schema())
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        name, summary, group, data = dialog.value()
-        if record is None:
-            record_id = self.db.add_data_record(0, name, data, summary)
-        else:
-            record_id = record['id']
-            self.db.update_data_record(record_id, name, data)
-            self.db.set_data_record_summary(record_id, summary)
-        self.db.set_data_record_group(record_id, group)
-        self.reload()
-
-    def add_record(self) -> None: self._edit()
-    def edit_record(self) -> None:
-        if self.selected(): self._edit(self.selected())
-    def copy_record(self) -> None:
-        record = self.selected()
-        if record:
-            clone = copy.deepcopy(record)
-            clone['name'] = f'{record["name"]} - Copy'
-            clone.pop('id', None)
-            self._edit(clone)
-    def delete_record(self) -> None:
-        record = self.selected()
-        if record and confirm_deletion(self, f'{record["name"]} を削除しますか？'):
-            self.db.delete_data_record(0, record['id'])
-            self.reload()
-    def toggle_enabled(self) -> None:
-        record = self.selected()
-        if record:
-            self.db.set_data_record_enabled(record['id'], not record['enabled'])
-            self.reload()
-
-    def export_json(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, 'JSON 导出', 'data_records.json', 'JSON (*.json)')
-        if path:
-            Path(path).write_text(json.dumps(self.db.list_data_records(), ensure_ascii=False, indent=2), encoding='utf-8')
-    def import_json(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, 'JSON 导入', '', 'JSON (*.json)')
-        if not path: return
-        try:
-            records = json.loads(Path(path).read_text(encoding='utf-8'))
-            if not isinstance(records, list): raise ValueError('JSON 顶层必须是数组。')
-            self.db.replace_data_records(records)
-            self.reload()
-        except (OSError, ValueError, json.JSONDecodeError, KeyError) as error:
-            show_warning(self, 'JSON 読込', str(error))
-    def export_excel(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, 'Excel 导出', 'data_records.xlsx', 'Excel (*.xlsx)')
-        if path:
-            from ui.structured_data import write_records_excel
-            write_records_excel(path, self.db.get_data_schema(), self.db.list_data_records())
-    def import_excel(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, 'Excel 导入', '', 'Excel (*.xlsx)')
-        if path:
-            try:
-                from ui.structured_data import read_records_excel
-                self.db.replace_data_records(read_records_excel(path, self.db.get_data_schema()))
-                self.reload()
-            except Exception as error:
-                show_warning(self, 'Excel 読込', str(error))

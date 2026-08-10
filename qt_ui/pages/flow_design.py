@@ -24,7 +24,7 @@ from browser.element_picker import DebugBrowserSession
 from i18n import tr
 from .auth import profile_path
 from ..ui_loader import (
-    confirm_deletion, load_ui_into, localize_dialog_buttons, require, set_button_icon,
+    confirm_action, confirm_deletion, load_ui_into, localize_dialog_buttons, require, set_button_icon,
     show_error, show_information, show_warning,
 )
 from ..table_view import (
@@ -48,13 +48,6 @@ FORM_LABEL_WIDTH = 108
 FORM_ACTION_WIDTH = 100
 LOCATOR_REFERENCE_WIDTH = 82
 GROUP_ACTION_WIDTH = 120
-
-
-def _button(text: str, *, primary: bool=False, danger: bool=False) -> QPushButton:
-    button = QPushButton(text)
-    button.setProperty('primary', primary)
-    button.setProperty('danger', danger)
-    return button
 
 
 def _inline_host(*items: tuple[QWidget, int] | QWidget, spacing: int = 8) -> QWidget:
@@ -157,79 +150,9 @@ class EventEditorDialog(QDialog):
         super().__init__(None, Qt.WindowType.Window)
         self._service_host = parent
         self.setWindowTitle('イベントグループ編集' if group else ('イベント編集' if event else 'イベント追加'))
-        self.setMinimumWidth(520)
         event = event or {}
         self.event_id = int(event.get('id', 0) or 0)
         self._load_designer_form(event, group)
-        self.setFixedSize(1000, 620)
-        return
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-        self.name = QLineEdit(str(event.get('name', '')))
-        self.action = QComboBox()
-        actions = ['group_start'] if group else [a for a in SUPPORTED_ACTIONS if not a.endswith('_end') and a not in {'group_start', 'loop_start', 'retry_start'}]
-        self.action.addItems(actions)
-        current_action = str(event.get('action', actions[0]))
-        self.action.setCurrentText(current_action if current_action in actions else actions[0])
-        self.selector_type = QComboBox()
-        self.selector_type.addItems(SUPPORTED_SELECTOR_TYPES)
-        self.selector_type.setCurrentText(str(event.get('selector_type', 'none')))
-        self.selector = QLineEdit(str(event.get('selector', '')))
-        self.fallback_selector_type = QComboBox()
-        self.fallback_selector_type.addItems(SUPPORTED_SELECTOR_TYPES)
-        self.fallback_selector_type.setCurrentText(str(event.get('fallback_selector_type', 'none')))
-        self.fallback_selector = QLineEdit(str(event.get('fallback_selector', '')))
-        self.iframe_path = QLineEdit(str(event.get('iframe_path', '')))
-        self.value = QLineEdit(str(event.get('value', '')))
-        self.data_path = QLineEdit(str(event.get('data_path', '')))
-        self.timeout = QSpinBox()
-        self.timeout.setRange(1, 3_600_000)
-        self.timeout.setValue(int(event.get('timeout_ms', 10_000)))
-        self.enabled = QCheckBox(tr('msg.0006'))
-        self.enabled.setChecked(bool(event.get('enabled', 1)))
-        self.continue_on_error = QCheckBox('失败后继续执行')
-        self.continue_on_error.setChecked(bool(event.get('continue_on_error', 0)))
-        self.failure_action = QComboBox()
-        stored_failure = str(event.get('failure_action', 'none'))
-        failure_key = (
-            'continue' if stored_failure == 'none' and event.get('continue_on_error', 0)
-            else 'stop' if stored_failure == 'none' else stored_failure
-        )
-        for key, label in FAILURE_ACTION_LABELS.items():
-            self.failure_action.addItem(label, key)
-        self.failure_action.setCurrentIndex(max(0, self.failure_action.findData(failure_key)))
-        self.failure_target = QLineEdit(str(event.get('failure_target', '')))
-        self.retry_count = QSpinBox()
-        self.retry_count.setRange(0, 100)
-        self.retry_count.setValue(int(event.get('retry_count', 0)))
-        self.retry_interval = QSpinBox()
-        self.retry_interval.setRange(0, 3_600_000)
-        self.retry_interval.setValue(int(event.get('retry_interval_ms', 0)))
-        self.guard = QPlainTextEdit(json.dumps(decode_guard(event.get('guard_json', event.get('guard', ''))), ensure_ascii=False, indent=2))
-        self.guard.setMaximumHeight(110)
-        form.addRow('イベント名', self.name)
-        form.addRow('操作', self.action)
-        if not group:
-            form.addRow('検出方法', self.selector_type)
-            form.addRow('検出内容', self.selector)
-            form.addRow('备用检出方式', self.fallback_selector_type)
-            form.addRow('备用检出内容', self.fallback_selector)
-            form.addRow('iframe 路径', self.iframe_path)
-            form.addRow('固定値', self.value)
-            form.addRow('数据路径', self.data_path)
-        form.addRow('タイムアウト (ms)', self.timeout)
-        form.addRow('', self.enabled)
-        form.addRow('', self.continue_on_error)
-        form.addRow('失败时操作', self.failure_action)
-        form.addRow('失败时目标', self.failure_target)
-        form.addRow('重试次数', self.retry_count)
-        form.addRow('重试间隔 (ms)', self.retry_interval)
-        form.addRow('执行条件 (JSON)', self.guard)
-        layout.addLayout(form)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self._accept_if_valid)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
 
     def _load_designer_form(self, event: dict[str, Any], group: bool) -> None:
         load_ui_into(self, 'event_editor.ui')
@@ -688,110 +611,44 @@ class EventGroupEditorDialog(QDialog):
     def __init__(self, parent: QWidget, event: dict[str, Any] | None = None) -> None:
         super().__init__(parent)
         event = event or {}
+        load_ui_into(self, 'event_group.ui')
         self.setWindowTitle('イベントグループ編集' if event else 'イベントグループ追加')
-        self.setFixedSize(700, 480)
         self.guard_data = decode_guard(event.get('guard_json', event.get('guard', '')))
-
-        root = QVBoxLayout(self)
-        root.setContentsMargins(22, 20, 22, 18)
-        root.setSpacing(14)
-
-        basic_card = QFrame()
-        basic_card.setProperty('card', True)
-        basic_layout = QVBoxLayout(basic_card)
-        basic_title = QLabel('基本設定')
-        basic_title.setProperty('cardTitle', True)
-        basic_layout.addWidget(basic_title)
-        basic_form = QFormLayout()
-        basic_form.setSpacing(10)
-        basic_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        basic_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
-        self.name = QLineEdit(str(event.get('name', '')))
-        self.enabled = QCheckBox('有効')
+        self.name = require(self, QLineEdit, 'nameEdit')
+        self.enabled = require(self, QCheckBox, 'enabledCheck')
+        self.loop_enabled = require(self, QCheckBox, 'loopCheck')
+        self.retry_enabled = require(self, QCheckBox, 'retryCheck')
+        self.data_path = require(self, QComboBox, 'dataPathCombo')
+        self.path_button = require(self, QPushButton, 'choosePathButton')
+        self.timeout = require(self, QSpinBox, 'timeoutSpin')
+        self.retry_count = require(self, QSpinBox, 'retryCountSpin')
+        self.retry_interval = require(self, QSpinBox, 'retryIntervalSpin')
+        self.guard_summary = require(self, QLineEdit, 'guardSummaryEdit')
+        self.name.setText(str(event.get('name', '')))
         self.enabled.setChecked(bool(event.get('enabled', 1)))
-        name_host = _aligned_form_host(self.name, self.enabled)
-        basic_form.addRow('グループ名', name_host)
-        feature_host = QWidget()
-        feature_host.setProperty('formHost', True)
-        feature_layout = QHBoxLayout(feature_host)
-        feature_layout.setContentsMargins(0, 0, 0, 0)
-        self.loop_enabled = QCheckBox('データを繰り返す')
-        self.retry_enabled = QCheckBox('失敗時に再試行する')
         self.loop_enabled.setChecked(bool(event.get('loop_enabled', str(event.get('data_path', '')).strip())))
         self.retry_enabled.setChecked(bool(event.get('retry_enabled', str(event.get('value', '')).strip())))
-        feature_layout.addWidget(self.loop_enabled)
-        feature_layout.addSpacing(18)
-        feature_layout.addWidget(self.retry_enabled)
-        feature_layout.addStretch(1)
-        basic_form.addRow('グループ機能', feature_host)
-        self.data_path = QComboBox()
-        schema = self.parent().db.get_data_schema()
-        list_paths = _schema_paths_of_type(schema, {'list'})
+        list_paths = _schema_paths_of_type(self.parent().db.get_data_schema(), {'list'})
         self.data_path.addItems(list_paths)
         current_path = str(event.get('data_path', ''))
         if current_path and self.data_path.findText(current_path) < 0:
             self.data_path.addItem(current_path)
         self.data_path.setCurrentText(current_path)
-        self.path_button = QPushButton('構造から選択')
-        self.path_button.clicked.connect(self.choose_data_path)
-        path_host = _aligned_form_host(self.data_path, self.path_button)
-        basic_form.addRow('データ項目', path_host)
-        for field in (name_host, feature_host, path_host):
-            label = basic_form.labelForField(field)
-            if label is not None:
-                label.setFixedWidth(132)
-        basic_layout.addLayout(basic_form)
-        root.addWidget(basic_card)
-
-        execution_card = QFrame()
-        execution_card.setProperty('card', True)
-        execution_layout = QVBoxLayout(execution_card)
-        execution_title = QLabel('実行制御')
-        execution_title.setProperty('cardTitle', True)
-        execution_layout.addWidget(execution_title)
-        execution_form = QFormLayout()
-        execution_form.setSpacing(10)
-        execution_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        execution_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
-        self.timeout = QSpinBox()
-        self.timeout.setRange(1, 3_600_000)
         self.timeout.setValue(int(event.get('timeout_ms', 600_000)))
-        self.timeout_host = _aligned_form_host(self.timeout)
-        execution_form.addRow('タイムアウト (ms)', self.timeout_host)
-        self.retry_count = QSpinBox()
-        self.retry_count.setRange(0, 100)
         stored_retry = str(event.get('value', '')).strip()
         self.retry_count.setValue(int(stored_retry or event.get('retry_count', 3)))
-        self.retry_count_host = _aligned_form_host(self.retry_count)
-        execution_form.addRow('再試行回数', self.retry_count_host)
-        self.retry_interval = QSpinBox()
-        self.retry_interval.setRange(0, 3_600_000)
         self.retry_interval.setValue(int(event.get('retry_interval_ms', 0)))
-        self.retry_interval_host = _aligned_form_host(self.retry_interval)
-        execution_form.addRow('再試行間隔 (ms)', self.retry_interval_host)
-        self.guard_summary = QLineEdit()
-        self.guard_summary.setReadOnly(True)
-        guard_button = QPushButton('条件を設定')
-        guard_button.clicked.connect(self.edit_guard)
-        guard_host = _aligned_form_host(self.guard_summary, guard_button)
-        execution_form.addRow('実行条件', guard_host)
-        for field in (self.timeout_host, self.retry_count_host, self.retry_interval_host, guard_host):
-            label = execution_form.labelForField(field)
-            if label is not None:
-                label.setFixedWidth(132)
-        execution_layout.addLayout(execution_form)
-        root.addWidget(execution_card)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        self.path_button.clicked.connect(self.choose_data_path)
+        require(self, QPushButton, 'guardButton').clicked.connect(self.edit_guard)
+        buttons = require(self, QDialogButtonBox, 'buttonBox')
         localize_dialog_buttons(buttons)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        root.addWidget(buttons)
         self.loop_enabled.toggled.connect(self._update_fields)
         self.retry_enabled.toggled.connect(self._update_fields)
         self._update_guard_summary()
         self._update_fields()
-
+        return
     def _update_fields(self) -> None:
         self.data_path.setEnabled(self.loop_enabled.isChecked())
         self.path_button.setEnabled(self.loop_enabled.isChecked())
@@ -851,17 +708,6 @@ class GuardDialog(QDialog):
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         return
-        self.setWindowTitle('执行条件')
-        self.resize(640, 420)
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel('条件对象（logic: all/any，rules: 条件数组）'))
-        self.editor = QPlainTextEdit(json.dumps(decode_guard(guard), ensure_ascii=False, indent=2))
-        layout.addWidget(self.editor)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self._accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
     def _accept(self) -> None:
         try:
             self.value = decode_guard(json.loads(self.editor.toPlainText()))
@@ -990,7 +836,6 @@ class GuardRuleEditorDialog(QDialog):
         super().__init__(parent)
         load_ui_into(self, 'guard_rule.ui')
         self.setWindowTitle('条件編集')
-        self.setFixedSize(520, 220)
         rule = rule or {'path': '', 'operator': 'eq', 'value': ''}
         self.path = require(self, QComboBox, 'pathCombo')
         self.operator = require(self, QComboBox, 'operatorCombo')
@@ -1003,7 +848,6 @@ class GuardRuleEditorDialog(QDialog):
         self.expected.setText(rule['value'])
         self.schema = schema
         self.operator.currentIndexChanged.connect(self._update_expected_state)
-        require(self, QFrame, 'ruleCard').setProperty('card', True)
         require(self, QPushButton, 'choosePathButton').clicked.connect(self.choose_path)
         buttons = require(self, QDialogButtonBox, 'buttonBox')
         localize_dialog_buttons(buttons)
@@ -1051,11 +895,9 @@ class GuardConditionEditorDialog(QDialog):
             self.tree.setColumnWidth(column, width)
         self.tree.itemDoubleClicked.connect(lambda *_: self.edit_rule())
         add = require(self, QPushButton, 'addRuleButton')
-        add.setProperty('primary', True)
         add.clicked.connect(self.add_rule)
         require(self, QPushButton, 'editRuleButton').clicked.connect(self.edit_rule)
         delete = require(self, QPushButton, 'deleteRuleButton')
-        delete.setProperty('danger', True)
         delete.clicked.connect(self.delete_rule)
         buttons = require(self, QDialogButtonBox, 'buttonBox')
         localize_dialog_buttons(buttons)
@@ -1121,7 +963,6 @@ class FlowEditorDialog(QDialog):
         super().__init__(parent)
         load_ui_into(self, 'flow_editor.ui')
         self.setWindowTitle('業務フロー編集')
-        self.setFixedSize(600, 430)
         workflow = workflow or {}
         self.schema = schema or {'type': 'object', 'children': []}
         self.guard_value = decode_guard(workflow.get('guard_json', workflow.get('guard', '')))
@@ -1134,10 +975,6 @@ class FlowEditorDialog(QDialog):
         self.description.setPlainText(str(workflow.get('description', '')))
         self.enabled.setChecked(bool(workflow.get('enabled', True)))
         self.data_start.setChecked(bool(workflow.get('pcl_loop_start', False)))
-        for name in ('basicCard', 'executionCard'):
-            require(self, QFrame, name).setProperty('card', True)
-        for name in ('basicTitle', 'executionTitle'):
-            require(self, QLabel, name).setProperty('cardTitle', True)
         require(self, QPushButton, 'editGuardButton').clicked.connect(self.edit_guard)
         buttons = require(self, QDialogButtonBox, 'buttonBox')
         localize_dialog_buttons(buttons)
@@ -1189,40 +1026,8 @@ class FlowDesignPage(QWidget):
         self._load_designer_form()
         self.reload()
         return
-        self.setObjectName('pageRoot')
-        root = QVBoxLayout(self)
-        root.setContentsMargins(28, 22, 28, 22)
-        root.setSpacing(14)
-        title = QLabel(tr('msg.0528'))
-        title.setProperty('pageTitle', True)
-        root.addWidget(title)
-        subtitle = QLabel(tr('msg.0534'))
-        subtitle.setProperty('muted', True)
-        root.addWidget(subtitle)
-
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setChildrenCollapsible(False)
-        root.addWidget(splitter, 1)
-        left = self._card()
-        right = self._card()
-        splitter.addWidget(left)
-        splitter.addWidget(right)
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 3)
-        splitter.setSizes([520, 780])
-        self._build_workflow_panel(left)
-        self._build_event_panel(right)
-        self.reload()
-
     def _load_designer_form(self) -> None:
         load_ui_into(self, 'flow_design.ui')
-        require(self, QVBoxLayout, 'rootLayout').setStretch(2, 1)
-        require(self, QLabel, 'titleLabel').setProperty('pageTitle', True)
-        require(self, QLabel, 'subtitleLabel').setProperty('muted', True)
-        for name in ('workflowCard', 'eventCard'):
-            require(self, QFrame, name).setProperty('card', True)
-        for name in ('workflowTitle', 'eventTitle'):
-            require(self, QLabel, name).setProperty('cardTitle', True)
         splitter = require(self, QSplitter, 'mainSplitter')
         splitter.setChildrenCollapsible(False)
         splitter.setStretchFactor(0, 38)
@@ -1255,10 +1060,8 @@ class FlowDesignPage(QWidget):
         self.workflow_table.itemSelectionChanged.connect(self._workflow_selected)
         self.workflow_table.itemDoubleClicked.connect(self._workflow_double_clicked)
         require(self, QPushButton, 'newWorkflowButton').clicked.connect(self.add_workflow)
-        require(self, QPushButton, 'newWorkflowButton').setProperty('primary', True)
         require(self, QPushButton, 'editWorkflowButton').clicked.connect(self.edit_workflow)
         require(self, QPushButton, 'deleteWorkflowButton').clicked.connect(self.delete_workflow)
-        require(self, QPushButton, 'deleteWorkflowButton').setProperty('danger', True)
         json_button = require(self, QPushButton, 'workflowJsonButton')
         json_menu = QMenu(json_button)
         json_menu.addAction(tr('msg.0016'), self.import_json)
@@ -1295,14 +1098,12 @@ class FlowDesignPage(QWidget):
         self.event_tree.viewport().installEventFilter(self)
         self.event_tree.itemDoubleClicked.connect(self._event_double_clicked)
         add = require(self, QPushButton, 'addEventButton')
-        add.setProperty('primary', True)
         add_menu = QMenu(add)
         add_menu.addAction(tr('msg.0034'), self.add_event)
         add_menu.addAction(tr('msg.0413'), self.add_group)
         add.setMenu(add_menu)
         require(self, QPushButton, 'editEventButton').clicked.connect(self.edit_event)
         require(self, QPushButton, 'deleteEventButton').clicked.connect(self.delete_event)
-        require(self, QPushButton, 'deleteEventButton').setProperty('danger', True)
         move_up = require(self, QPushButton, 'moveUpButton')
         move_down = require(self, QPushButton, 'moveDownButton')
         configure_row_move_tooltips(move_up, move_down, 'イベント')
@@ -1313,98 +1114,6 @@ class FlowDesignPage(QWidget):
         self.event_tree.itemExpanded.connect(self._update_group_toggle_button)
         self.event_tree.itemCollapsed.connect(self._update_group_toggle_button)
         self._update_group_toggle_button()
-
-    @staticmethod
-    def _card() -> QFrame:
-        frame = QFrame()
-        frame.setProperty('card', True)
-        return frame
-
-    def _build_workflow_panel(self, panel: QFrame) -> None:
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(16, 14, 16, 14)
-        heading = QLabel(tr('msg.0003'))
-        heading.setProperty('cardTitle', True)
-        layout.addWidget(heading)
-        hint = QLabel(tr('msg.0004'))
-        hint.setProperty('muted', True)
-        layout.addWidget(hint)
-        self.workflow_table = QTableWidget(0, 5)
-        self.workflow_table.setHorizontalHeaderLabels([tr('msg.0005'), tr('msg.0003'), tr('msg.0006'), tr('msg.0007'), tr('msg.0405')])
-        configure_table_view(self.workflow_table)
-        self.workflow_table.verticalHeader().hide()
-        set_column_layout(
-            self.workflow_table, (0, 1, 2, 4, 3), (54, 180, 58, 82, 120),
-        )
-        self.workflow_table.itemSelectionChanged.connect(self._workflow_selected)
-        self.workflow_table.itemDoubleClicked.connect(lambda _item: self.edit_workflow())
-        layout.addWidget(self.workflow_table, 1)
-        bar = QHBoxLayout()
-        add = _button(tr('msg.0008'), primary=True)
-        add.clicked.connect(self.add_workflow)
-        delete = _button(tr('msg.0010'), danger=True)
-        delete.clicked.connect(self.delete_workflow)
-        json_button = _button(tr('msg.0596') + '  ▼')
-        json_menu = QMenu(json_button)
-        json_menu.addAction(tr('msg.0016'), self.import_json)
-        json_menu.addAction(tr('msg.0017'), self.export_json)
-        json_button.setMenu(json_menu)
-        more = _button('⋯')
-        more.setFixedWidth(42)
-        more_menu = QMenu(more)
-        more_menu.addAction(tr('msg.0013'), self.toggle_workflow)
-        more_menu.addAction(tr('msg.0403'), self.edit_guard_summary)
-        more.setMenu(more_menu)
-        bar.addWidget(add)
-        bar.addWidget(delete)
-        bar.addStretch(1)
-        bar.addWidget(json_button)
-        bar.addWidget(more)
-        layout.addLayout(bar)
-
-    def _build_event_panel(self, panel: QFrame) -> None:
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(16, 14, 16, 14)
-        self.event_title = QLabel(tr('msg.0018'))
-        self.event_title.setProperty('cardTitle', True)
-        layout.addWidget(self.event_title)
-        self.event_tree = QTreeWidget()
-        self.event_tree.setColumnCount(6)
-        self.event_tree.setHeaderLabels([tr('msg.0028'), tr('msg.0029'), tr('msg.0032'), tr('msg.0405'), tr('msg.0006'), tr('msg.0027')])
-        configure_table_view(self.event_tree)
-        set_column_layout(
-            self.event_tree, (0, 5, 4, 3, 1, 2), (300, 110, 220, 120, 70, 60),
-        )
-        self.event_tree.itemDoubleClicked.connect(lambda _item, _column: self.edit_event())
-        layout.addWidget(self.event_tree, 1)
-        bar = QHBoxLayout()
-        add = _button(tr('msg.0594') + '  ▼', primary=True)
-        add_menu = QMenu(add)
-        add_menu.addAction(tr('msg.0034'), self.add_event)
-        add_menu.addAction(tr('msg.0413'), self.add_group)
-        add.setMenu(add_menu)
-        edit = _button(tr('msg.0035'))
-        edit.clicked.connect(self.edit_event)
-        delete = _button(tr('msg.0010'), danger=True)
-        delete.clicked.connect(self.delete_event)
-        up = _button('↑')
-        down = _button('↓')
-        configure_row_move_tooltips(up, down, 'イベント')
-        fold = _button('⊟')
-        for button in (up, down, fold):
-            button.setFixedWidth(42)
-        up.clicked.connect(lambda: self.move_event(-1))
-        down.clicked.connect(lambda: self.move_event(1))
-        fold.clicked.connect(self.toggle_groups)
-        self.fold_button = fold
-        bar.addWidget(add)
-        bar.addWidget(edit)
-        bar.addWidget(delete)
-        bar.addStretch(1)
-        bar.addWidget(up)
-        bar.addWidget(down)
-        bar.addWidget(fold)
-        layout.addLayout(bar)
 
     def reload(self, select_id: int | None=None) -> None:
         workflow_scroll = capture_scroll_position(self.workflow_table)
@@ -1722,6 +1431,12 @@ class FlowDesignPage(QWidget):
     def import_json(self) -> None:
         path, _filter = QFileDialog.getOpenFileName(self, tr('msg.0016'), str(self.project_dir), 'JSON (*.json)')
         if not path:
+            return
+        if not confirm_action(
+            self, 'JSON 読込',
+            '現在の業務フローを置き換えて JSON を読み込みますか？',
+            confirm_text='読み込む',
+        ):
             return
         try:
             self.db.import_workflow_collection(Path(path), SUPPORTED_ACTIONS, SUPPORTED_SELECTOR_TYPES)

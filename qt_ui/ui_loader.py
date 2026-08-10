@@ -23,62 +23,49 @@ class ConfirmationDialog(QDialog):
     def __init__(
         self, parent: QWidget, title: str, message: str, *,
         confirm_text: str = '確認', cancel_text: str | None = 'キャンセル',
+        alternate_text: str | None = None,
         danger: bool = False,
         icon: QStyle.StandardPixmap = QStyle.StandardPixmap.SP_MessageBoxQuestion,
     ) -> None:
         super().__init__(parent)
+        load_ui_into(self, 'confirmation.ui')
         self.setWindowTitle(title)
-        self.setProperty('confirmDialog', True)
         self.setModal(True)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        content = QWidget()
-        content.setProperty('confirmContent', True)
-        content_layout = QHBoxLayout(content)
-        content_layout.setContentsMargins(20, 18, 20, 16)
-        content_layout.setSpacing(12)
-        icon_label = QLabel()
-        icon_label.setObjectName('confirmIcon')
-        icon_label.setFixedSize(32, 32)
+        icon_label = require(self, QLabel, 'confirmIcon')
         message_icon = QApplication.style().standardIcon(icon)
         icon_label.setPixmap(message_icon.pixmap(32, 32))
-        content_layout.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignVCenter)
-        message_label = QLabel(message)
-        message_label.setObjectName('confirmMessage')
-        message_label.setWordWrap(True)
+        message_label = require(self, QLabel, 'confirmMessage')
+        message_label.setText(message)
         message_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        content_layout.addWidget(message_label, 1)
-        layout.addWidget(content, 1)
-
-        footer = QFrame()
-        footer.setProperty('confirmFooter', True)
-        button_row = QHBoxLayout(footer)
-        button_row.setContentsMargins(16, 11, 16, 11)
-        button_row.setSpacing(8)
-        button_row.addStretch(1)
-        self.confirm_button = QPushButton(confirm_text)
+        self.confirm_button = require(self, QPushButton, 'confirmButton')
+        self.confirm_button.setText(confirm_text)
         self.confirm_button.setProperty('danger' if danger else 'primary', True)
-        self.confirm_button.setFixedWidth(92)
         self.confirm_button.setAutoDefault(cancel_text is None)
-        self.confirm_button.clicked.connect(self.accept)
-        button_row.addWidget(self.confirm_button)
-        self.cancel_button: QPushButton | None = None
-        if cancel_text is not None:
-            self.cancel_button = QPushButton(cancel_text)
-            self.cancel_button.setFixedWidth(92)
-            # 誤操作を避けるため、確認画面の Enter キーはキャンセルを既定にする。
-            self.cancel_button.setDefault(True)
-            self.cancel_button.clicked.connect(self.reject)
-            button_row.addWidget(self.cancel_button)
+        self.choice = 'confirm'
+        self.confirm_button.clicked.connect(lambda: self._finish('confirm'))
+        self.alternate_button = require(self, QPushButton, 'alternateButton')
+        if alternate_text is None:
+            self.alternate_button.hide()
         else:
+            self.alternate_button.setText(alternate_text)
+            self.alternate_button.clicked.connect(lambda: self._finish('alternate'))
+        cancel_button = require(self, QPushButton, 'cancelButton')
+        self.cancel_button: QPushButton | None = cancel_button
+        if cancel_text is not None:
+            cancel_button.setText(cancel_text)
+            # 誤操作を避けるため、確認画面の Enter キーはキャンセルを既定にする。
+            cancel_button.setDefault(True)
+            cancel_button.clicked.connect(self.reject)
+        else:
+            cancel_button.hide()
+            self.cancel_button = None
             self.confirm_button.setDefault(True)
-        layout.addWidget(footer)
-
-        self.setFixedSize(380, 156)
         (self.cancel_button or self.confirm_button).setFocus()
+
+    def _finish(self, choice: str) -> None:
+        """押された操作を保持して呼び出し元へ返す。"""
+        self.choice = choice
+        self.accept()
 
 
 class DeletionConfirmDialog(ConfirmationDialog):
@@ -104,6 +91,18 @@ def confirm_action(
 def confirm_deletion(parent: QWidget, message: str) -> bool:
     """共通の削除確認を表示し、削除が選択された場合だけ True を返す。"""
     return DeletionConfirmDialog(parent, message).exec() == QDialog.DialogCode.Accepted
+
+
+def confirm_pending_changes(parent: QWidget, message: str) -> str:
+    """未保存内容について「保存・破棄・キャンセル」の選択結果を返す。"""
+    dialog = ConfirmationDialog(
+        parent, '未保存の変更', message,
+        confirm_text='保存', alternate_text='保存しない', cancel_text='キャンセル',
+        icon=QStyle.StandardPixmap.SP_MessageBoxWarning,
+    )
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return 'cancel'
+    return 'discard' if dialog.choice == 'alternate' else 'save'
 
 
 def _show_message(
@@ -145,6 +144,10 @@ def load_ui_into(target: T, filename: str) -> T:
             page_layout.setContentsMargins(28, 22, 28, 22)
     target.setObjectName(form.objectName())
     target.resize(form.size())
+    if isinstance(target, QDialog):
+        # ダイアログのサイズ制約も .ui を正とし、各画面での重複指定を不要にする。
+        target.setMinimumSize(form.minimumSize())
+        target.setMaximumSize(form.maximumSize())
     form.setWindowFlags(Qt.WindowType.Widget)
     wrapper = QVBoxLayout(target)
     wrapper.setContentsMargins(0, 0, 0, 0)

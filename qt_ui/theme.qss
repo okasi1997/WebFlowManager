@@ -37,13 +37,13 @@ QCheckBox::indicator:checked:disabled { background-color: #9eabb5; border-color:
     border: 0;
     border-right: 1px solid #dce4eb;
 }
-#brand {
+#brandLabel {
     color: #0c527f;
     font-size: 17px;
     font-weight: 700;
     padding: 2px 6px 0 6px;
 }
-#brandSubtle {
+#brandSubtitle {
     color: #84919d;
     padding: 0 6px 8px 6px;
 }
