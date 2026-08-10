@@ -7,7 +7,7 @@ from PySide6.QtCore import QFile, QIODevice, QSize, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel,
+    QApplication, QDialog, QDialogButtonBox, QLabel,
     QLayout, QPushButton, QStyle, QVBoxLayout, QWidget,
 )
 

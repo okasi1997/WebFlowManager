@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Any, TypeVar
 
-from PySide6.QtCore import QEvent, QObject, QPointF, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QPointF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView, QHeaderView, QProxyStyle, QStyle,

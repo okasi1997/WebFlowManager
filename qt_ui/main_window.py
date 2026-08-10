@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QSize
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMainWindow, QPushButton, QStackedWidget, QWidget
+from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QStackedWidget, QWidget
 
 from core.database import Database
 from browser.profile_runtime import clear_profile, persistent_profile_dir, profile_has_state

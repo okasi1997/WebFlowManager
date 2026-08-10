@@ -7,8 +7,8 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFrame, QHeaderView, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-    QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QHeaderView, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QPushButton,
+    QTreeWidget, QTreeWidgetItem, QWidget,
 )
 
 from browser.auth_session import AuthBrowserSession

@@ -6,7 +6,10 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from ui.structured_data import read_records_excel, remap_data_for_schema_names, schema_name_path_map, strip_data_record_whitespace, strip_schema_name_whitespace, write_records_excel
+from core.excel_io import (
+    read_records_excel, remap_data_for_schema_names, schema_name_path_map,
+    strip_data_record_whitespace, strip_schema_name_whitespace, write_records_excel,
+)
 
 
 class ExcelStyleTests(unittest.TestCase):

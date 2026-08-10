@@ -7,9 +7,8 @@ from typing import Any
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout,
-    QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton,
-    QFrame, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
+    QLineEdit, QMenu, QPushButton, QTreeWidget, QTreeWidgetItem, QWidget,
 )
 
 from core.database import Database

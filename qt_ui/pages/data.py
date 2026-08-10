@@ -8,12 +8,13 @@ from typing import Any
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QDialog, QDialogButtonBox, QFileDialog, QFrame, QHeaderView,
+    QAbstractItemView, QDialog, QDialogButtonBox, QFileDialog, QFrame,
     QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QPushButton,
-    QSizePolicy, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QSplitter, QTreeWidget, QTreeWidgetItem, QWidget,
 )
 
 from core.database import Database
+from core.excel_io import read_records_excel, write_records_excel
 from .structured import default_value, empty_record
 from ..table_view import (
     HierarchicalReorderTreeWidget, capture_scroll_position,
@@ -439,14 +440,12 @@ class DataPage(QWidget):
     def export_excel(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, 'Excel 出力', 'data_records.xlsx', 'Excel (*.xlsx)')
         if path:
-            from ui.structured_data import write_records_excel
             write_records_excel(path, self.db.get_data_schema(), self.db.list_data_records())
 
     def import_excel(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, 'Excel 読込', '', 'Excel (*.xlsx)')
         if path:
             try:
-                from ui.structured_data import read_records_excel
                 self.db.replace_data_records(read_records_excel(path, self.db.get_data_schema()))
                 self.reload()
             except Exception as error:

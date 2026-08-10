@@ -7,3 +7,6 @@ data/chrome_profiles/
 data/*.db
 artifacts/
 log/
+build/
+dist/
+*.spec

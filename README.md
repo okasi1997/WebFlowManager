@@ -1,6 +1,6 @@
 # Webフロー管理
 
-> 正式界面已迁移到 PySide6/Qt，使用 `python main.py` 启动。迁移期间的 Tk 版可通过 `python main_tk.py` 临时回退。
+界面使用 PySide6/Qt 实现，通过 `python main.py` 启动。
 
 ## Qt Designer 画面编辑
 
@@ -302,19 +302,14 @@ version 1 の `loop_start` / `loop_end`、`retry_start` / `retry_end` は読込�
 ```text
 WebFlowManager/
 ├─ main.py                         # 起動入口
-├─ app.py                          # メイン画面とアプリケーション制御
 ├─ i18n.py                         # 言語リソースの読み込み
 ├─ core/
 │  ├─ database.py                  # SQLite と JSON 入出力
 │  ├─ executor.py                  # Playwright による実行処理
 │  ├─ conditions.py                # 実行条件の解析と判定
+│  ├─ excel_io.py                  # Excel 入出力とデータ構造の正規化
 │  └─ settings.py                  # 固定機能一覧と既定値
-├─ ui/
-│  ├─ dialogs.py                   # イベント、グループ、条件画面
-│  ├─ input_data.py                # 実行変数の管理画面
-│  ├─ structured_data.py           # 共通データ構造とデータ管理
-│  ├─ auth_state.py                # ログイン状態管理画面
-│  └─ ui_helpers.py                # 共通 UI 部品
+├─ qt_ui/                          # PySide6 画面、Designer forms、共通 UI 部品
 ├─ browser/
 │  ├─ element_picker.py            # locator 選択、検証、デバッグ
 │  └─ auth_session.py              # 認証用 Chrome の管理
