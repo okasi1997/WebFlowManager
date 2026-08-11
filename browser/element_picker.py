@@ -18,13 +18,34 @@ from i18n import tr
 class ElementPicker:
     """F2 で選択モードへ入り、操作可能な要素だけを候補として返す。"""
 
+    @staticmethod
+    def _suggest_action(info: dict[str, str]) -> str:
+        """選択要素の種類から、新規イベント向けの操作を決定する。"""
+        tag = str(info.get('tag', '')).casefold()
+        role = str(info.get('role', '')).casefold()
+        input_type = str(info.get('input_type', '')).casefold()
+        if tag == 'select' or role == 'combobox':
+            return 'select'
+        if tag == 'input':
+            if input_type == 'file':
+                return 'upload_file'
+            if input_type in {'button', 'submit', 'reset', 'checkbox', 'radio', 'image'}:
+                return 'click'
+            return 'fill'
+        if tag == 'textarea' or role == 'textbox' or info.get('content_editable') == 'true':
+            return 'fill'
+        if tag in {'button', 'a', 'summary'} or role in {
+            'button', 'link', 'checkbox', 'radio', 'menuitem', 'tab',
+        }:
+            return 'click'
+        return 'get_text'
+
     def _choose_unique_locator(
             self, page: Any, info: dict[str, str], picked_frame: Any | None=None,
             action: str='',
     ) -> dict[str, str]:
         # 人が理解しやすい locator から順に試し、XPath は予備として保持する。
-        tag = str(info.get('tag', '')).casefold()
-        suggested_action = {'select': 'select', 'input': 'fill', 'button': 'click'}.get(tag, '')
+        suggested_action = self._suggest_action(info)
         display = info.get('label') or info.get('name') or info.get('text') or info.get('tag')
         candidates: list[tuple[str, str]] = []
         fallback_xpath = info.get('xpath', '')
@@ -398,7 +419,42 @@ class DebugBrowserSession:
             executor._execute_event(page, event, {}, artifact_dir)
         self._submit(task)
 
-    def execute_until(self, jobs: list[dict[str, Any]], target_event_id: int, variables: dict[str, str], target_url: str='') -> None:
+    def highlight_element(self, event: dict[str, Any], target_url: str='') -> None:
+        """Chrome を前面へ移動し、設定された要素を短時間強調表示する。"""
+        def task() -> None:
+            from core.executor import WorkflowExecutor
+            _context, page = self._ensure_page(target_url)
+            page = active_page(page)
+            executor = WorkflowExecutor(
+                self.project_dir,
+                lambda message: self._log_sink(message, 'WorkflowExecutor'),
+            )
+            timeout = int(event.get('timeout_ms', 10_000))
+            locator = executor._event_locator(
+                page, event, str(event.get('selector', '')), '', timeout,
+                require_actionable=False,
+            )
+            if locator.is_visible():
+                locator.scroll_into_view_if_needed(timeout=timeout)
+            bring_page_to_front(active_page(page))
+            locator.evaluate("""element => {
+                const token = `${Date.now()}-${Math.random()}`;
+                element.__wfmHighlightToken = token;
+                const outline = element.style.getPropertyValue('outline');
+                const outlinePriority = element.style.getPropertyPriority('outline');
+                const shadow = element.style.getPropertyValue('box-shadow');
+                const shadowPriority = element.style.getPropertyPriority('box-shadow');
+                element.style.setProperty('outline', '4px solid #ff2d55', 'important');
+                element.style.setProperty('box-shadow', '0 0 0 6px rgba(255,45,85,.28)', 'important');
+                setTimeout(() => {
+                    if (element.__wfmHighlightToken !== token) return;
+                    element.style.setProperty('outline', outline, outlinePriority);
+                    element.style.setProperty('box-shadow', shadow, shadowPriority);
+                }, 3000);
+            }""")
+        self._submit(task)
+
+    def execute_until(self, jobs: list[dict[str, Any]], target_event_id: int | None, variables: dict[str, str], target_url: str='') -> None:
         def task() -> None:
             from core.conditions import evaluate_guard
             from core.executor import WorkflowExecutor
@@ -418,6 +474,11 @@ class DebugBrowserSession:
                     if evaluate_guard(job.get('guard'), lambda path: executor._resolve_guard_data(root_data, path, {})):
                         executor._execute_workflow_on_page(page, job['events'], variables, artifact_dir, root_data, f'debug_{index}', on_event_start=pause_at_target)
             except _DebugPause:
+                page = active_page(page)
+                bring_page_to_front(page)
+                return
+            # 新規イベントでは追加予定位置までのイベントをすべて実行すれば完了。
+            if target_event_id is None:
                 page = active_page(page)
                 bring_page_to_front(page)
                 return

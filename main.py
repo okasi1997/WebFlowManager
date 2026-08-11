@@ -1,4 +1,4 @@
-"""Web Flow Manager Qt entry point."""
+"""Web Flow Manager の Qt 版起動処理。"""
 
 from qt_ui import QtFlowManagerApplication
 

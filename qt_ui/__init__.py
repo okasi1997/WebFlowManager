@@ -1,4 +1,4 @@
-"""PySide6 based desktop UI for WebFlowManager."""
+"""PySide6 を使用した WebFlowManager のデスクトップ画面。"""
 
 from .application import QtFlowManagerApplication
 

@@ -12,12 +12,13 @@ from PySide6.QtWidgets import (
 )
 
 from core.database import Database
+from i18n import tr
 from ..table_view import (
     HierarchicalReorderTreeWidget, configure_row_move_tooltips, configure_table_view,
 )
 from ..ui_loader import (
     confirm_deletion, confirm_pending_changes, load_ui_into, localize_dialog_buttons, require,
-    show_information, show_warning,
+    set_tree_toggle_icon, show_file_exported, show_file_imported, show_information, show_warning,
 )
 
 
@@ -45,29 +46,29 @@ def empty_record(schema: dict[str, Any]) -> dict[str, Any]:
 
 def validate_schema(node: Any, location: str = 'Data') -> None:
     if not isinstance(node, dict) or not str(node.get('name', '')).strip():
-        raise ValueError(f'{location}: 字段名不能为空')
+        raise ValueError(f'{location}: フィールド名を入力してください')
     if node.get('type') not in TYPES:
-        raise ValueError(f'{location}: 不支持的类型 {node.get("type")}')
+        raise ValueError(f'{location}: 未対応の型です: {node.get("type")}')
     children = node.get('children', [])
     if node['type'] in ('object', 'list'):
         if not isinstance(children, list):
-            raise ValueError(f'{location}: children 必须是数组')
+            raise ValueError(f'{location}: children は配列である必要があります')
         names: set[str] = set()
         for child in children:
             name = str(child.get('name', '')) if isinstance(child, dict) else ''
             if name in names:
-                raise ValueError(f'{location}: 字段名重复：{name}')
+                raise ValueError(f'{location}: フィールド名が重複しています: {name}')
             names.add(name)
             validate_schema(child, f'{location}.{name}')
     elif children:
-        raise ValueError(f'{location}: 基本类型不能包含子字段')
+        raise ValueError(f'{location}: 基本型には子フィールドを設定できません')
 
 
 class FieldDialog(QDialog):
     def __init__(self, parent: QWidget, node: dict[str, Any] | None = None) -> None:
         super().__init__(parent)
         load_ui_into(self, 'field_dialog.ui')
-        self.setWindowTitle('フィールド編集' if node else 'フィールド追加')
+        self.setWindowTitle(tr('フィールド編集' if node else 'フィールド追加'))
         self.name = require(self, QLineEdit, 'nameEdit')
         self.name.setText(str((node or {}).get('name', '')))
         self.kind = require(self, QComboBox, 'typeCombo')
@@ -104,7 +105,7 @@ class SchemaPage(QWidget):
         # Qt 標準の MoveAction 限定モードを解除し、ドラッグ表示も有効にする。
         self.tree.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.tree.setColumnCount(3)
-        self.tree.setHeaderLabels(['フィールド名', '種別', 'イベントリンクパス'])
+        self.tree.setHeaderLabels([tr('フィールド名'), tr('種別'), tr('イベントリンクパス')])
         self.tree.setDefaultDropAction(Qt.DropAction.CopyAction)
         self.tree.setContainerTest(
             lambda item: str((item.data(0, Qt.ItemDataRole.UserRole) or {}).get('type', '')) in ('object', 'list')
@@ -294,8 +295,7 @@ class SchemaPage(QWidget):
         items = self._expandable_items()
         should_expand = bool(items) and all(not item.isExpanded() for item in items)
         self.toggle_all_button.setEnabled(bool(items))
-        self.toggle_all_button.setText('⏷' if should_expand else '⏵')
-        self.toggle_all_button.setToolTip('すべて展開' if should_expand else 'すべて折りたたむ')
+        set_tree_toggle_icon(self.toggle_all_button, should_expand)
 
     def _toggle_all(self) -> None:
         """展開と折りたたみを一つのボタンで切り替える。"""
@@ -459,12 +459,18 @@ class SchemaPage(QWidget):
         return True
 
     def export_json(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, 'JSON 导出', 'data_schema.json', 'JSON (*.json)')
-        if path:
+        path, _ = QFileDialog.getSaveFileName(self, tr('JSON 出力'), 'data_schema.json', 'JSON (*.json)')
+        if not path:
+            return
+        try:
             Path(path).write_text(json.dumps(self.schema, ensure_ascii=False, indent=2), encoding='utf-8')
+        except OSError as error:
+            show_warning(self, 'JSON 出力', str(error))
+            return
+        show_file_exported(self, path)
 
     def import_json(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, 'JSON 导入', '', 'JSON (*.json)')
+        path, _ = QFileDialog.getOpenFileName(self, tr('JSON 読込'), '', 'JSON (*.json)')
         if not path:
             return
         try:
@@ -474,4 +480,6 @@ class SchemaPage(QWidget):
             self.render()
         except (OSError, ValueError, json.JSONDecodeError) as error:
             show_warning(self, 'JSON 読込', str(error))
+            return
+        show_file_imported(self, path)
 

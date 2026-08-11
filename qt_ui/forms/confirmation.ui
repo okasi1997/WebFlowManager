@@ -4,7 +4,7 @@
  <widget class="QDialog" name="ConfirmationForm">
   <property name="geometry"><rect><x>0</x><y>0</y><width>380</width><height>156</height></rect></property>
   <property name="minimumSize"><size><width>380</width><height>156</height></size></property>
-  <property name="maximumSize"><size><width>380</width><height>156</height></size></property>
+  <property name="maximumSize"><size><width>16777215</width><height>16777215</height></size></property>
   <property name="confirmDialog" stdset="0"><bool>true</bool></property>
   <layout class="QVBoxLayout" name="rootLayout">
    <property name="spacing"><number>0</number></property><property name="leftMargin"><number>0</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>0</number></property><property name="bottomMargin"><number>0</number></property>
@@ -12,6 +12,7 @@
     <property name="spacing"><number>12</number></property><property name="leftMargin"><number>20</number></property><property name="topMargin"><number>18</number></property><property name="rightMargin"><number>20</number></property><property name="bottomMargin"><number>16</number></property>
     <item><widget class="QLabel" name="confirmIcon"><property name="minimumSize"><size><width>32</width><height>32</height></size></property><property name="maximumSize"><size><width>32</width><height>32</height></size></property></widget></item>
     <item><widget class="QLabel" name="confirmMessage"><property name="wordWrap"><bool>true</bool></property><property name="text"><string/></property></widget></item>
+    <item><widget class="QPlainTextEdit" name="messageDetails"><property name="visible"><bool>false</bool></property><property name="readOnly"><bool>true</bool></property><property name="lineWrapMode"><enum>QPlainTextEdit::WidgetWidth</enum></property><property name="plainText"><string/></property></widget></item>
    </layout></widget></item>
    <item><widget class="QFrame" name="footerFrame"><property name="confirmFooter" stdset="0"><bool>true</bool></property><layout class="QHBoxLayout" name="buttonLayout">
     <property name="spacing"><number>8</number></property><property name="leftMargin"><number>16</number></property><property name="topMargin"><number>11</number></property><property name="rightMargin"><number>16</number></property><property name="bottomMargin"><number>11</number></property>

@@ -53,6 +53,19 @@ class Database:
             self.connection.execute('ALTER TABLE events ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0')
         if 'retry_interval_ms' not in event_columns:
             self.connection.execute('ALTER TABLE events ADD COLUMN retry_interval_ms INTEGER NOT NULL DEFAULT 0')
+        if 'success_json' not in event_columns:
+            self.connection.execute("ALTER TABLE events ADD COLUMN success_json TEXT NOT NULL DEFAULT ''")
+            # 旧 click の value に保存されていた成功確認を独立列へ移行する。
+            for row in self.connection.execute("SELECT id, value FROM events WHERE action='click' AND value<>''"):
+                try:
+                    success = json.loads(row['value'])
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if isinstance(success, dict) and success.get('condition'):
+                    self.connection.execute(
+                        "UPDATE events SET success_json=?, value='' WHERE id=?",
+                        (json.dumps(success, ensure_ascii=False), row['id']),
+                    )
         # 旧待機操作を統合後の形式へ移行し、画面と保存形式を一つにそろえる。
         self.connection.execute("UPDATE events SET action='wait', value='hidden' WHERE action='wait_hidden'")
         self.connection.execute(
@@ -244,13 +257,13 @@ class Database:
     def add_event(self, workflow_id: int, data: dict[str, Any]) -> int:
         position = self.connection.execute('SELECT COALESCE(MAX(position), 0) + 1 FROM events WHERE workflow_id=?', (workflow_id,)).fetchone()[0]
         guard_json = json.dumps(decode_guard(data.get('guard', data.get('guard_json', ''))), ensure_ascii=False)
-        cursor = self.connection.execute('INSERT INTO events\n               (workflow_id, position, name, action, selector_type, selector,\n                fallback_selector_type, fallback_selector, iframe_path, value,\n                timeout_ms, enabled, continue_on_error, refresh_on_retry, failure_action, failure_target, data_path, guard_json, retry_count, retry_interval_ms)\n               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (workflow_id, position, data['name'], data['action'], data['selector_type'], data['selector'], data.get('fallback_selector_type', 'none'), data.get('fallback_selector', ''), data.get('iframe_path', ''), data['value'], data['timeout_ms'], data['enabled'], data['continue_on_error'], 0, data.get('failure_action', 'none'), data.get('failure_target', ''), data.get('data_path', ''), guard_json, data.get('retry_count', 0), data.get('retry_interval_ms', 0)))
+        cursor = self.connection.execute('INSERT INTO events\n               (workflow_id, position, name, action, selector_type, selector,\n                fallback_selector_type, fallback_selector, iframe_path, value,\n                timeout_ms, enabled, continue_on_error, refresh_on_retry, failure_action, failure_target, data_path, guard_json, retry_count, retry_interval_ms, success_json)\n               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (workflow_id, position, data['name'], data['action'], data['selector_type'], data['selector'], data.get('fallback_selector_type', 'none'), data.get('fallback_selector', ''), data.get('iframe_path', ''), data['value'], data['timeout_ms'], data['enabled'], data['continue_on_error'], 0, data.get('failure_action', 'none'), data.get('failure_target', ''), data.get('data_path', ''), guard_json, data.get('retry_count', 0), data.get('retry_interval_ms', 0), data.get('success_json', '')))
         self.connection.commit()
         return int(cursor.lastrowid)
 
     def update_event(self, event_id: int, data: dict[str, Any]) -> None:
         guard_json = json.dumps(decode_guard(data.get('guard', data.get('guard_json', ''))), ensure_ascii=False)
-        self.connection.execute('UPDATE events SET name=?, action=?, selector_type=?, selector=?,\n               fallback_selector_type=?, fallback_selector=?, iframe_path=?, value=?,\n               timeout_ms=?, enabled=?, continue_on_error=?, refresh_on_retry=0, failure_action=?, failure_target=?, data_path=?, guard_json=?, retry_count=?, retry_interval_ms=? WHERE id=?', (data['name'], data['action'], data['selector_type'], data['selector'], data.get('fallback_selector_type', 'none'), data.get('fallback_selector', ''), data.get('iframe_path', ''), data['value'], data['timeout_ms'], data['enabled'], data['continue_on_error'], data.get('failure_action', 'none'), data.get('failure_target', ''), data.get('data_path', ''), guard_json, data.get('retry_count', 0), data.get('retry_interval_ms', 0), event_id))
+        self.connection.execute('UPDATE events SET name=?, action=?, selector_type=?, selector=?,\n               fallback_selector_type=?, fallback_selector=?, iframe_path=?, value=?,\n               timeout_ms=?, enabled=?, continue_on_error=?, refresh_on_retry=0, failure_action=?, failure_target=?, data_path=?, guard_json=?, retry_count=?, retry_interval_ms=?, success_json=? WHERE id=?', (data['name'], data['action'], data['selector_type'], data['selector'], data.get('fallback_selector_type', 'none'), data.get('fallback_selector', ''), data.get('iframe_path', ''), data['value'], data['timeout_ms'], data['enabled'], data['continue_on_error'], data.get('failure_action', 'none'), data.get('failure_target', ''), data.get('data_path', ''), guard_json, data.get('retry_count', 0), data.get('retry_interval_ms', 0), data.get('success_json', ''), event_id))
         self.connection.commit()
 
     def set_event_enabled(self, event_id: int, enabled: bool) -> None:
@@ -425,7 +438,7 @@ class Database:
                         raise ValueError
                 except (TypeError, ValueError) as error:
                     raise ValueError(f'msg.0119{name}msg.0121{event_index}msg.0571') from error
-                checked_events.append({'name': event['name'], 'action': event['action'], 'selector_type': event['selector_type'], 'selector': event['selector'], 'fallback_selector_type': str(event.get('fallback_selector_type', 'none')), 'fallback_selector': str(event.get('fallback_selector', '')), 'iframe_path': str(event.get('iframe_path', '')), 'value': event['value'], 'timeout_ms': timeout, 'enabled': int(bool(event.get('enabled', 1))), 'continue_on_error': int(bool(event.get('continue_on_error', 0))), 'refresh_on_retry': 0, 'failure_action': failure_action, 'failure_target': str(event.get('failure_target', '')), 'data_path': str(event.get('data_path', '')), 'retry_count': retry_count, 'retry_interval_ms': retry_interval_ms, 'guard': decode_guard(event.get('guard'))})
+                checked_events.append({'name': event['name'], 'action': event['action'], 'selector_type': event['selector_type'], 'selector': event['selector'], 'fallback_selector_type': str(event.get('fallback_selector_type', 'none')), 'fallback_selector': str(event.get('fallback_selector', '')), 'iframe_path': str(event.get('iframe_path', '')), 'value': event['value'], 'success_json': str(event.get('success_json', '')), 'timeout_ms': timeout, 'enabled': int(bool(event.get('enabled', 1))), 'continue_on_error': int(bool(event.get('continue_on_error', 0))), 'refresh_on_retry': 0, 'failure_action': failure_action, 'failure_target': str(event.get('failure_target', '')), 'data_path': str(event.get('data_path', '')), 'retry_count': retry_count, 'retry_interval_ms': retry_interval_ms, 'guard': decode_guard(event.get('guard'))})
             normalized.append({'name': name, 'description': str(workflow.get('description', '')), 'enabled': int(bool(workflow.get('enabled', 1))), 'events': checked_events, 'pcl_loop_start': int(bool(workflow.get('pcl_loop_start', 0))), 'guard': decode_guard(workflow.get('guard'))})
         if sum((workflow['pcl_loop_start'] for workflow in normalized)) > 1:
             raise ValueError('msg.0127')
@@ -439,7 +452,7 @@ class Database:
                 workflow_id = int(cursor.lastrowid)
                 for event_position, event in enumerate(workflow['events'], 1):
                     event_cursor = self.connection.execute('INSERT INTO events\n                           (workflow_id, position, name, action, selector_type, selector,\n                            fallback_selector_type, fallback_selector, iframe_path, value,\n                            timeout_ms, enabled, continue_on_error, refresh_on_retry, data_path, guard_json)\n                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (workflow_id, event_position, event['name'], event['action'], event['selector_type'], event['selector'], event['fallback_selector_type'], event['fallback_selector'], event['iframe_path'], event['value'], event['timeout_ms'], event['enabled'], event['continue_on_error'], 0, event['data_path'], json.dumps(event['guard'], ensure_ascii=False)))
-                    self.connection.execute('UPDATE events SET failure_action=?, failure_target=?, retry_count=?, retry_interval_ms=? WHERE id=?', (event['failure_action'], event['failure_target'], event['retry_count'], event['retry_interval_ms'], event_cursor.lastrowid))
+                    self.connection.execute('UPDATE events SET failure_action=?, failure_target=?, retry_count=?, retry_interval_ms=?, success_json=? WHERE id=?', (event['failure_action'], event['failure_target'], event['retry_count'], event['retry_interval_ms'], event['success_json'], event_cursor.lastrowid))
         self._migrate_combined_event_groups()
         self.connection.commit()
 
@@ -475,15 +488,15 @@ class Database:
                     (remap_guard(workflow['guard_json']), workflow['id']),
                 )
             events = self.connection.execute(
-                'SELECT id, selector, fallback_selector, value, failure_target, data_path, guard_json FROM events'
+                'SELECT id, selector, fallback_selector, value, failure_target, success_json, data_path, guard_json FROM events'
             ).fetchall()
             for event in events:
                 fields = [
                     self._remap_text_data_references(str(event[field]), path_map)
-                    for field in ('selector', 'fallback_selector', 'value', 'failure_target')
+                    for field in ('selector', 'fallback_selector', 'value', 'failure_target', 'success_json')
                 ]
                 self.connection.execute(
-                    'UPDATE events SET selector=?, fallback_selector=?, value=?, failure_target=?, data_path=?, guard_json=? WHERE id=?',
+                    'UPDATE events SET selector=?, fallback_selector=?, value=?, failure_target=?, success_json=?, data_path=?, guard_json=? WHERE id=?',
                     (*fields, path_map.get(event['data_path'], event['data_path']), remap_guard(event['guard_json']), event['id']),
                 )
         return len(normalized)

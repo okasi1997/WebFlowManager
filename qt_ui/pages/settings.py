@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtCore import Signal
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QLineEdit, QPushButton, QSpinBox, QWidget,
 )
@@ -8,12 +9,15 @@ from PySide6.QtWidgets import (
 from core.database import Database
 from i18n import tr
 from ..ui_loader import (
+    apply_application_font,
     confirm_pending_changes as ask_pending_changes,
     load_ui_into, require, show_information, show_warning,
 )
 
 
 class SettingsPage(QWidget):
+    settings_applied = Signal()
+
     def __init__(self, db: Database) -> None:
         super().__init__()
         self.db = db
@@ -106,8 +110,10 @@ class SettingsPage(QWidget):
         self.db.set_default_timeout_ms(timeout)
         self.db.set_browser_visible(self.browser_visible.isChecked())
         self.db.set_pcl_session_limit(session_limit)
-        QApplication.instance().setFont(QFont(family, size))
+        apply_application_font(family, size)
         self._saved_values = self._current_values()
+        # 言語以外は再起動を待たず、既に開いている画面にも反映する。
+        self.settings_applied.emit()
         if show_message:
             show_information(self, tr('msg.0048'), '設定を保存しました。言語の変更は再起動後に反映されます。')
         return True

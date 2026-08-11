@@ -3,20 +3,25 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
 from pathlib import Path
+import json
 from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from PySide6.QtWidgets import (
     QApplication, QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFrame, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox,
-    QPushButton, QSpinBox, QSplitter, QStyle, QTableWidget, QTabWidget, QVBoxLayout,
+    QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QStyle, QTableWidget,
+    QTabWidget, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import QEvent, QModelIndex, QPoint, QTimer, Qt
 from PySide6.QtTest import QTest
 
 from core.database import Database
+from browser.element_picker import ElementPicker
+from i18n import set_language, tr
 from qt_ui.main_window import MainWindow
 from qt_ui.application import _ComboBoxWheelBlocker
 from qt_ui.pages.flow_design import (
@@ -31,6 +36,19 @@ from qt_ui.table_view import TREE_LEVEL_INDENT, configure_table_view
 
 
 class QtShellTests(unittest.TestCase):
+    def test_tree_forms_do_not_expand_rows_on_double_click(self) -> None:
+        """ダブルクリック操作と行の展開を競合させない。"""
+        form_dir = Path(__file__).resolve().parents[1] / 'qt_ui' / 'forms'
+        tree_count = 0
+        for path in form_dir.glob('*.ui'):
+            root = ET.parse(path).getroot()
+            for widget in root.findall(".//widget[@class='QTreeWidget']"):
+                tree_count += 1
+                value = widget.find("property[@name='expandsOnDoubleClick']/bool")
+                self.assertIsNotNone(value, f'{path.name}:{widget.get("name")}')
+                self.assertEqual(value.text, 'false', f'{path.name}:{widget.get("name")}')
+        self.assertGreater(tree_count, 0)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
@@ -51,6 +69,104 @@ class QtShellTests(unittest.TestCase):
     def test_navigation_has_six_qt_pages(self) -> None:
         self.assertEqual(self.window.stack.count(), 6)
         self.assertEqual(self.window.size().width(), 1180)
+        sidebar = self.window.findChild(QFrame, 'sidebar')
+        self.assertEqual(sidebar.width(), 180)
+        self.assertEqual(sidebar.minimumWidth(), sidebar.maximumWidth())
+        self.assertTrue(all(button.property('nav') for button in self.window.nav_buttons.values()))
+
+    def test_main_editing_page_toolbars_share_bottom_edge(self) -> None:
+        """主要編集ページ間で下部ツールバーの基準位置を共通化する。"""
+        button_names = {
+            'design': 'newWorkflowButton',
+            'data': 'addRecordButton',
+            'schema': 'addFieldButton',
+        }
+        bottom_edges = []
+        self.window.show()
+        for page_name, button_name in button_names.items():
+            self.window.show_page(page_name)
+            self.app.processEvents()
+            button = self.window.pages[page_name].findChild(QPushButton, button_name)
+            bottom_edges.append(button.mapTo(self.window, button.rect().bottomLeft()).y())
+        # テスト環境はテーマ未適用のため、Qt 標準スタイルの余白差だけ許容する。
+        self.assertLessEqual(max(bottom_edges) - min(bottom_edges), 2, bottom_edges)
+        schema_layout = self.window.pages['schema'].findChild(QVBoxLayout, 'schemaCardLayout')
+        margins = schema_layout.contentsMargins()
+        self.assertEqual((margins.left(), margins.right(), margins.bottom()), (9, 9, 9))
+
+    def test_data_file_operations_show_completion_messages(self) -> None:
+        """データ関連の入出力が成功した場合だけ、共通の完了通知を表示する。"""
+        data_page = self.window.pages['data']
+        schema_page = self.window.pages['schema']
+        json_path = self.project_dir / 'records.json'
+        excel_path = self.project_dir / 'records.xlsx'
+        schema_path = self.project_dir / 'schema.json'
+
+        with (
+            patch('qt_ui.pages.data.QFileDialog.getSaveFileName', return_value=(str(json_path), '')),
+            patch('qt_ui.pages.data.show_file_exported') as notified,
+        ):
+            data_page.export_json()
+            notified.assert_called_once_with(data_page, str(json_path))
+
+        json_path.write_text('[]', encoding='utf-8')
+        with (
+            patch('qt_ui.pages.data.QFileDialog.getOpenFileName', return_value=(str(json_path), '')),
+            patch('qt_ui.pages.data.show_file_imported') as notified,
+        ):
+            data_page.import_json()
+            notified.assert_called_once_with(data_page, str(json_path))
+
+        with (
+            patch('qt_ui.pages.data.QFileDialog.getSaveFileName', return_value=(str(excel_path), '')),
+            patch('qt_ui.pages.data.write_records_excel'),
+            patch('qt_ui.pages.data.show_file_exported') as notified,
+        ):
+            data_page.export_excel()
+            notified.assert_called_once_with(data_page, str(excel_path))
+
+        with (
+            patch('qt_ui.pages.data.QFileDialog.getOpenFileName', return_value=(str(excel_path), '')),
+            patch('qt_ui.pages.data.read_records_excel', return_value=[]),
+            patch('qt_ui.pages.data.show_file_imported') as notified,
+        ):
+            data_page.import_excel()
+            notified.assert_called_once_with(data_page, str(excel_path))
+
+        with (
+            patch('qt_ui.pages.structured.QFileDialog.getSaveFileName', return_value=(str(schema_path), '')),
+            patch('qt_ui.pages.structured.show_file_exported') as notified,
+        ):
+            schema_page.export_json()
+            notified.assert_called_once_with(schema_page, str(schema_path))
+
+        schema_path.write_text(json.dumps(schema_page.schema, ensure_ascii=False), encoding='utf-8')
+        with (
+            patch('qt_ui.pages.structured.QFileDialog.getOpenFileName', return_value=(str(schema_path), '')),
+            patch('qt_ui.pages.structured.show_file_imported') as notified,
+        ):
+            schema_page.import_json()
+            notified.assert_called_once_with(schema_page, str(schema_path))
+
+        design_page = self.window.pages['design']
+        workflow_path = self.project_dir / 'workflows.json'
+        with (
+            patch('qt_ui.pages.flow_design.QFileDialog.getSaveFileName', return_value=(str(workflow_path), '')),
+            patch.object(self.db, 'export_workflow_collection'),
+            patch('qt_ui.pages.flow_design.show_file_exported') as notified,
+        ):
+            design_page.export_json()
+            notified.assert_called_once_with(design_page, str(workflow_path))
+
+        with (
+            patch('qt_ui.pages.flow_design.QFileDialog.getOpenFileName', return_value=(str(workflow_path), '')),
+            patch('qt_ui.pages.flow_design.confirm_action', return_value=True),
+            patch.object(self.db, 'import_workflow_collection'),
+            patch.object(design_page, 'reload'),
+            patch('qt_ui.pages.flow_design.show_file_imported') as notified,
+        ):
+            design_page.import_json()
+            notified.assert_called_once_with(design_page, str(workflow_path))
 
     def test_all_dialogs_are_locked_without_locking_main_window(self) -> None:
         blocker = _ComboBoxWheelBlocker()
@@ -96,6 +212,7 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(self.window.stack.objectName(), 'contentStack')
         self.assertEqual(self.window.pages['design'].workflow_table.objectName(), 'workflowTable')
         self.assertEqual(self.window.pages['schema'].tree.objectName(), 'schemaTree')
+        self.assertFalse(self.window.pages['schema'].tree.expandsOnDoubleClick())
         self.assertEqual(self.window.pages['data'].tree.objectName(), 'recordTree')
         self.assertEqual(self.window.pages['execution'].records.objectName(), 'executionTree')
 
@@ -108,8 +225,20 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(page.profiles.columnCount(), 2)
         self.assertEqual(page.profiles.headerItem().text(1), '状態')
         self.assertEqual(page.profiles.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.assertEqual(page.profiles.header().sectionResizeMode(0), QHeaderView.ResizeMode.Fixed)
+        self.assertEqual(page.profiles.header().sectionResizeMode(0), QHeaderView.ResizeMode.Stretch)
         self.assertEqual(page.profiles.header().sectionResizeMode(1), QHeaderView.ResizeMode.Fixed)
+        self.assertEqual(page.profiles.columnWidth(1), 82)
+        self.assertLessEqual(
+            page.profiles.columnWidth(0) + page.profiles.columnWidth(1),
+            page.profiles.viewport().width() + 1,
+        )
+        page.profiles.setFixedWidth(220)
+        self.app.processEvents()
+        self.assertEqual(page.profiles.columnWidth(1), 82)
+        self.assertLessEqual(
+            page.profiles.columnWidth(0) + page.profiles.columnWidth(1),
+            page.profiles.viewport().width() + 1,
+        )
         current = page.profiles.currentItem()
         self.assertIsNotNone(current)
         self.assertEqual(current.text(1), '使用中')
@@ -130,7 +259,8 @@ class QtShellTests(unittest.TestCase):
         self.assertIsNone(page.findChild(QPushButton, 'collapseAllButton'))
         self.assertEqual(move_up.toolTip(), '選択したイベントを上へ移動')
         self.assertEqual(move_down.toolTip(), '選択したイベントを下へ移動')
-        self.assertIn(group_toggle.text(), ('⏷', '⏵'))
+        self.assertEqual(group_toggle.text(), '')
+        self.assertFalse(group_toggle.icon().isNull())
         self.assertIn(group_toggle.toolTip(), ('すべて展開', 'すべて折りたたむ'))
         self.assertEqual(page.workflow_table.editTriggers(), QAbstractItemView.EditTrigger.NoEditTriggers)
         self.assertEqual(page.event_tree.editTriggers(), QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -287,7 +417,14 @@ class QtShellTests(unittest.TestCase):
         self.assertIs(editor._service_host, design_page)
         self.assertTrue(editor.windowFlags() & Qt.WindowType.Window)
         self.assertEqual(editor.windowTitle(), 'イベント追加')
-        self.assertEqual(editor.action.currentData(), 'goto')
+        self.assertEqual(editor.action.currentData(), '')
+        self.assertTrue(editor.pick_button.isEnabled())
+        editor.action.setCurrentIndex(editor.action.findData('goto'))
+        self.assertFalse(editor.pick_button.isEnabled())
+        editor.action.setCurrentIndex(editor.action.findData('click'))
+        self.assertTrue(editor.pick_button.isEnabled())
+        self.assertEqual(editor.timeout.suffix(), ' ms')
+        self.assertEqual(editor.retry_interval.suffix(), ' ms')
         self.assertTrue(editor.guard_summary.isReadOnly())
         self.assertIsNone(editor.findChild(QLineEdit, 'guardEdit'))
         self.assertIsInstance(editor.data_path, QComboBox)
@@ -298,8 +435,20 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual([left_tabs.tabText(index) for index in range(left_tabs.count())], ['イベント・検出', '実行制御'])
         buttons = [button.text() for button in editor.findChildren(QPushButton)]
         self.assertIn('条件を設定', buttons)
-        self.assertIn('構造から選択', buttons)
-        self.assertGreaterEqual(buttons.count('データ参照'), 4)
+        picker_tooltips = {
+            'valueReferenceButton': 'データ参照',
+            'pathButton': 'データ構造から選択',
+            'selectorReferenceButton': 'データ参照',
+            'fallbackReferenceButton': 'データ参照',
+            'failureReferenceButton': 'データ参照',
+        }
+        for name, tooltip in picker_tooltips.items():
+            picker_button = editor.findChild(QPushButton, name)
+            self.assertEqual(picker_button.text(), '')
+            self.assertTrue(picker_button.property('dataReferenceButton'))
+            self.assertFalse(picker_button.icon().isNull())
+            self.assertEqual(picker_button.toolTip(), tooltip)
+            self.assertEqual(picker_button.width(), 42)
         self.assertIsNone(editor.findChild(QLabel, 'titleLabel'))
         self.assertEqual((editor.width(), editor.height()), (1000, 620))
         self.assertEqual(editor.minimumSize(), editor.maximumSize())
@@ -328,6 +477,26 @@ class QtShellTests(unittest.TestCase):
         self.assertFalse(editor.fallback_selector.isEnabled())
         editor.show()
         self.app.processEvents()
+        for action_key in ('wait', 'get_text', 'pause'):
+            editor.action.setCurrentIndex(editor.action.findData(action_key))
+            self.app.processEvents()
+            value_widget = editor.wait_condition if action_key == 'wait' else editor.value
+            action_right = editor.action.mapTo(editor, editor.action.rect().topRight()).x()
+            value_right = value_widget.mapTo(editor, value_widget.rect().topRight()).x()
+            self.assertLessEqual(abs(action_right - value_right), 2, action_key)
+        editor.action.setCurrentIndex(editor.action.findData('wait'))
+        self.app.processEvents()
+        footer = editor.findChild(QWidget, 'footerHost')
+        button_box = editor.findChild(QDialogButtonBox, 'buttonBox')
+        footer_geometry = footer.geometry()
+        button_box_geometry = button_box.geometry()
+        self.assertEqual(footer.height(), 42)
+        left_tabs.setCurrentIndex(1)
+        self.app.processEvents()
+        self.assertEqual(footer.geometry(), footer_geometry)
+        self.assertEqual(button_box.geometry(), button_box_geometry)
+        left_tabs.setCurrentIndex(0)
+        self.app.processEvents()
         page_card = editor.findChild(QFrame, 'pageCard')
         self.assertEqual(left_tabs.width(), page_card.width())
         self.assertEqual(
@@ -338,14 +507,10 @@ class QtShellTests(unittest.TestCase):
             editor.selector_reference_button.width(),
             editor.fallback_reference_button.width(),
         )
-        self.assertLess(
-            editor.selector_reference_button.width(),
-            editor.value_data_reference_button.width(),
-        )
-        self.assertEqual(
-            editor.value_data_reference_button.width(),
-            editor.value_action_button.width(),
-        )
+        self.assertEqual(editor.selector_reference_button.width(), 42)
+        self.assertEqual(editor.value_data_reference_button.width(), 42)
+        self.assertEqual(editor.value_action_button.width(), 42)
+        self.assertTrue(editor.value_action_button.property('dataReferenceButton'))
         editor.iframe_path.setText('[]')
         self.assertEqual(editor.result_data()['iframe_path'], '')
         self.assertGreater(editor.selector.width(), editor.selector_reference_button.width())
@@ -358,6 +523,15 @@ class QtShellTests(unittest.TestCase):
             editor.selector_type.mapTo(editor, QPoint()).x(),
             editor.iframe_path.mapTo(editor, QPoint()).x(),
         )
+        aligned_right_edges = [
+            widget.mapTo(editor, widget.rect().topRight()).x()
+            for widget in (
+                editor.action, editor.selector_type,
+                editor.fallback_selector_type, editor.iframe_path,
+            )
+        ]
+        self.assertLessEqual(max(aligned_right_edges) - min(aligned_right_edges), 2)
+        self.assertGreaterEqual(editor.enabled.width(), editor.enabled.sizeHint().width())
         left_tabs.setCurrentIndex(1)
         self.app.processEvents()
         execution_card = editor.findChild(QFrame, 'executionCard')
@@ -372,6 +546,146 @@ class QtShellTests(unittest.TestCase):
         event_card = editor.findChild(QFrame, 'eventCard')
         event_title = editor.findChild(QLabel, 'eventCardTitle')
         self.assertFalse(event_title.isVisibleTo(editor))
+        editor.close()
+
+    def test_click_event_round_trips_its_success_condition(self) -> None:
+        config = {
+            'condition': 'operable', 'selector_type': 'css',
+            'target': '.save-complete',
+        }
+        editor = EventEditorDialog(self.window.pages['design'], {
+            'name': 'click', 'action': 'click', 'selector_type': 'css',
+            'selector': '#save', 'value': json.dumps(config),
+        })
+        self.assertEqual(editor.click_success_condition.currentData(), 'operable')
+        self.assertEqual(editor.click_success_selector_type.currentText(), 'css')
+        self.assertEqual(editor.click_success_target.text(), '.save-complete')
+        result = editor.result_data()
+        self.assertEqual(result['value'], '')
+        self.assertEqual(json.loads(result['success_json']), config)
+        editor.click_success_condition.setCurrentIndex(
+            editor.click_success_condition.findData('none')
+        )
+        self.assertEqual(editor.result_data()['success_json'], '')
+        editor.close()
+
+    def test_page_picker_can_fill_click_success_target_from_execution_tab(self) -> None:
+        editor = EventEditorDialog(self.window.pages['design'], {
+            'name': 'click', 'action': 'click', 'selector_type': 'css',
+            'selector': '#submit', 'value': '',
+        })
+        editor.left_tabs.setCurrentIndex(1)
+        editor.click_success_condition.setCurrentIndex(
+            editor.click_success_condition.findData('visible')
+        )
+        self.assertEqual(editor.pick_button.property('pickDestination'), 'click_success')
+        self.assertEqual(editor.pick_button.text(), '成功確認対象を選択')
+        editor._run_debug = lambda _message, operation, done: done(operation())
+        picked = {
+            'selector_type': 'role', 'selector': 'status|Complete',
+            'fallback_selector_type': 'none', 'fallback_selector': '',
+            'iframe_path': 'css=iframe.result', 'display': 'Complete',
+        }
+        with patch.object(editor._service_host.debug_browser, 'pick', return_value=picked):
+            editor.pick_element()
+        self.assertEqual(editor.selector.text(), '#submit')
+        self.assertEqual(editor.click_success_selector_type.currentText(), 'role')
+        self.assertEqual(editor.click_success_target.text(), 'status|Complete')
+        self.assertEqual(
+            json.loads(editor.result_data()['success_json'])['iframe_path'], 'css=iframe.result',
+        )
+        editor.close()
+
+    def test_new_event_debug_buttons_follow_input_state(self) -> None:
+        editor = EventEditorDialog(self.window.pages['design'], insert_at=0)
+        try_button = editor.findChild(QPushButton, 'tryEventButton')
+        self.assertTrue(editor.pick_button.isEnabled())
+        self.assertFalse(try_button.isEnabled())
+        self.assertTrue(editor.execute_until_button.isEnabled())
+
+        editor.action.setCurrentIndex(editor.action.findData('click'))
+        self.assertTrue(try_button.isEnabled())
+        editor.close()
+
+    def test_event_editor_translates_designer_and_dynamic_texts_to_chinese(self) -> None:
+        set_language('zh')
+        try:
+            editor = EventEditorDialog(self.window.pages['design'])
+            QApplication.processEvents()
+            self.assertEqual(
+                editor.findChild(QLabel, 'successConfirmationTitle').text(), '成功确认设置',
+            )
+            self.assertEqual(editor.pick_button.text(), '选择操作对象')
+            editor.action.setCurrentIndex(editor.action.findData('click'))
+            editor.left_tabs.setCurrentIndex(1)
+            editor.click_success_condition.setCurrentIndex(
+                editor.click_success_condition.findData('visible')
+            )
+            self.assertEqual(editor.pick_button.text(), '选择成功确认对象')
+            editor.close()
+        finally:
+            set_language('ja')
+
+    def test_goto_select_and_press_keep_value_separate_from_success_confirmation(self) -> None:
+        for action, value in (('goto', 'https://example.com'), ('select', 'A'), ('press', 'Enter')):
+            editor = EventEditorDialog(self.window.pages['design'], {
+                'name': action, 'action': action, 'selector_type': 'css',
+                'selector': '#target', 'value': value,
+            })
+            self.assertEqual(editor.click_success_condition.currentData(), 'none')
+            if action == 'goto':
+                # ページ移動は通常の操作対象を持たない。
+                self.assertFalse(editor.pick_button.isEnabled())
+                editor.left_tabs.setCurrentIndex(1)
+            editor.click_success_condition.setCurrentIndex(
+                editor.click_success_condition.findData('visible')
+            )
+            if action == 'goto':
+                # 要素による成功確認を選んだ場合だけ、確認対象を選択できる。
+                self.assertTrue(editor.pick_button.isEnabled())
+            editor.click_success_target.setText('.completed')
+            result = editor.result_data()
+            self.assertEqual(result['value'], value)
+            self.assertEqual(json.loads(result['success_json'])['target'], '.completed')
+            editor.close()
+
+    def test_element_picker_suggests_action_only_when_action_is_empty(self) -> None:
+        self.assertEqual(ElementPicker._suggest_action({'tag': 'input', 'input_type': 'text'}), 'fill')
+        self.assertEqual(ElementPicker._suggest_action({'tag': 'input', 'input_type': 'file'}), 'upload_file')
+        self.assertEqual(ElementPicker._suggest_action({'tag': 'a', 'role': 'link'}), 'click')
+        editor = EventEditorDialog(self.window.pages['design'])
+        editor._run_debug = lambda _message, operation, done: done(operation())
+        picked = {
+            'selector_type': 'css', 'selector': '#name',
+            'fallback_selector_type': 'none', 'fallback_selector': '',
+            'iframe_path': '', 'display': 'Name', 'suggested_action': 'fill',
+        }
+        with patch.object(editor._service_host.debug_browser, 'pick', return_value=picked):
+            editor.pick_element()
+        self.assertEqual(editor.action.currentData(), 'fill')
+        editor.action.setCurrentIndex(editor.action.findData('click'))
+        picked['suggested_action'] = 'select'
+        with patch.object(editor._service_host.debug_browser, 'pick', return_value=picked):
+            editor.pick_element()
+        self.assertEqual(editor.action.currentData(), 'click')
+        editor.close()
+
+    def test_try_event_on_execution_tab_highlights_success_element(self) -> None:
+        editor = EventEditorDialog(self.window.pages['design'], {
+            'name': 'click', 'action': 'click', 'selector_type': 'css',
+            'selector': '#submit', 'value': json.dumps({
+                'condition': 'visible', 'selector_type': 'css', 'target': '.done',
+            }),
+        })
+        editor.left_tabs.setCurrentIndex(1)
+        editor._run_debug = lambda _message, operation, done: (operation(), done)
+        with patch.object(editor._service_host.debug_browser, 'highlight_element') as highlight:
+            with patch.object(editor._service_host.debug_browser, 'execute_event') as execute:
+                editor.try_event()
+        highlight.assert_called_once()
+        execute.assert_not_called()
+        highlighted_event = highlight.call_args.args[0]
+        self.assertEqual(highlighted_event['selector'], '.done')
         editor.close()
 
     def test_group_editor_restores_loop_retry_and_boundary_pair_data(self) -> None:
@@ -392,22 +706,30 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(result['data_path'], 'plans')
         self.assertEqual(result['value'], '3')
         self.assertEqual(result['retry_count'], 3)
+        self.assertEqual(editor.timeout.suffix(), ' ms')
+        self.assertEqual(editor.retry_interval.suffix(), ' ms')
         editor.show()
         self.app.processEvents()
-        self.assertEqual(editor.enabled.width(), editor.path_button.width())
+        self.assertEqual(editor.path_button.width(), 42)
+        self.assertEqual(editor.path_button.text(), '')
+        self.assertTrue(editor.path_button.property('dataReferenceButton'))
+        self.assertFalse(editor.path_button.icon().isNull())
+        self.assertEqual(editor.path_button.toolTip(), 'データ構造から選択')
         self.assertEqual(editor.name.geometry().left(), editor.data_path.geometry().left())
-        self.assertEqual(editor.name.width(), editor.data_path.width())
         self.assertEqual(
             editor.name.mapTo(editor, QPoint()).x(),
             editor.timeout.mapTo(editor, QPoint()).x(),
         )
-        self.assertEqual(
-            len({widget.width() for widget in (
-                editor.name, editor.data_path, editor.timeout, editor.retry_count,
-                editor.retry_interval, editor.guard_summary,
-            )}),
-            1,
-        )
+        aligned_widths = [widget.width() for widget in (
+            editor.timeout, editor.retry_count, editor.retry_interval, editor.guard_summary,
+        )]
+        # ボタンと固定スペーサーのサイズヒント差を許容し、視覚上の列幅を確認する。
+        self.assertLessEqual(max(aligned_widths) - min(aligned_widths), 6)
+        data_path_right = editor.data_path.mapTo(editor, editor.data_path.rect().topRight()).x()
+        timeout_right = editor.timeout.mapTo(editor, editor.timeout.rect().topRight()).x()
+        self.assertLessEqual(abs(data_path_right - timeout_right), 6)
+        path_button_left = editor.path_button.mapTo(editor, QPoint()).x()
+        self.assertLessEqual(path_button_left - data_path_right, 12)
         self.assertTrue(editor.name.parentWidget().property('formHost'))
         self.assertTrue(editor.loop_enabled.parentWidget().property('formHost'))
         self.assertTrue(editor.data_path.parentWidget().property('formHost'))
@@ -468,6 +790,8 @@ class QtShellTests(unittest.TestCase):
         self.assertTrue(editable_value.text(2).startswith('✎'))
         self.assertEqual(editable_value.foreground(2).color().name(), '#0b6fae')
         value_toggle = data.findChild(QPushButton, 'valueToggleButton')
+        self.assertEqual(value_toggle.text(), '')
+        self.assertFalse(value_toggle.icon().isNull())
         self.assertEqual(value_toggle.toolTip(), 'すべて折りたたむ')
         value_toggle.click()
         self.assertEqual(value_toggle.toolTip(), 'すべて展開')
@@ -481,6 +805,8 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual([action.text() for action in add.menu().actions()], ['フィールド追加', '子フィールド追加'])
         self.assertEqual(io.text(), 'JSON 入出力')
         toggle = schema.findChild(QPushButton, 'toggleAllButton')
+        self.assertEqual(toggle.text(), '')
+        self.assertFalse(toggle.icon().isNull())
         self.assertEqual(toggle.toolTip(), 'すべて折りたたむ')
         toggle.click()
         self.assertEqual(toggle.toolTip(), 'すべて展開')
@@ -491,7 +817,7 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(metadata.value(), ('PCL_001', 'ケース'))
         self.assertTrue(metadata.findChild(QLabel, 'groupLabel').isHidden())
         self.assertTrue(metadata.findChild(QLineEdit, 'groupEdit').isHidden())
-        self.assertEqual(metadata.height(), 172)
+        self.assertEqual(metadata.height(), 208)
         metadata.close()
 
     def test_data_record_rows_can_be_reordered(self) -> None:
@@ -641,6 +967,8 @@ class QtShellTests(unittest.TestCase):
 
     def test_execution_page_restores_status_log_and_record_controls(self) -> None:
         page = self.window.pages['execution']
+        page.append_log('msg.0588visible')
+        self.assertEqual(page._log_lines.pop(), f'{tr("msg.0588")}visible')
         self.assertEqual(page.stack.count(), 2)
         self.assertEqual(page.records.columnCount(), 7)
         self.assertEqual(
@@ -698,10 +1026,15 @@ class QtShellTests(unittest.TestCase):
         page = self.window.pages['settings']
         stored_url = self.db.get_start_url()
         page.start_url.setText('https://example.com/pending')
+        page.font_size.setCurrentText('8')
         self.assertTrue(page.has_pending_changes())
         self.assertEqual(self.db.get_start_url(), stored_url)
         self.assertTrue(page.save_all(show_message=False))
         self.assertEqual(self.db.get_start_url(), 'https://example.com/pending')
+        data_tree = self.window.pages['data'].tree
+        self.assertEqual(data_tree.font().pointSize(), 8)
+        self.assertEqual(data_tree.viewport().font().pointSize(), 8)
+        self.assertEqual(data_tree.header().font().pointSize(), 8)
         self.assertFalse(page.has_pending_changes())
 
     def test_navigation_stops_when_current_page_rejects_pending_changes(self) -> None:
@@ -726,7 +1059,19 @@ class QtShellTests(unittest.TestCase):
     def test_condition_rule_restores_schema_picker_and_primary_save(self) -> None:
         schema = {'type': 'object', 'children': [{'name': 'case_no', 'type': 'text'}]}
         editor = GuardRuleEditorDialog(self.window, schema)
-        self.assertEqual(editor.findChild(QPushButton, 'choosePathButton').text(), '構造から選択')
+        choose_path_button = editor.findChild(QPushButton, 'choosePathButton')
+        self.assertEqual(choose_path_button.text(), '')
+        self.assertTrue(choose_path_button.property('dataReferenceButton'))
+        self.assertFalse(choose_path_button.icon().isNull())
+        self.assertEqual(choose_path_button.toolTip(), 'データ構造から選択')
+        self.assertEqual(choose_path_button.width(), 42)
+        editor.show()
+        self.app.processEvents()
+        aligned_right_edges = [
+            widget.mapTo(editor, widget.rect().topRight()).x()
+            for widget in (editor.path, editor.operator, editor.expected)
+        ]
+        self.assertLessEqual(max(aligned_right_edges) - min(aligned_right_edges), 2)
         self.assertIsNone(editor.findChild(QLabel, 'titleLabel'))
         self.assertEqual(editor.minimumSize(), editor.maximumSize())
         buttons = editor.findChild(QDialogButtonBox, 'buttonBox')
@@ -737,6 +1082,8 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(save.minimumWidth(), cancel.minimumWidth())
         picker = DataPathPickerDialog(editor, schema)
         toggle = picker.findChild(QPushButton, 'toggleAllButton')
+        self.assertEqual(toggle.text(), '')
+        self.assertFalse(toggle.icon().isNull())
         self.assertEqual(toggle.toolTip(), 'すべて展開')
         picker.tree.setCurrentItem(picker.tree.topLevelItem(0))
         picker._choose()
@@ -853,6 +1200,19 @@ class QtShellTests(unittest.TestCase):
         self.assertFalse(bool(normal_dialog.confirm_button.property('danger')))
         self.assertTrue(normal_dialog.cancel_button.isDefault())
         normal_dialog.close()
+
+        long_message = '\n'.join(f'検証エラー {index}' for index in range(12))
+        details_dialog = ConfirmationDialog(
+            self.window, '読込エラー', long_message, cancel_text=None,
+            icon=QStyle.StandardPixmap.SP_MessageBoxCritical,
+        )
+        details = details_dialog.findChild(QPlainTextEdit, 'messageDetails')
+        self.assertTrue(details_dialog.findChild(QLabel, 'confirmMessage').isHidden())
+        self.assertFalse(details.isHidden())
+        self.assertTrue(details.isReadOnly())
+        self.assertEqual(details.toPlainText(), long_message)
+        self.assertGreater(details_dialog.height(), 156)
+        details_dialog.close()
 
         notice_dialog = ConfirmationDialog(
             self.window, 'お知らせ', '保存しました。', cancel_text=None,

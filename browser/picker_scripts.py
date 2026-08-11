@@ -284,6 +284,8 @@ _PICKER_SCRIPT = r"""
     const name = aria || label || text || element.getAttribute('title') || '';
     window.__sfFlowPicked = {
       tag, role, name, label,
+      input_type: (element.getAttribute('type') || '').toLowerCase(),
+      content_editable: element.isContentEditable ? 'true' : 'false',
       placeholder: element.getAttribute('placeholder') || '',
       text,
       css: cssCandidate(element),

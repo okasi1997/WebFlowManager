@@ -135,6 +135,7 @@
               </item>
               <item>
                 <widget class="QTreeWidget" name="eventTree">
+                  <property name="expandsOnDoubleClick"><bool>false</bool></property>
                   <column>
                     <property name="text">
                       <string>イベント名</string>
@@ -200,9 +201,7 @@
                   </item>
                   <item>
                     <widget class="QPushButton" name="groupToggleButton">
-                      <property name="text">
-                        <string>⏷</string>
-                      </property>
+                      <property name="text"><string/></property>
                       <property name="toolTip">
                         <string>すべて展開</string>
                       </property>

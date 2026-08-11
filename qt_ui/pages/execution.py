@@ -16,8 +16,12 @@ from PySide6.QtWidgets import (
 from core.conditions import decode_guard
 from core.database import Database
 from core.executor import WorkflowExecutor, find_variables
+from i18n import tr
 from .auth import profile_path
-from ..table_view import capture_scroll_position, configure_table_view, restore_scroll_position
+from ..table_view import (
+    capture_scroll_position, configure_table_view, restore_scroll_position,
+    set_row_enabled_appearance,
+)
 from ..ui_loader import load_ui_into, require, show_information, show_warning
 
 
@@ -98,9 +102,9 @@ class ExecutionPage(QWidget):
         toggle_button = require(self, QPushButton, 'toggleExecutionButton')
         group_button = require(self, QPushButton, 'setGroupButton')
         clear_button = require(self, QPushButton, 'clearResultsButton')
-        toggle_button.setToolTip('選択したデータの実行／スキップを切り替えます')
-        group_button.setToolTip('選択したデータの実行グループを編集します')
-        clear_button.setToolTip('すべての実行結果を未実行状態に戻します')
+        toggle_button.setToolTip(tr('選択したデータの実行／スキップを切り替えます'))
+        group_button.setToolTip(tr('選択したデータの実行グループを編集します'))
+        clear_button.setToolTip(tr('すべての実行結果を未実行状態に戻します'))
         toggle_button.clicked.connect(self.toggle_record)
         group_button.clicked.connect(self.set_group)
         clear_button.clicked.connect(self.clear_results)
@@ -148,20 +152,22 @@ class ExecutionPage(QWidget):
                 status_key = str(record['execution_status'])
                 item = QTreeWidgetItem([
                     group,
-                    '実行' if record['enabled'] else 'スキップ',
+                    tr('実行') if record['enabled'] else tr('スキップ'),
                     f'({group_indexes[group]}/{group_totals[group]}) {record["name"]}',
                     record['summary'],
                     workflow,
                     event,
-                    STATUS_LABELS.get(status_key, status_key),
+                    tr(STATUS_LABELS.get(status_key, status_key)),
                 ])
                 item.setData(0, Qt.ItemDataRole.UserRole, record['id'])
                 item.setForeground(0, QColor('#0b78c5'))
+                set_row_enabled_appearance(item, bool(record['enabled']))
                 # 表全体ではなく実在する行だけに説明を付け、空白部分では表示しない。
-                row_tooltip = '実行グループは編集、今回実行は実行／スキップをダブルクリックで変更できます'
+                row_tooltip = tr('実行グループは編集、今回実行は実行／スキップをダブルクリックで変更できます')
                 for column in range(len(self.COLUMNS)):
                     item.setToolTip(column, row_tooltip)
-                item.setForeground(6, QColor(STATUS_COLORS.get(status_key, '#314557')))
+                if record['enabled']:
+                    item.setForeground(6, QColor(STATUS_COLORS.get(status_key, '#314557')))
                 self.records.addTopLevelItem(item)
                 if record['id'] == selected_id:
                     self.records.setCurrentItem(item)
@@ -172,7 +178,7 @@ class ExecutionPage(QWidget):
         terminal = {'success', 'failed', 'skipped'}
         complete = sum(record['execution_status'] in terminal for record in records)
         enabled = sum(1 for record in records if record['enabled'])
-        self.target_summary.setText(f'実行対象 {enabled} / {len(records)} 件')
+        self.target_summary.setText(f'{tr("実行対象 ")}{enabled} / {len(records)} {tr("件")}')
         self.progress.setMaximum(max(1, len(records)))
         self.progress.setValue(complete)
         self.progress_count.setText(f'{complete} / {len(records)}')
@@ -205,7 +211,7 @@ class ExecutionPage(QWidget):
         if record is None:
             return
         group, ok = QInputDialog.getText(
-            self, '実行グループ設定', '実行グループ', text=str(record['execution_group']),
+            self, tr('実行グループ設定'), tr('実行グループ'), text=str(record['execution_group']),
         )
         if ok and group.strip():
             self.db.set_data_record_group(record['id'], group.strip())
@@ -228,8 +234,9 @@ class ExecutionPage(QWidget):
             button.style().polish(button)
 
     def append_log(self, message: str) -> None:
+        # Executor から渡される複合 msgid も、表示キューへ入れる前に一括翻訳する。
         with self._log_lock:
-            self._log_lines.append(str(message))
+            self._log_lines.append(tr(str(message)))
 
     def _set_runtime_detail(self, record_id: int, workflow: str, event: str) -> None:
         with self._runtime_lock:
@@ -253,10 +260,11 @@ class ExecutionPage(QWidget):
             return
         try:
             self.future.result()
-            self.status.setText('実行完了')
+            self.status.setText(tr('実行完了'))
         except Exception as error:
-            self.status.setText('実行失敗')
-            self.log.appendPlainText(str(error))
+            self.status.setText(tr('実行失敗'))
+            # 並列実行の集約例外にも msgid が含まれるため、最終表示時にも翻訳する。
+            self.log.appendPlainText(tr(str(error)))
         self.future = None
         self.run_button.setEnabled(True)
         self.reload()
@@ -290,7 +298,7 @@ class ExecutionPage(QWidget):
         self._table_signature = None
         self.log.clear()
         self.select_tab(0)
-        self.status.setText('実行中')
+        self.status.setText(tr('実行中'))
         self.run_button.setEnabled(False)
         self.future = self.pool.submit(self._run, jobs, records)
 
@@ -298,12 +306,20 @@ class ExecutionPage(QWidget):
         groups: dict[str, list[dict[str, Any]]] = {}
         for record in records:
             groups.setdefault(str(record['execution_group']), []).append(record)
+        record_positions = {
+            record['id']: index for index, record in enumerate(records, 1)
+        }
+        session_positions = {
+            group: index for index, group in enumerate(groups, 1)
+        }
         state_path = profile_path(self.project_dir, self.db.get_auth_profile())
 
-        def steps(group_records):
+        def steps(group, group_records):
             return [
                 {
                     'phase': 'pcl', 'group': record['execution_group'], 'record': record,
+                    'session': session_positions[group],
+                    'pcl_index': record_positions[record['id']], 'pcl_total': len(records),
                     'id': job['id'], 'position': job['position'], 'name': job['name'],
                     'events': job['events'], 'guard': job['guard'],
                 }
@@ -314,7 +330,10 @@ class ExecutionPage(QWidget):
             record = step['record']
             self.db.set_data_record_status(record['id'], 'running')
             self._set_runtime_detail(record['id'], self._numbered_name(step), '-')
-            self.append_log(f'{record["name"]} / {step["name"]}')
+            context = WorkflowExecutor._step_log_context(step)
+            self.append_log(
+                f'{context} ▶ {record["name"]} / F{step["position"]} {step["name"]}'
+            )
             return self.db.create_run(step['id'])
 
         def event_start(step, event):
@@ -333,7 +352,7 @@ class ExecutionPage(QWidget):
         def step_failure(step, run_id, error):
             self.db.finish_run(run_id, 'failed', str(error))
             self.db.set_data_record_status(step['record']['id'], 'failed')
-            self.append_log(f'ERROR: {error}')
+            self.append_log(f'{WorkflowExecutor._step_log_prefix(step)}ERROR: {error}')
 
         failures = []
         workers = max(1, min(self.db.get_pcl_session_limit(), len(groups)))
@@ -341,7 +360,7 @@ class ExecutionPage(QWidget):
             futures = {
                 group_pool.submit(
                     WorkflowExecutor(self.project_dir, self.append_log).run_batch,
-                    steps(group_records), {}, step_start, step_success, step_failure, event_start,
+                    steps(group, group_records), {}, step_start, step_success, step_failure, event_start,
                     self.db.get_browser_visible(), f'group_{group}', state_path,
                 ): group
                 for group, group_records in groups.items()

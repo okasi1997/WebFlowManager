@@ -59,6 +59,7 @@
               </item>
               <item>
                 <widget class="QTreeWidget" name="recordTree">
+                  <property name="expandsOnDoubleClick"><bool>false</bool></property>
                   <column>
                     <property name="text">
                       <string>名称</string>
@@ -165,6 +166,7 @@
               </item>
               <item>
                 <widget class="QTreeWidget" name="valueTree">
+                  <property name="expandsOnDoubleClick"><bool>false</bool></property>
                   <column>
                     <property name="text">
                       <string>データ項目</string>

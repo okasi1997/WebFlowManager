@@ -1,4 +1,4 @@
-/* Web Flow Manager — shared desktop design system */
+/* Web Flow Manager 共通デスクトップデザイン */
 QWidget {
     color: #263442;
     background-color: #f4f7fa;
@@ -31,7 +31,7 @@ QCheckBox::indicator:disabled { background-color: #dfe5e9; border-color: #b8c2ca
 QCheckBox::indicator:checked:disabled { background-color: #9eabb5; border-color: #929fa9; }
 #conditionSeparator { min-height: 1px; max-height: 1px; border: 0; background-color: #d7e2e9; }
 
-/* Navigation */
+/* ナビゲーション */
 #sidebar {
     background-color: #ffffff;
     border: 0;
@@ -39,45 +39,42 @@ QCheckBox::indicator:checked:disabled { background-color: #9eabb5; border-color:
 }
 #brandLabel {
     color: #0c527f;
-    font-size: 17px;
     font-weight: 700;
-    padding: 2px 6px 0 6px;
+    padding: 1px 6px 0 6px;
 }
 #brandSubtitle {
     color: #84919d;
-    padding: 0 6px 8px 6px;
+    padding: 0 6px 4px 6px;
 }
 .sidebarSection {
-    color: #8a98a5;
+    color: #96a3ae;
     background-color: transparent;
-    font-size: 12px;
     font-weight: 700;
-    padding: 17px 8px 5px 8px;
+    padding: 12px 7px 3px 7px;
 }
 QPushButton[nav="true"] {
-    min-height: 38px;
+    min-height: 36px;
     color: #425466;
     text-align: left;
-    padding: 0 10px;
+    padding: 0 8px;
     border: 0;
-    border-radius: 7px;
+    border-radius: 5px;
     background-color: transparent;
 }
 QPushButton[nav="true"]:hover { color: #12689e; background-color: #f0f7fc; }
 QPushButton[navSelected="true"] {
     color: #0873bb;
     font-weight: 700;
-    background-color: #e5f2fc;
+    background-color: #e1f0fb;
 }
 
-/* Typography and surfaces */
+/* 文字と画面表面 */
 QLabel[pageTitle="true"] {
     color: #182b3a;
-    font-size: 22px;
     font-weight: 700;
     padding: 0 0 4px 0;
 }
-QLabel[cardTitle="true"] { color: #263b4c; font-size: 15px; font-weight: 700; }
+QLabel[cardTitle="true"] { color: #263b4c; font-weight: 700; }
 QLabel[muted="true"], .pageSubtitle { color: #758391; }
 QFrame[card="true"] {
     background-color: #ffffff;
@@ -122,7 +119,7 @@ QLabel[progressCount="true"] {
 }
 #progressBar::chunk { background-color: #1684d8; border-radius: 4px; }
 
-/* Buttons */
+/* ボタン */
 QPushButton {
     min-height: 34px;
     padding: 0 15px;
@@ -133,6 +130,20 @@ QPushButton {
     background-color: #f7f9fb;
 }
 QPushButton[formAction="true"] { padding-left: 8px; padding-right: 8px; }
+/* Data 構造参照は入力欄に添える小型アイコンボタンとして統一する。 */
+QPushButton[dataReferenceButton="true"] {
+    min-width: 42px;
+    max-width: 42px;
+    padding: 0;
+    background-color: #f8fbfd;
+    border-color: #cbd9e2;
+    border-radius: 7px;
+}
+QPushButton[dataReferenceButton="true"]:hover {
+    background-color: #edf6fc;
+    border-color: #8cbfdf;
+}
+QPushButton[dataReferenceButton="true"]:pressed { background-color: #dfeff9; }
 QPushButton:hover { color: #0c659d; background-color: #edf6fc; border-color: #b9d4e6; }
 QPushButton:pressed { background-color: #dfedf7; border-color: #9fc5dc; }
 QPushButton:focus { border-color: #69aedd; }
@@ -173,13 +184,19 @@ QPushButton[danger="true"]:hover { color: #a92822; background-color: #fff0f0; bo
 QPushButton::menu-indicator { subcontrol-position: right center; subcontrol-origin: padding; right: 8px; }
 #workflowMoreButton::menu-indicator { image: none; width: 0; }
 
-/* Compact system dialogs */
+/* 小型システムダイアログ */
 QMessageBox[compactDialog="true"], QInputDialog { background-color: #f8fafc; }
 QDialog[confirmDialog="true"] { background-color: #f8fafc; }
 QDialog[confirmDialog="true"] QLabel#confirmMessage {
     color: #263746;
     background-color: transparent;
-    font-size: 14px;
+}
+QDialog[confirmDialog="true"] QPlainTextEdit#messageDetails {
+    color: #263746;
+    background-color: #ffffff;
+    border: 1px solid #cdd9e2;
+    border-radius: 6px;
+    padding: 8px;
 }
 QDialog[confirmDialog="true"] QFrame[confirmFooter="true"] {
     background-color: #f1f4f6;
@@ -195,7 +212,7 @@ QMessageBox[compactDialog="true"] QPushButton, QInputDialog QPushButton {
     padding: 0 14px;
 }
 
-/* Inputs */
+/* 入力部品 */
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
     min-height: 34px;
     padding: 0 10px;
@@ -312,13 +329,17 @@ QTabWidget#eventEditorTabs QTabBar::tab:selected {
     border-bottom-color: #168bd2;
 }
 
-/* Lists and data views */
+/* 一覧とデータ表示 */
 QListWidget, QTableWidget, QTreeWidget {
     color: #2d4050;
     background-color: #ffffff;
     alternate-background-color: #fafbfd;
     border: 1px solid #d8e2e9;
-    border-radius: 7px;
+    border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
+    /* Windows の拡大表示でも下辺と左右の罫線が途切れないよう直角にする。 */
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
     outline: 0;
 }
 /* 表は行の背景差で区切り、列間の縦線は表示しない。 */
@@ -339,7 +360,7 @@ QHeaderView::section {
 }
 QTableCornerButton::section { background-color: #f4f7f9; border: 0; border-bottom: 1px solid #d7e1e8; }
 
-/* Menus, splitters and scrollbars */
+/* メニュー、分割部品、スクロールバー */
 QMenu {
     color: #2e4151;
     background-color: #ffffff;

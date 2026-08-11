@@ -10,8 +10,19 @@ from PySide6.QtWidgets import (
     QPushButton, QStyledItemDelegate, QTableView, QTreeView, QTreeWidget, QTreeWidgetItem,
 )
 
+from i18n import tr
+
 TREE_LEVEL_INDENT = 14
 RowKey = TypeVar('RowKey')
+
+
+def set_row_enabled_appearance(item: QTreeWidgetItem, enabled: bool) -> None:
+    """無効な行を共通の淡い文字色で表示する。"""
+    if enabled:
+        return
+    disabled_color = QColor('#929da6')
+    for column in range(item.columnCount()):
+        item.setForeground(column, disabled_color)
 
 
 def order_with_inserted_after(
@@ -143,8 +154,8 @@ def configure_row_move_tooltips(
     up_button: QPushButton, down_button: QPushButton, target_name: str,
 ) -> None:
     """行移動ボタンの方向と対象が分かるツールチップを共通設定する。"""
-    up_button.setToolTip(f'選択した{target_name}を上へ移動')
-    down_button.setToolTip(f'選択した{target_name}を下へ移動')
+    up_button.setToolTip(f'{tr("選択した")}{tr(target_name)}{tr("を上へ移動")}')
+    down_button.setToolTip(f'{tr("選択した")}{tr(target_name)}{tr("を下へ移動")}')
 
 
 class HierarchicalReorderTreeWidget(QTreeWidget):
@@ -304,6 +315,8 @@ class _RowOnlyItemDelegate(QStyledItemDelegate):
 
     def initStyleOption(self, option, index) -> None:
         super().initStyleOption(option, index)
+        # 設定画面で変更された現在の表フォントを、委譲描画にも必ず使用する。
+        option.font = self.parent().font()
         # 表ではセル単位の反応が行選択に見えるため、Qt の描画状態から除外する。
         option.state &= ~QStyle.StateFlag.State_MouseOver
         option.state &= ~QStyle.StateFlag.State_HasFocus
@@ -323,6 +336,8 @@ def configure_table_view(view: QAbstractItemView, *, reorder: bool = False) -> N
     view.verticalScrollBar().installEventFilter(pointer_scroll_filter)
     view._pointer_scroll_filter = pointer_scroll_filter
     if isinstance(view, QTreeView):
+        # Designer のプレースホルダーを実行時に置換するツリーにも同じ操作規則を適用する。
+        view.setExpandsOnDoubleClick(False)
         # すべてのツリー表で階層余白の青い矩形を表示しない。
         branch_style = BranchNeutralStyle()
         branch_style.setParent(view)
@@ -330,7 +345,7 @@ def configure_table_view(view: QAbstractItemView, *, reorder: bool = False) -> N
         # 深い階層でも第 1 列の本文幅を確保できるよう、標準より字下げを狭くする。
         view.setIndentation(TREE_LEVEL_INDENT)
     view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-    # 宽い列でも小刻みに滑らかに移動できるよう、画素単位でスクロールする。
+    # 幅の広い列でも小刻みに滑らかに移動できるよう、画素単位でスクロールする。
     view.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
     view.horizontalScrollBar().setSingleStep(24)
 

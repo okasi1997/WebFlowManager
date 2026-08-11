@@ -43,12 +43,11 @@ class AuthPage(QWidget):
         body_layout = require(self, QHBoxLayout, 'bodyLayout')
         self.profiles = require(self, QTreeWidget, 'profileTree')
         configure_table_view(self.profiles)
-        # 二列だけの短い状態一覧は固定幅とし、不要な横スクロールを表示しない。
+        # 小さい画面では名前列だけを縮め、状態列が常に見えるようにする。
         profile_header = self.profiles.header()
-        profile_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        profile_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         profile_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        self.profiles.setColumnWidth(0, 240)
-        self.profiles.setColumnWidth(1, 110)
+        self.profiles.setColumnWidth(1, 82)
         self.profiles.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.profiles.currentItemChanged.connect(
             lambda current, _previous: self.select_profile(current.text(0)) if current else None
@@ -93,7 +92,7 @@ class AuthPage(QWidget):
         self.profiles.blockSignals(True)
         self.profiles.clear()
         for name in self._profile_names():
-            self.profiles.addTopLevelItem(QTreeWidgetItem([name, '使用中' if name == selected else '']))
+            self.profiles.addTopLevelItem(QTreeWidgetItem([name, tr('使用中') if name == selected else '']))
         matches = self.profiles.findItems(selected, Qt.MatchFlag.MatchExactly, 0)
         self.profiles.setCurrentItem(matches[0] if matches else self.profiles.topLevelItem(0))
         self.profiles.blockSignals(False)
@@ -106,7 +105,7 @@ class AuthPage(QWidget):
         self.db.set_auth_profile(name)
         for index in range(self.profiles.topLevelItemCount()):
             item = self.profiles.topLevelItem(index)
-            item.setText(1, '使用中' if item.text(0) == name else '')
+            item.setText(1, tr('使用中') if item.text(0) == name else '')
         self.selected.setText(name)
         directory = persistent_profile_dir(self.project_dir, profile_path(self.project_dir, name))
         self.path.setText(tr('msg.0470') if directory is None else str(directory))
@@ -154,9 +153,9 @@ class AuthPage(QWidget):
             timer.stop()
             try:
                 result = future.result()
-                self.status.setText(success.format(result=result))
+                self.status.setText(tr(success).format(result=result))
             except Exception as error:
-                self.status.setText(str(error))
+                self.status.setText(tr(str(error)))
         timer.timeout.connect(poll)
         timer.start()
 

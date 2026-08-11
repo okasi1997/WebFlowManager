@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from core.database import Database
 from core.excel_io import read_records_excel, write_records_excel
+from i18n import tr
 from .structured import default_value, empty_record
 from ..table_view import (
     HierarchicalReorderTreeWidget, capture_scroll_position,
@@ -23,7 +24,7 @@ from ..table_view import (
 )
 from ..ui_loader import (
     confirm_deletion, confirm_pending_changes, load_ui_into, localize_dialog_buttons, require,
-    show_information, show_warning,
+    set_tree_toggle_icon, show_file_exported, show_file_imported, show_information, show_warning,
 )
 
 
@@ -81,20 +82,20 @@ class DataPage(QWidget):
         designer_tree.setParent(None)
         designer_tree.deleteLater()
         self.tree.setColumnCount(2)
-        self.tree.setHeaderLabels(['名称', '概要'])
+        self.tree.setHeaderLabels([tr('名称'), tr('概要')])
         configure_table_view(self.tree, reorder=True)
         self.tree.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.tree.setDefaultDropAction(Qt.DropAction.CopyAction)
         self.tree.setContainerTest(lambda _item: False)
         self.tree.orderChanged.connect(self._persist_record_order)
-        for column, width in enumerate((180, 260)):
+        for column, width in enumerate((150, 200)):
             self.tree.setColumnWidth(column, width)
         self.tree.currentItemChanged.connect(lambda *_: self._select_record())
         self.tree.itemDoubleClicked.connect(self._record_double_clicked)
         self.values = require(self, QTreeWidget, 'valueTree')
         configure_table_view(self.values)
-        self.values.headerItem().setText(2, '値  ✎')
-        self.values.headerItem().setToolTip(2, '鉛筆マークの値はダブルクリックで編集できます')
+        self.values.headerItem().setText(2, tr('値  ✎'))
+        self.values.headerItem().setToolTip(2, tr('鉛筆マークの値はダブルクリックで編集できます'))
         for column, width in enumerate((190, 100, 260, 260)):
             self.values.setColumnWidth(column, width)
         self.values.itemDoubleClicked.connect(lambda *_: self.edit_value())
@@ -118,7 +119,7 @@ class DataPage(QWidget):
         list_menu.addAction('リスト項目を削除', self.delete_list_item)
         list_button.setMenu(list_menu)
         require(self, QPushButton, 'deleteListItemButton').hide()
-        self.value_toggle_button = QPushButton('⏵')
+        self.value_toggle_button = QPushButton()
         self.value_toggle_button.setObjectName('valueToggleButton')
         self.value_toggle_button.setFixedWidth(42)
         self.value_toggle_button.clicked.connect(self._toggle_values)
@@ -210,7 +211,7 @@ class DataPage(QWidget):
 
         def add(parent, node: dict[str, Any], value: Any, path: list[Any], label: str | None = None, list_index: int | None = None) -> None:
             kind = node['type']
-            shown = f'{len(value or [])} 件' if kind == 'list' else ('' if kind == 'object' else ('はい' if value is True else 'いいえ' if value is False else str(value or '')))
+            shown = f'{len(value or [])} {tr("件")}' if kind == 'list' else ('' if kind == 'object' else (tr('はい') if value is True else tr('いいえ') if value is False else str(value or '')))
             item = QTreeWidgetItem([label or node['name'], kind, shown, '.'.join(map(str, path))])
             item.setData(0, self.PATH_ROLE, path)
             item.setData(0, self.SCHEMA_ROLE, node)
@@ -261,7 +262,7 @@ class DataPage(QWidget):
             return
         item.setText(2, f'✎  {item.text(2)}'.rstrip())
         item.setForeground(2, QBrush(QColor('#0b6fae')))
-        item.setToolTip(2, 'ダブルクリックで値を編集')
+        item.setToolTip(2, tr('ダブルクリックで値を編集'))
 
     def _expandable_value_items(self) -> list[QTreeWidgetItem]:
         """データ内容ツリーの展開可能な項目を表示順で取得する。"""
@@ -282,8 +283,7 @@ class DataPage(QWidget):
         items = self._expandable_value_items()
         all_expanded = bool(items) and all(item.isExpanded() for item in items)
         self.value_toggle_button.setEnabled(bool(items))
-        self.value_toggle_button.setText('⏵' if all_expanded else '⏷')
-        self.value_toggle_button.setToolTip('すべて折りたたむ' if all_expanded else 'すべて展開')
+        set_tree_toggle_icon(self.value_toggle_button, not all_expanded)
 
     def _toggle_values(self) -> None:
         """データ内容の全項目を現在と反対の状態へ切り替える。"""
@@ -313,12 +313,12 @@ class DataPage(QWidget):
         parent, key = self._resolve(path)
         current = parent[key]
         if kind == 'boolean':
-            text, ok = QInputDialog.getItem(self, '値を編集', item.text(0), ['はい', 'いいえ'], 0 if current else 1, False)
+            text, ok = QInputDialog.getItem(self, tr('値を編集'), item.text(0), [tr('はい'), tr('いいえ')], 0 if current else 1, False)
             value = text == 'はい'
         elif kind == 'number':
-            value, ok = QInputDialog.getDouble(self, '値を編集', item.text(0), float(current or 0), decimals=6)
+            value, ok = QInputDialog.getDouble(self, tr('値を編集'), item.text(0), float(current or 0), decimals=6)
         else:
-            value, ok = QInputDialog.getText(self, '値を編集', item.text(0), text=str(current or ''))
+            value, ok = QInputDialog.getText(self, tr('値を編集'), item.text(0), text=str(current or ''))
         if ok:
             parent[key] = value
             self.render_values()
@@ -420,12 +420,18 @@ class DataPage(QWidget):
         return False
 
     def export_json(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, 'JSON 出力', 'data_records.json', 'JSON (*.json)')
-        if path:
+        path, _ = QFileDialog.getSaveFileName(self, tr('JSON 出力'), 'data_records.json', 'JSON (*.json)')
+        if not path:
+            return
+        try:
             Path(path).write_text(json.dumps(self.db.list_data_records(), ensure_ascii=False, indent=2), encoding='utf-8')
+        except OSError as error:
+            show_warning(self, 'JSON 出力', str(error))
+            return
+        show_file_exported(self, path)
 
     def import_json(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, 'JSON 読込', '', 'JSON (*.json)')
+        path, _ = QFileDialog.getOpenFileName(self, tr('JSON 読込'), '', 'JSON (*.json)')
         if not path:
             return
         try:
@@ -436,17 +442,28 @@ class DataPage(QWidget):
             self.reload()
         except (OSError, ValueError, json.JSONDecodeError, KeyError) as error:
             show_warning(self, 'JSON 読込', str(error))
+            return
+        show_file_imported(self, path)
 
     def export_excel(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, 'Excel 出力', 'data_records.xlsx', 'Excel (*.xlsx)')
-        if path:
+        path, _ = QFileDialog.getSaveFileName(self, tr('Excel を出力'), 'data_records.xlsx', 'Excel (*.xlsx)')
+        if not path:
+            return
+        try:
             write_records_excel(path, self.db.get_data_schema(), self.db.list_data_records())
+        except Exception as error:
+            show_warning(self, 'Excel 出力', str(error))
+            return
+        show_file_exported(self, path)
 
     def import_excel(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, 'Excel 読込', '', 'Excel (*.xlsx)')
-        if path:
-            try:
-                self.db.replace_data_records(read_records_excel(path, self.db.get_data_schema()))
-                self.reload()
-            except Exception as error:
-                show_warning(self, 'Excel 読込', str(error))
+        path, _ = QFileDialog.getOpenFileName(self, tr('Excel を読み込む'), '', 'Excel (*.xlsx)')
+        if not path:
+            return
+        try:
+            self.db.replace_data_records(read_records_excel(path, self.db.get_data_schema()))
+            self.reload()
+        except Exception as error:
+            show_warning(self, 'Excel 読込', str(error))
+            return
+        show_file_imported(self, path)

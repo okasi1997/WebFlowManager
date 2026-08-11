@@ -42,6 +42,7 @@ class MainWindow(QMainWindow):
         }
         for page in self.pages.values():
             self.stack.addWidget(page)
+        self.pages['settings'].settings_applied.connect(self._apply_saved_settings)
 
         self.nav_buttons = {
             key: require(root, QPushButton, f'{key}Nav')
@@ -60,6 +61,11 @@ class MainWindow(QMainWindow):
             set_button_icon(button, nav_icons[key], 17)
             button.clicked.connect(lambda _checked=False, page=key: self.show_page(page))
         self.show_page('design')
+
+    def _apply_saved_settings(self) -> None:
+        """保存済み設定を、現在生成済みの入力部品へ即時反映する。"""
+        self.pages['auth'].url.setText(self.db.get_start_url())
+        self.pages['execution'].session_spin.setValue(self.db.get_pcl_session_limit())
 
     def show_page(self, key: str) -> None:
         page = self.pages[key]

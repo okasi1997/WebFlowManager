@@ -42,22 +42,23 @@
           </property>
           <layout class="QVBoxLayout" name="schemaCardLayout">
             <property name="leftMargin">
-              <number>12</number>
+              <number>9</number>
             </property>
             <property name="topMargin">
               <number>12</number>
             </property>
             <property name="rightMargin">
-              <number>12</number>
+              <number>9</number>
             </property>
             <property name="bottomMargin">
-              <number>12</number>
+              <number>9</number>
             </property>
             <property name="spacing">
               <number>12</number>
             </property>
             <item>
               <widget class="QTreeWidget" name="schemaTree">
+                <property name="expandsOnDoubleClick"><bool>false</bool></property>
                 <column>
                   <property name="text">
                     <string>フィールド名</string>
@@ -127,9 +128,7 @@
                 </item>
                 <item>
                   <widget class="QPushButton" name="toggleAllButton">
-                    <property name="text">
-                      <string>⏵</string>
-                    </property>
+                    <property name="text"><string/></property>
                     <property name="toolTip">
                       <string>すべて折りたたむ</string>
                     </property>

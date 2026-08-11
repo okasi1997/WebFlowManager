@@ -241,6 +241,7 @@
               </property>
               <item>
                 <widget class="QTreeWidget" name="executionTree">
+                  <property name="expandsOnDoubleClick"><bool>false</bool></property>
                   <column>
                     <property name="text">
                       <string>実行グループ</string>

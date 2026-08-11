@@ -2,84 +2,1486 @@
 <ui version="4.0">
  <class>EventEditorForm</class>
  <widget class="QDialog" name="EventEditorForm">
-  <property name="geometry"><rect><x>0</x><y>0</y><width>1000</width><height>620</height></rect></property>
-  <property name="minimumSize"><size><width>1000</width><height>620</height></size></property>
-  <property name="maximumSize"><size><width>1000</width><height>620</height></size></property>
-  <property name="windowTitle"><string>イベント編集</string></property>
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1000</width>
+    <height>620</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>1000</width>
+    <height>620</height>
+   </size>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>1000</width>
+    <height>620</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>イベント編集</string>
+  </property>
   <layout class="QVBoxLayout" name="rootLayout">
-   <property name="leftMargin"><number>20</number></property><property name="topMargin"><number>18</number></property>
-   <property name="rightMargin"><number>20</number></property><property name="bottomMargin"><number>16</number></property>
+   <property name="leftMargin">
+    <number>20</number>
+   </property>
+   <property name="topMargin">
+    <number>18</number>
+   </property>
+   <property name="rightMargin">
+    <number>20</number>
+   </property>
+   <property name="bottomMargin">
+    <number>16</number>
+   </property>
    <item>
     <layout class="QHBoxLayout" name="contentLayout">
-     <property name="spacing"><number>14</number></property>
+     <property name="spacing">
+      <number>14</number>
+     </property>
      <item>
-      <layout class="QVBoxLayout" name="leftLayout">
-       <item><widget class="QFrame" name="eventCard"><layout class="QVBoxLayout" name="eventCardLayout">
-        <item><widget class="QLabel" name="eventCardTitle"><property name="text"><string>イベント設定</string></property></widget></item>
-        <item><layout class="QFormLayout" name="eventFormBasic">
-         <item row="0" column="0"><widget class="QLabel" name="nameLabel"><property name="text"><string>イベント名</string></property></widget></item>
-         <item row="0" column="1"><widget class="QLineEdit" name="nameEdit"/></item>
-         <item row="1" column="0"><widget class="QLabel" name="actionLabel"><property name="text"><string>操作</string></property></widget></item>
-         <item row="1" column="1"><widget class="QComboBox" name="actionCombo"/></item>
-         <item row="2" column="0"><widget class="QLabel" name="valueLabel"><property name="text"><string>入力値 / URL / キー</string></property></widget></item>
-         <item row="2" column="1"><widget class="QLineEdit" name="valueEdit"/></item>
-         <item row="3" column="0"><widget class="QLabel" name="dataPathLabel"><property name="text"><string>データ項目</string></property></widget></item>
-         <item row="3" column="1"><widget class="QLineEdit" name="dataPathEdit"/></item>
-         <item row="4" column="1"><widget class="QCheckBox" name="enabledCheck"><property name="text"><string>有効</string></property></widget></item>
-        </layout></item>
-       </layout></widget></item>
-       <item><widget class="QFrame" name="locatorCard"><layout class="QVBoxLayout" name="locatorCardLayout">
-        <item><widget class="QLabel" name="locatorCardTitle"><property name="text"><string>要素の検出設定</string></property></widget></item>
-        <item><layout class="QFormLayout" name="locatorForm">
-         <item row="0" column="0"><widget class="QLabel" name="selectorTypeLabel"><property name="text"><string>検出方法</string></property></widget></item>
-         <item row="0" column="1"><widget class="QComboBox" name="selectorTypeCombo"/></item>
-         <item row="1" column="0"><widget class="QLabel" name="selectorLabel"><property name="text"><string>検出内容</string></property></widget></item>
-         <item row="1" column="1"><widget class="QLineEdit" name="selectorEdit"/></item>
-         <item row="2" column="0"><widget class="QLabel" name="fallbackTypeLabel"><property name="text"><string>予備検出方法</string></property></widget></item>
-         <item row="2" column="1"><widget class="QComboBox" name="fallbackTypeCombo"/></item>
-         <item row="3" column="0"><widget class="QLabel" name="fallbackSelectorLabel"><property name="text"><string>予備検出内容</string></property></widget></item>
-         <item row="3" column="1"><widget class="QLineEdit" name="fallbackSelectorEdit"/></item>
-         <item row="4" column="0"><widget class="QLabel" name="iframeLabel"><property name="text"><string>iframe パス</string></property></widget></item>
-         <item row="4" column="1"><widget class="QLineEdit" name="iframeEdit"/></item>
-        </layout></item>
-       </layout></widget></item>
-       <item><widget class="QFrame" name="executionCard"><layout class="QVBoxLayout" name="executionCardLayout">
-        <item><widget class="QLabel" name="executionCardTitle"><property name="text"><string>実行制御</string></property></widget></item>
-        <item><layout class="QFormLayout" name="executionForm">
-         <item row="0" column="0"><widget class="QLabel" name="timeoutLabel"><property name="text"><string>タイムアウト (ms)</string></property></widget></item>
-         <item row="0" column="1"><widget class="QSpinBox" name="timeoutSpin"><property name="minimum"><number>1</number></property><property name="maximum"><number>3600000</number></property></widget></item>
-         <item row="1" column="0"><widget class="QLabel" name="retryCountLabel"><property name="text"><string>再試行回数</string></property></widget></item>
-         <item row="1" column="1"><widget class="QSpinBox" name="retryCountSpin"><property name="maximum"><number>100</number></property></widget></item>
-         <item row="2" column="0"><widget class="QLabel" name="retryIntervalLabel"><property name="text"><string>再試行間隔 (ms)</string></property></widget></item>
-         <item row="2" column="1"><widget class="QSpinBox" name="retryIntervalSpin"><property name="maximum"><number>3600000</number></property></widget></item>
-         <item row="3" column="0"><widget class="QLabel" name="guardLabel"><property name="text"><string>実行条件</string></property></widget></item>
-         <item row="3" column="1"><widget class="QLineEdit" name="guardEdit"/></item>
-         <item row="4" column="0"><widget class="QLabel" name="failureActionLabel"><property name="text"><string>失敗時の操作</string></property></widget></item>
-         <item row="4" column="1"><widget class="QComboBox" name="failureActionCombo"/></item>
-         <item row="5" column="0"><widget class="QLabel" name="failureTargetLabel"><property name="text"><string>移動先 URL</string></property></widget></item>
-         <item row="5" column="1"><widget class="QLineEdit" name="failureTargetEdit"/></item>
-         <item row="6" column="1"><widget class="QCheckBox" name="continueCheck"><property name="text"><string>失敗後も実行を継続</string></property></widget></item>
-        </layout></item>
-       </layout></widget></item>
+      <widget class="QTabWidget" name="eventEditorTabs">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="Fixed" vsizetype="Expanding">
+         <horstretch>0</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
+       <property name="minimumSize">
+        <size>
+         <width>473</width>
+         <height>0</height>
+        </size>
+       </property>
+       <property name="maximumSize">
+        <size>
+         <width>473</width>
+         <height>16777215</height>
+        </size>
+       </property>
+       <widget class="QFrame" name="eventLocatorTab">
+        <property name="card" stdset="0">
+         <bool>true</bool>
+        </property>
+        <attribute name="title">
+         <string>イベント・検出</string>
+        </attribute>
+        <layout class="QVBoxLayout" name="eventLocatorTabLayout">
+         <property name="spacing">
+          <number>10</number>
+         </property>
+         <property name="leftMargin">
+          <number>8</number>
+         </property>
+         <property name="topMargin">
+          <number>10</number>
+         </property>
+         <property name="rightMargin">
+          <number>8</number>
+         </property>
+         <property name="bottomMargin">
+          <number>8</number>
+         </property>
+         <item>
+          <widget class="QFrame" name="eventCard">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Preferred" vsizetype="Maximum">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="embeddedCard" stdset="0">
+            <bool>true</bool>
+           </property>
+           <layout class="QVBoxLayout" name="eventCardLayout">
+            <property name="spacing">
+             <number>8</number>
+            </property>
+            <property name="leftMargin">
+             <number>14</number>
+            </property>
+            <property name="topMargin">
+             <number>10</number>
+            </property>
+            <property name="rightMargin">
+             <number>14</number>
+            </property>
+            <property name="bottomMargin">
+             <number>10</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="eventCardTitle">
+              <property name="visible">
+               <bool>false</bool>
+              </property>
+              <property name="text">
+               <string>イベント設定</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <layout class="QFormLayout" name="eventFormBasic">
+              <property name="fieldGrowthPolicy">
+               <enum>QFormLayout::AllNonFixedFieldsGrow</enum>
+              </property>
+              <property name="labelAlignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+              <property name="horizontalSpacing">
+               <number>8</number>
+              </property>
+              <property name="verticalSpacing">
+               <number>6</number>
+              </property>
+              <item row="0" column="0">
+               <widget class="QLabel" name="nameLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>イベント名</string>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="1">
+               <widget class="QWidget" name="nameHost" native="true">
+                <property name="formHost" stdset="0">
+                 <bool>true</bool>
+                </property>
+                <layout class="QHBoxLayout" name="nameHostLayout">
+                 <property name="spacing">
+                  <number>8</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>0</number>
+                 </property>
+                 <item>
+                  <widget class="QLineEdit" name="nameEdit"/>
+                 </item>
+                 <item>
+                  <widget class="QCheckBox" name="enabledCheck">
+                   <property name="minimumSize">
+                    <size>
+                     <width>70</width>
+                     <height>0</height>
+                    </size>
+                   </property>
+                   <property name="maximumSize">
+                    <size>
+                     <width>70</width>
+                     <height>16777215</height>
+                    </size>
+                   </property>
+                   <property name="text">
+                    <string>有効</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <spacer name="enabledTrailing">
+                   <property name="orientation">
+                    <enum>Qt::Horizontal</enum>
+                   </property>
+                   <property name="sizeType">
+                    <enum>QSizePolicy::Fixed</enum>
+                   </property>
+                   <property name="sizeHint" stdset="0">
+                    <size>
+                     <width>0</width>
+                     <height>20</height>
+                    </size>
+                   </property>
+                  </spacer>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item row="1" column="0">
+               <widget class="QLabel" name="actionLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>操作</string>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="1">
+               <layout class="QHBoxLayout" name="actionHostLayout">
+                <property name="spacing">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QComboBox" name="actionCombo"/>
+                </item>
+                <item>
+                 <spacer name="actionTrailing">
+                  <property name="orientation">
+                   <enum>Qt::Horizontal</enum>
+                  </property>
+                  <property name="sizeType">
+                   <enum>QSizePolicy::Fixed</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>50</width>
+                    <height>20</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+               </layout>
+              </item>
+              <item row="2" column="0">
+               <widget class="QLabel" name="valueLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>入力値 / URL / キー</string>
+                </property>
+               </widget>
+              </item>
+              <item row="2" column="1">
+               <widget class="QWidget" name="valueHost" native="true">
+                <property name="formHost" stdset="0">
+                 <bool>true</bool>
+                </property>
+                <layout class="QHBoxLayout" name="valueHostLayout">
+                 <property name="spacing">
+                  <number>8</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>0</number>
+                 </property>
+                 <item>
+                  <widget class="QLineEdit" name="valueEdit"/>
+                 </item>
+                 <item>
+                  <widget class="QComboBox" name="waitConditionCombo"/>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="valueReferenceButton">
+                   <property name="minimumSize">
+                    <size>
+                     <width>42</width>
+                     <height>0</height>
+                    </size>
+                   </property>
+                   <property name="maximumSize">
+                    <size>
+                     <width>42</width>
+                     <height>16777215</height>
+                    </size>
+                   </property>
+                   <property name="toolTip">
+                    <string>データ参照</string>
+                   </property>
+                   <property name="text">
+                    <string/>
+                   </property>
+                   <property name="formAction" stdset="0">
+                    <bool>true</bool>
+                   </property>
+                   <property name="dataReferenceButton" stdset="0">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="valueActionButton">
+                   <property name="minimumSize">
+                    <size>
+                     <width>42</width>
+                     <height>0</height>
+                    </size>
+                   </property>
+                   <property name="maximumSize">
+                    <size>
+                     <width>42</width>
+                     <height>16777215</height>
+                    </size>
+                   </property>
+                   <property name="text">
+                    <string/>
+                   </property>
+                   <property name="formAction" stdset="0">
+                    <bool>true</bool>
+                   </property>
+                   <property name="dataReferenceButton" stdset="0">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QWidget" name="valueTrailing" native="true">
+                   <property name="minimumSize">
+                    <size>
+                     <width>42</width>
+                     <height>0</height>
+                    </size>
+                   </property>
+                   <property name="maximumSize">
+                    <size>
+                     <width>42</width>
+                     <height>16777215</height>
+                    </size>
+                   </property>
+                   <property name="formHost" stdset="0">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item row="3" column="0">
+               <widget class="QLabel" name="dataPathLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>データ項目</string>
+                </property>
+               </widget>
+              </item>
+              <item row="3" column="1">
+               <widget class="QWidget" name="pathHost" native="true">
+                <property name="formHost" stdset="0">
+                 <bool>true</bool>
+                </property>
+                <layout class="QHBoxLayout" name="pathHostLayout">
+                 <property name="spacing">
+                  <number>8</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>0</number>
+                 </property>
+                 <item>
+                  <widget class="QComboBox" name="dataPathCombo"/>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="pathButton">
+                   <property name="minimumSize">
+                    <size>
+                     <width>42</width>
+                     <height>0</height>
+                    </size>
+                   </property>
+                   <property name="maximumSize">
+                    <size>
+                     <width>42</width>
+                     <height>16777215</height>
+                    </size>
+                   </property>
+                   <property name="toolTip">
+                    <string>データ構造から選択</string>
+                   </property>
+                   <property name="text">
+                    <string/>
+                   </property>
+                   <property name="formAction" stdset="0">
+                    <bool>true</bool>
+                   </property>
+                   <property name="dataReferenceButton" stdset="0">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+             </layout>
+            </item>
+            <item>
+             <spacer name="eventSpacer">
+              <property name="orientation">
+               <enum>Qt::Vertical</enum>
+              </property>
+              <property name="sizeType">
+               <enum>QSizePolicy::Fixed</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>20</width>
+                <height>0</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <widget class="QFrame" name="locatorCard">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Preferred" vsizetype="Maximum">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="embeddedCard" stdset="0">
+            <bool>true</bool>
+           </property>
+           <layout class="QVBoxLayout" name="locatorCardLayout">
+            <property name="spacing">
+             <number>8</number>
+            </property>
+            <property name="leftMargin">
+             <number>14</number>
+            </property>
+            <property name="topMargin">
+             <number>10</number>
+            </property>
+            <property name="rightMargin">
+             <number>14</number>
+            </property>
+            <property name="bottomMargin">
+             <number>10</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="locatorCardTitle">
+              <property name="text">
+               <string>要素の検出設定</string>
+              </property>
+              <property name="cardTitle" stdset="0">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <layout class="QFormLayout" name="locatorForm">
+              <property name="fieldGrowthPolicy">
+               <enum>QFormLayout::AllNonFixedFieldsGrow</enum>
+              </property>
+              <property name="labelAlignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+              <property name="horizontalSpacing">
+               <number>8</number>
+              </property>
+              <property name="verticalSpacing">
+               <number>6</number>
+              </property>
+              <item row="0" column="0">
+               <widget class="QLabel" name="selectorTypeLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>検出方法</string>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="1">
+               <layout class="QHBoxLayout" name="selectorTypeHostLayout">
+                <property name="spacing">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QComboBox" name="selectorTypeCombo"/>
+                </item>
+                <item>
+                 <spacer name="selectorTypeTrailing">
+                  <property name="orientation">
+                   <enum>Qt::Horizontal</enum>
+                  </property>
+                  <property name="sizeType">
+                   <enum>QSizePolicy::Fixed</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>50</width>
+                    <height>20</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+               </layout>
+              </item>
+              <item row="1" column="0">
+               <widget class="QLabel" name="selectorLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>検出内容</string>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="1">
+               <widget class="QWidget" name="selectorHost" native="true">
+                <property name="formHost" stdset="0">
+                 <bool>true</bool>
+                </property>
+                <layout class="QHBoxLayout" name="selectorHostLayout">
+                 <property name="spacing">
+                  <number>8</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>0</number>
+                 </property>
+                 <item>
+                  <widget class="QLineEdit" name="selectorEdit"/>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="selectorReferenceButton">
+                   <property name="minimumSize">
+                    <size>
+                     <width>42</width>
+                     <height>0</height>
+                    </size>
+                   </property>
+                   <property name="maximumSize">
+                    <size>
+                     <width>42</width>
+                     <height>16777215</height>
+                    </size>
+                   </property>
+                   <property name="toolTip">
+                    <string>データ参照</string>
+                   </property>
+                   <property name="text">
+                    <string/>
+                   </property>
+                   <property name="formAction" stdset="0">
+                    <bool>true</bool>
+                   </property>
+                   <property name="dataReferenceButton" stdset="0">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item row="2" column="0">
+               <widget class="QLabel" name="fallbackTypeLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>予備検出方法</string>
+                </property>
+               </widget>
+              </item>
+              <item row="2" column="1">
+               <layout class="QHBoxLayout" name="fallbackTypeHostLayout">
+                <property name="spacing">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QComboBox" name="fallbackTypeCombo"/>
+                </item>
+                <item>
+                 <spacer name="fallbackTypeTrailing">
+                  <property name="orientation">
+                   <enum>Qt::Horizontal</enum>
+                  </property>
+                  <property name="sizeType">
+                   <enum>QSizePolicy::Fixed</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>50</width>
+                    <height>20</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+               </layout>
+              </item>
+              <item row="3" column="0">
+               <widget class="QLabel" name="fallbackSelectorLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>予備検出内容</string>
+                </property>
+               </widget>
+              </item>
+              <item row="3" column="1">
+               <widget class="QWidget" name="fallbackSelectorHost" native="true">
+                <property name="formHost" stdset="0">
+                 <bool>true</bool>
+                </property>
+                <layout class="QHBoxLayout" name="fallbackSelectorHostLayout">
+                 <property name="spacing">
+                  <number>8</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>0</number>
+                 </property>
+                 <item>
+                  <widget class="QLineEdit" name="fallbackSelectorEdit"/>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="fallbackReferenceButton">
+                   <property name="minimumSize">
+                    <size>
+                     <width>42</width>
+                     <height>0</height>
+                    </size>
+                   </property>
+                   <property name="maximumSize">
+                    <size>
+                     <width>42</width>
+                     <height>16777215</height>
+                    </size>
+                   </property>
+                   <property name="toolTip">
+                    <string>データ参照</string>
+                   </property>
+                   <property name="text">
+                    <string/>
+                   </property>
+                   <property name="formAction" stdset="0">
+                    <bool>true</bool>
+                   </property>
+                   <property name="dataReferenceButton" stdset="0">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item row="4" column="0">
+               <widget class="QLabel" name="iframeLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>iframe パス</string>
+                </property>
+               </widget>
+              </item>
+              <item row="4" column="1">
+               <layout class="QHBoxLayout" name="iframeHostLayout">
+                <property name="spacing">
+                 <number>0</number>
+                </property>
+                <item>
+                 <widget class="QLineEdit" name="iframeEdit"/>
+                </item>
+                <item>
+                 <spacer name="iframeTrailing">
+                  <property name="orientation">
+                   <enum>Qt::Horizontal</enum>
+                  </property>
+                  <property name="sizeType">
+                   <enum>QSizePolicy::Fixed</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>50</width>
+                    <height>20</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+               </layout>
+              </item>
+             </layout>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <spacer name="eventLocatorStretch">
+           <property name="orientation">
+            <enum>Qt::Vertical</enum>
+           </property>
+           <property name="sizeType">
+            <enum>QSizePolicy::Expanding</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>20</width>
+             <height>40</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </widget>
+       <widget class="QFrame" name="executionTab">
+        <property name="card" stdset="0">
+         <bool>true</bool>
+        </property>
+        <attribute name="title">
+         <string>実行制御</string>
+        </attribute>
+        <layout class="QVBoxLayout" name="executionTabLayout">
+         <property name="leftMargin">
+          <number>8</number>
+         </property>
+         <property name="topMargin">
+          <number>10</number>
+         </property>
+         <property name="rightMargin">
+          <number>8</number>
+         </property>
+         <property name="bottomMargin">
+          <number>8</number>
+         </property>
+         <item>
+          <widget class="QFrame" name="executionCard">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="embeddedCard" stdset="0">
+            <bool>true</bool>
+           </property>
+           <layout class="QVBoxLayout" name="executionCardLayout">
+            <property name="spacing">
+             <number>8</number>
+            </property>
+            <property name="leftMargin">
+             <number>14</number>
+            </property>
+            <property name="topMargin">
+             <number>10</number>
+            </property>
+            <property name="rightMargin">
+             <number>14</number>
+            </property>
+            <property name="bottomMargin">
+             <number>10</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="executionCardTitle">
+              <property name="visible">
+               <bool>false</bool>
+              </property>
+              <property name="text">
+               <string>実行制御</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <layout class="QFormLayout" name="executionForm">
+              <property name="fieldGrowthPolicy">
+               <enum>QFormLayout::AllNonFixedFieldsGrow</enum>
+              </property>
+              <property name="labelAlignment">
+               <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+              </property>
+              <property name="horizontalSpacing">
+               <number>8</number>
+              </property>
+              <property name="verticalSpacing">
+               <number>6</number>
+              </property>
+              <item row="0" column="0">
+               <widget class="QLabel" name="timeoutLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>タイムアウト</string>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="1">
+               <widget class="QSpinBox" name="timeoutSpin">
+                <property name="suffix">
+                 <string> ms</string>
+                </property>
+                <property name="minimum">
+                 <number>1</number>
+                </property>
+                <property name="maximum">
+                 <number>3600000</number>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="0">
+               <widget class="QLabel" name="retryCountLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>再実行回数</string>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="1">
+               <widget class="QSpinBox" name="retryCountSpin">
+                <property name="maximum">
+                 <number>100</number>
+                </property>
+               </widget>
+              </item>
+              <item row="2" column="0">
+               <widget class="QLabel" name="retryIntervalLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>再実行間隔</string>
+                </property>
+               </widget>
+              </item>
+              <item row="2" column="1">
+               <widget class="QSpinBox" name="retryIntervalSpin">
+                <property name="suffix">
+                 <string> ms</string>
+                </property>
+                <property name="maximum">
+                 <number>3600000</number>
+                </property>
+               </widget>
+              </item>
+              <item row="3" column="0">
+               <widget class="QLabel" name="guardLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>実行条件</string>
+                </property>
+               </widget>
+              </item>
+              <item row="3" column="1">
+               <widget class="QWidget" name="guardHost" native="true">
+                <property name="formHost" stdset="0">
+                 <bool>true</bool>
+                </property>
+                <layout class="QHBoxLayout" name="guardHostLayout">
+                 <property name="spacing">
+                  <number>8</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>0</number>
+                 </property>
+                 <item>
+                  <widget class="QLineEdit" name="guardSummaryEdit">
+                   <property name="readOnly">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="guardButton">
+                   <property name="minimumSize">
+                    <size>
+                     <width>100</width>
+                     <height>0</height>
+                    </size>
+                   </property>
+                   <property name="maximumSize">
+                    <size>
+                     <width>100</width>
+                     <height>16777215</height>
+                    </size>
+                   </property>
+                   <property name="text">
+                    <string>条件を設定</string>
+                   </property>
+                   <property name="formAction" stdset="0">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item row="4" column="0">
+               <widget class="QLabel" name="failureActionLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>失敗時の操作</string>
+                </property>
+               </widget>
+              </item>
+              <item row="4" column="1">
+               <widget class="QComboBox" name="failureActionCombo"/>
+              </item>
+              <item row="5" column="0">
+               <widget class="QLabel" name="failureTargetLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>移動先 URL</string>
+                </property>
+               </widget>
+              </item>
+              <item row="5" column="1">
+               <widget class="QWidget" name="failureTargetHost" native="true">
+                <property name="formHost" stdset="0">
+                 <bool>true</bool>
+                </property>
+                <layout class="QHBoxLayout" name="failureTargetHostLayout">
+                 <property name="spacing">
+                  <number>8</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>0</number>
+                 </property>
+                 <item>
+                  <widget class="QLineEdit" name="failureTargetEdit"/>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="failureReferenceButton">
+                   <property name="minimumSize">
+                    <size>
+                     <width>42</width>
+                     <height>0</height>
+                    </size>
+                   </property>
+                   <property name="maximumSize">
+                    <size>
+                     <width>42</width>
+                     <height>16777215</height>
+                    </size>
+                   </property>
+                   <property name="toolTip">
+                    <string>データ参照</string>
+                   </property>
+                   <property name="text">
+                    <string/>
+                   </property>
+                   <property name="formAction" stdset="0">
+                    <bool>true</bool>
+                   </property>
+                   <property name="dataReferenceButton" stdset="0">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item row="6" column="0" colspan="2">
+               <widget class="QLabel" name="successConfirmationTitle">
+                <property name="minimumSize">
+                 <size>
+                  <width>0</width>
+                  <height>42</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>成功確認設定</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignBottom|Qt::AlignLeading|Qt::AlignLeft</set>
+                </property>
+                <property name="cardTitle" stdset="0">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+              <item row="7" column="0">
+               <widget class="QLabel" name="clickSuccessLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>成功確認</string>
+                </property>
+               </widget>
+              </item>
+              <item row="7" column="1">
+               <widget class="QComboBox" name="clickSuccessCombo"/>
+              </item>
+              <item row="8" column="0">
+               <widget class="QLabel" name="clickSuccessTypeLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>成功検出方法</string>
+                </property>
+               </widget>
+              </item>
+              <item row="8" column="1">
+               <widget class="QComboBox" name="clickSuccessTypeCombo"/>
+              </item>
+              <item row="9" column="0">
+               <widget class="QLabel" name="clickSuccessTargetLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>108</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>108</width>
+                  <height>16777215</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string>成功条件の内容</string>
+                </property>
+               </widget>
+              </item>
+              <item row="9" column="1">
+               <widget class="QLineEdit" name="clickSuccessTargetEdit"/>
+              </item>
+              <item row="10" column="1">
+               <widget class="QCheckBox" name="continueCheck">
+                <property name="visible">
+                 <bool>false</bool>
+                </property>
+                <property name="text">
+                 <string>失敗後も実行を継続</string>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </item>
+            <item>
+             <spacer name="executionSpacer">
+              <property name="orientation">
+               <enum>Qt::Vertical</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>20</width>
+                <height>0</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </widget>
+     </item>
+     <item>
+      <layout class="QVBoxLayout" name="rightLayout">
+       <property name="topMargin">
+        <number>24</number>
+       </property>
+       <item>
+        <widget class="QFrame" name="pageCard">
+         <property name="card" stdset="0">
+          <bool>true</bool>
+         </property>
+         <layout class="QVBoxLayout" name="pageCardLayout">
+          <property name="spacing">
+           <number>10</number>
+          </property>
+          <property name="leftMargin">
+           <number>14</number>
+          </property>
+          <property name="topMargin">
+           <number>12</number>
+          </property>
+          <property name="rightMargin">
+           <number>14</number>
+          </property>
+          <property name="bottomMargin">
+           <number>12</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="pageCardTitle">
+            <property name="text">
+             <string>ページ操作</string>
+            </property>
+            <property name="cardTitle" stdset="0">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLineEdit" name="targetUrlEdit">
+            <property name="placeholderText">
+             <string>対象 URL</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="pageButtons1">
+            <item>
+             <widget class="QPushButton" name="pickButton">
+              <property name="minimumSize">
+               <size>
+                <width>100</width>
+                <height>0</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>操作対象を選択</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="closeDebugButton">
+              <property name="minimumSize">
+               <size>
+                <width>100</width>
+                <height>0</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>テスト画面を閉じる</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="pageButtons2">
+            <item>
+             <widget class="QPushButton" name="tryEventButton">
+              <property name="minimumSize">
+               <size>
+                <width>100</width>
+                <height>0</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>このイベントを試す</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="executeUntilButton">
+              <property name="minimumSize">
+               <size>
+                <width>100</width>
+                <height>0</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>直前まで実行</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QLabel" name="pageHint">
+            <property name="text">
+             <string>初回は「操作対象を選択」で対象ページを開きます</string>
+            </property>
+            <property name="muted" stdset="0">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QFrame" name="resultCard">
+         <property name="card" stdset="0">
+          <bool>true</bool>
+         </property>
+         <layout class="QVBoxLayout" name="resultCardLayout">
+          <property name="spacing">
+           <number>10</number>
+          </property>
+          <property name="leftMargin">
+           <number>14</number>
+          </property>
+          <property name="topMargin">
+           <number>12</number>
+          </property>
+          <property name="rightMargin">
+           <number>14</number>
+          </property>
+          <property name="bottomMargin">
+           <number>12</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="resultCardTitle">
+            <property name="text">
+             <string>操作結果</string>
+            </property>
+            <property name="cardTitle" stdset="0">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPlainTextEdit" name="resultEdit">
+            <property name="readOnly">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
       </layout>
      </item>
-     <item><layout class="QVBoxLayout" name="rightLayout">
-      <item><widget class="QFrame" name="pageCard"><layout class="QVBoxLayout" name="pageCardLayout">
-       <item><widget class="QLabel" name="pageCardTitle"><property name="text"><string>ページ操作</string></property></widget></item>
-       <item><widget class="QLineEdit" name="targetUrlEdit"><property name="placeholderText"><string>対象 URL</string></property></widget></item>
-       <item><layout class="QHBoxLayout" name="pageButtons1"><item><widget class="QPushButton" name="pickButton"><property name="text"><string>画面から選択</string></property></widget></item><item><widget class="QPushButton" name="closeDebugButton"><property name="text"><string>画面を閉じる</string></property></widget></item></layout></item>
-       <item><layout class="QHBoxLayout" name="pageButtons2"><item><widget class="QPushButton" name="tryEventButton"><property name="text"><string>イベントを試す</string></property></widget></item><item><widget class="QPushButton" name="executeUntilButton"><property name="text"><string>このイベントまで実行</string></property></widget></item></layout></item>
-       <item><widget class="QLabel" name="pageHint"><property name="text"><string>初回は「画面から選択」で対象ページを開きます</string></property></widget></item>
-      </layout></widget></item>
-      <item><widget class="QFrame" name="resultCard"><layout class="QVBoxLayout" name="resultCardLayout">
-       <item><widget class="QLabel" name="resultCardTitle"><property name="text"><string>操作結果</string></property></widget></item>
-       <item><widget class="QPlainTextEdit" name="resultEdit"><property name="readOnly"><bool>true</bool></property></widget></item>
-      </layout></widget></item>
-     </layout></item>
     </layout>
    </item>
-   <item><widget class="QDialogButtonBox" name="buttonBox"><property name="standardButtons"><set>QDialogButtonBox::Cancel|QDialogButtonBox::Save</set></property></widget></item>
+   <item>
+    <widget class="QWidget" name="footerHost" native="true">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>42</height>
+      </size>
+     </property>
+     <property name="maximumSize">
+      <size>
+       <width>16777215</width>
+       <height>42</height>
+      </size>
+     </property>
+     <property name="formHost" stdset="0">
+      <bool>true</bool>
+     </property>
+     <layout class="QHBoxLayout" name="footerLayout">
+      <property name="leftMargin">
+       <number>0</number>
+      </property>
+      <property name="topMargin">
+       <number>0</number>
+      </property>
+      <property name="rightMargin">
+       <number>0</number>
+      </property>
+      <property name="bottomMargin">
+       <number>0</number>
+      </property>
+      <item>
+       <widget class="QDialogButtonBox" name="buttonBox">
+        <property name="standardButtons">
+         <set>QDialogButtonBox::Cancel|QDialogButtonBox::Save</set>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
   </layout>
  </widget>
- <resources/><connections/>
+ <resources/>
+ <connections/>
 </ui>

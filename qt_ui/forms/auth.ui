@@ -66,6 +66,7 @@
                 </item>
                 <item>
                   <widget class="QTreeWidget" name="profileTree">
+                    <property name="expandsOnDoubleClick"><bool>false</bool></property>
                     <property name="rootIsDecorated">
                       <bool>false</bool>
                     </property>

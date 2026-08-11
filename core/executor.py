@@ -1,5 +1,6 @@
 """Playwright を使用して、登録済みイベントを順番に実行する。"""
 from __future__ import annotations
+import hashlib
 import json
 import re
 import sys
@@ -18,6 +19,8 @@ VARIABLE_PATTERN = re.compile('\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}')
 DATA_REFERENCE_PATTERN = re.compile(r'\$\{data:([^{}]+)\}')
 SALESFORCE_SPINNER_SELECTOR = '.slds-spinner, lightning-spinner'
 SPINNER_TRIGGER_ACTIONS = {'click', 'select', 'goto', 'upload_file'}
+CLICK_STABLE_MS = 250
+CLICK_STABLE_POLL_MS = 50
 
 def find_variables(events: list[dict[str, Any]]) -> list[str]:
     """外部入力が必要な変数だけを抽出する。get_text の生成変数は除外する。"""
@@ -50,6 +53,8 @@ class WorkflowExecutor:
         self._input_frame_cache: tuple[Any, Any] | None = None
         self._saved_frame_cache: dict[tuple[Any, str], Any] = {}
         self._spinner_observed_frames: set[Any] = set()
+        self._active_event_prefix = ''
+        self._session_log_prefix = '[S1] | '
 
     def run_batch(self, steps: list[dict[str, Any]], variables: dict[str, str], on_step_start: Callable[[dict[str, Any]], Any] | None=None, on_step_success: Callable[[dict[str, Any], Any], None] | None=None, on_step_failure: Callable[[dict[str, Any], Any, Exception], None] | None=None, on_event_start: Callable[[dict[str, Any], dict[str, Any]], None] | None=None, browser_visible: bool=True, session_name: str='batch', storage_state_path: Path | None | bool=False) -> None:
         """計画済みの全ステップを、一つの browser/context/page で実行する。"""
@@ -58,6 +63,11 @@ class WorkflowExecutor:
         except ImportError as error:
             raise RuntimeError('Playwright is not installed. Run: pip install -r requirements.txt') from error
         safe_session = re.sub('[^A-Za-z0-9_-]', '_', session_name)
+        if steps:
+            first_step = steps[0]
+            session = first_step.get('session', 1)
+            group = '' if first_step.get('phase') == 'once' else f" G{first_step.get('group', '1')}"
+            self._session_log_prefix = f'[S{session}{group}] | '
         artifact_dir = self.project_dir / 'artifacts' / datetime.now().strftime('%Y%m%d_%H%M%S')
         state_path = self.project_dir / 'data' / 'browser_state.json' if storage_state_path is False else storage_state_path
         shared_session = session_name in {'batch', 'preamble'}
@@ -106,7 +116,7 @@ class WorkflowExecutor:
                 active_error = sys.exc_info()[1]
                 cleanup_error: Exception | None = None
                 if active_error is not None and browser_visible and context is not None:
-                    self.logger('msg.0564')
+                    self.logger(f'{self._session_log_prefix}msg.0564')
                     while True:
                         try:
                             pages = open_pages(context)
@@ -134,7 +144,7 @@ class WorkflowExecutor:
                     if active_error is None:
                         raise cleanup_error
                     try:
-                        self.logger(f'Browser cleanup failed: {cleanup_error}')
+                        self.logger(f'{self._session_log_prefix}Browser cleanup failed: {cleanup_error}')
                     except Exception:
                         pass
 
@@ -295,6 +305,7 @@ class WorkflowExecutor:
                     loop_context,
                 )
             prefix = self._event_log_prefix(log_prefix, event, loop_progress)
+            self._active_event_prefix = prefix
             try:
                 detail = self._event_log_detail(effective, variables)
             except ValueError:
@@ -342,8 +353,7 @@ class WorkflowExecutor:
                     failure_url = str(page.url)
                 except Exception:
                     failure_url = ''
-                safe_trace = re.sub('[^A-Za-z0-9_-]', '_', trace)
-                screenshot = artifact_dir / f"error_{safe_trace}_{event['id']}.png"
+                screenshot = artifact_dir / self._failure_screenshot_name(trace, event['id'])
                 artifact_dir.mkdir(parents=True, exist_ok=True)
                 page.screenshot(path=str(screenshot), full_page=True)
                 self.logger(f'{prefix}msg.0192{error}')
@@ -363,17 +373,38 @@ class WorkflowExecutor:
             index += 1
 
     @staticmethod
+    def _failure_screenshot_name(trace: str, event_id: Any) -> str:
+        """再実行階層で肥大化しない、長さを制限したエラー画像名を返す。"""
+        safe_trace = re.sub('[^A-Za-z0-9_-]', '_', str(trace))
+        # retry の試行番号は保存先の識別に不要なため、毎回同じ基準名へ戻す。
+        stable_trace = re.sub(r'_retry_\d+', '', safe_trace).strip('_') or 'run'
+        safe_event_id = re.sub('[^A-Za-z0-9_-]', '_', str(event_id))[:16] or 'event'
+        if len(stable_trace) > 64:
+            digest = hashlib.sha256(stable_trace.encode('utf-8')).hexdigest()[:10]
+            stable_trace = f'{stable_trace[:53]}_{digest}'
+        return f'error_{stable_trace}_{safe_event_id}.png'
+
+    @staticmethod
     def _step_log_prefix(step: dict[str, Any]) -> str:
-        workflow = f"msg.0194{step.get('position', '?')}]"
+        context = WorkflowExecutor._step_log_context(step)
+        return f"{context} F{step.get('position', '?')} | "
+
+    @staticmethod
+    def _step_log_context(step: dict[str, Any]) -> str:
+        """並列実行でも追跡できる固定長に近い実行コンテキストを返す。"""
+        session = step.get('session', 1)
         if step.get('phase') == 'once':
-            return workflow
-        group = f"msg.0195{step.get('group', '1')}]"
-        return f"{group}[Data {step.get('pcl_index', '?')}/{step.get('pcl_total', '?')}]{workflow}"
+            return f'[S{session}]'
+        return (
+            f"[S{session} G{step.get('group', '1')} "
+            f"D{step.get('pcl_index', '?')}/{step.get('pcl_total', '?')}]"
+        )
 
     @staticmethod
     def _event_log_prefix(log_prefix: str, event: dict[str, Any], loop_progress: list[str]) -> str:
-        loops = ''.join((f'msg.0196{progress}]' for progress in loop_progress))
-        return f"{log_prefix}msg.0197{event.get('position', '?')}]{loops}"
+        context = log_prefix.removesuffix(' | ')
+        loops = ''.join((f' L{progress}' for progress in loop_progress))
+        return f"{context} E{event.get('position', '?')}{loops} | "
 
     @staticmethod
     def _event_log_detail(event: dict[str, Any], variables: dict[str, str]) -> str:
@@ -790,6 +821,113 @@ class WorkflowExecutor:
         self._remember_input_frame(page, locator)
         return locator
 
+    @staticmethod
+    def _click_target_snapshot(locator: Any) -> tuple[str, float, float, float, float]:
+        snapshot = locator.evaluate("""element => {
+            if (!element.__wfmStableTargetId) {
+                element.__wfmStableTargetId = `${Date.now()}-${Math.random()}`;
+            }
+            const rect = element.getBoundingClientRect();
+            return [element.__wfmStableTargetId, rect.x, rect.y, rect.width, rect.height];
+        }""")
+        return tuple(snapshot)
+
+    def _wait_for_stable_action_target(self, locator: Any, timeout: int) -> None:
+        """操作前に、同じ有効かつ非遮蔽の要素が短時間静止するまで待機する。"""
+        deadline = time.monotonic() + timeout / 1000
+        stable_since: float | None = None
+        previous: tuple[str, float, float, float, float] | None = None
+        while time.monotonic() < deadline:
+            try:
+                ready = locator.is_visible() and locator.is_enabled() and is_topmost(locator)
+                current = self._click_target_snapshot(locator) if ready else None
+            except Exception as error:
+                if not self._is_transient_target_error(error):
+                    raise
+                current = None
+            now = time.monotonic()
+            if current is not None and current == previous:
+                stable_since = stable_since if stable_since is not None else now
+                if (now - stable_since) * 1000 >= CLICK_STABLE_MS:
+                    return
+            else:
+                previous = current
+                stable_since = now if current is not None else None
+            locator.page.wait_for_timeout(CLICK_STABLE_POLL_MS)
+        raise RuntimeError('Action target did not remain actionable and stable')
+
+    @staticmethod
+    def _arm_click_receipt(locator: Any) -> tuple[str, Any]:
+        token = f'{time.time_ns()}'
+        handle = locator.element_handle()
+        if handle is None:
+            raise RuntimeError('Click target was detached before the click')
+        handle.evaluate("""(element, token) => {
+            element.__wfmClickReceipt = '';
+            const receive = event => {
+                if (!event.composedPath().includes(element)) return;
+                element.__wfmClickReceipt = token;
+                element.ownerDocument.removeEventListener('click', receive, true);
+            };
+            element.ownerDocument.addEventListener('click', receive, true);
+        }""", token)
+        return token, handle
+
+    @staticmethod
+    def _click_was_received(handle: Any, token: str) -> bool:
+        try:
+            return bool(handle.evaluate(
+                '(element, token) => element.__wfmClickReceipt === token', token,
+            ))
+        except Exception as error:
+            message = str(error).casefold()
+            if any(part in message for part in (
+                'execution context was destroyed', 'cannot find context with specified id',
+                'jshandle is disposed', 'not attached', 'target page has been closed',
+            )):
+                return True
+            raise
+
+    def _wait_for_event_success(
+        self, page: Any, event: dict[str, Any], variables: dict[str, str], timeout: int,
+    ) -> None:
+        raw_value = str(event.get('success_json', '') or '')
+        if not raw_value and event.get('action') == 'click':
+            # DB 移行前の click を直接実行する場合だけ旧 value を読む。
+            raw_value = str(event.get('value', '') or '')
+        if not raw_value.strip():
+            return
+        try:
+            config = json.loads(raw_value)
+        except (TypeError, ValueError):
+            return  # 旧クリックイベントには未使用の自由入力値が残っている場合がある。
+        if not isinstance(config, dict):
+            return
+        condition = str(config.get('condition', 'none'))
+        target = substitute(str(config.get('target', '')), variables)
+        if condition == 'none':
+            return
+        if condition == 'url_contains':
+            deadline = time.monotonic() + timeout / 1000
+            while time.monotonic() < deadline:
+                if target in active_page(page).url:
+                    return
+                active_page(page).wait_for_timeout(100)
+            raise RuntimeError(f'Event success URL was not observed: {target}')
+        if condition not in {'visible', 'hidden', 'operable'} or not target:
+            raise RuntimeError('Invalid event success condition')
+        success_event = {
+            'selector_type': str(config.get('selector_type', 'css')),
+            'fallback_selector_type': 'none',
+            'iframe_path': str(config.get('iframe_path', '')),
+        }
+        if condition == 'hidden':
+            self._wait_until_hidden(
+                page, success_event['selector_type'], target, timeout, success_event,
+            )
+        else:
+            self._wait_until_ready(page, success_event, target, '', condition, timeout)
+
     def _execute_event(self, page: Any, event: dict[str, Any], variables: dict[str, str], artifact_dir: Path) -> Any:
         page = active_page(page)
         action = event['action']
@@ -807,13 +945,20 @@ class WorkflowExecutor:
             self._input_frame_cache = None
         if action == 'goto':
             page.goto(value, wait_until='domcontentloaded')
+            self._wait_for_event_success(page, event, variables, timeout)
         elif action == 'click':
             previous_pages = set(open_pages(page.context))
-            self._event_locator(
+            locator = self._event_locator(
                 page, event, selector, fallback_selector, timeout,
                 require_actionable=False,
-            ).click()
+            )
+            self._wait_for_stable_action_target(locator, timeout)
+            click_token, click_handle = self._arm_click_receipt(locator)
+            locator.click()
+            if not self._click_was_received(click_handle, click_token):
+                raise RuntimeError('Click event was not received by the target element')
             settle_new_page(page, previous_pages, timeout)
+            self._wait_for_event_success(page, event, variables, timeout)
         elif action == 'fill':
             self._fast_event_locator(
                 page, event, selector, fallback_selector, timeout,
@@ -823,10 +968,13 @@ class WorkflowExecutor:
                 page, event, selector, fallback_selector, timeout,
                 require_actionable=False,
             )
+            # 選択肢を変更する直前にも、ドロップダウンの移動やアニメーション終了を確認する。
+            self._wait_for_stable_action_target(locator, timeout)
             if value == SELECT_FIRST_VALUE:
                 locator.select_option(index=0)
             else:
                 locator.select_option(value)
+            self._wait_for_event_success(page, event, variables, timeout)
         elif action == 'wait':
             legacy_operable = {'clickable', 'editable', 'selectable'}
             condition = 'operable' if value in legacy_operable else value
@@ -857,6 +1005,7 @@ class WorkflowExecutor:
                 )
             )
             locator.press(value)
+            self._wait_for_event_success(page, event, variables, timeout)
         elif action == 'upload_file':
             file_path = Path(value)
             if not file_path.is_absolute():
@@ -1155,7 +1304,7 @@ class WorkflowExecutor:
             except RuntimeError:
                 if fallback_type == 'none' or not fallback_selector:
                     raise
-                self.logger(f'msg.0212{fallback_type}: "{fallback_selector}"')
+                self.logger(f'{self._active_event_prefix}msg.0212{fallback_type}: "{fallback_selector}"')
                 return self._unique_locator_in_frame(
                     page, frame, fallback_type, fallback_selector, timeout,
                     require_actionable,
@@ -1181,7 +1330,7 @@ class WorkflowExecutor:
         except RuntimeError:
             if fallback_type == 'none' or not fallback_selector:
                 raise
-            self.logger(f'msg.0212{fallback_type}: "{fallback_selector}"')
+            self.logger(f'{self._active_event_prefix}msg.0212{fallback_type}: "{fallback_selector}"')
             try:
                 return self._unique_locator(
                     page, fallback_type, fallback_selector, timeout,

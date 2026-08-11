@@ -5,15 +5,16 @@ import ctypes
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractSpinBox, QApplication, QComboBox, QDialog, QDialogButtonBox, QInputDialog,
     QLabel, QLayout, QMessageBox, QWidget,
 )
 
 from core.database import Database
-from i18n import set_language
+from i18n import set_language, tr
 from .main_window import MainWindow
+from .ui_loader import apply_application_font
 
 
 class _ComboBoxWheelBlocker(QObject):
@@ -54,7 +55,7 @@ class _ComboBoxWheelBlocker(QObject):
             button = box.button(standard)
             if button is None:
                 continue
-            button.setText(text)
+            button.setText(tr(text))
             visible.append(button)
         for standard in (
             QDialogButtonBox.StandardButton.Ok,
@@ -106,12 +107,9 @@ class _ComboBoxWheelBlocker(QObject):
         if yes is None or no is None:
             return
         title = box.windowTitle()
-        if '削除' in title:
-            yes.setText('削除')
-            no.setText('キャンセル')
-        elif '删除' in title:
-            yes.setText('删除')
-            no.setText('取消')
+        if tr('削除') in title:
+            yes.setText(tr('削除'))
+            no.setText(tr('キャンセル'))
         # 削除は通常の主操作ではないため、青色を外して危険色へ統一する。
         yes.setProperty('primary', False)
         yes.setProperty('danger', True)
@@ -141,11 +139,13 @@ class _ComboBoxWheelBlocker(QObject):
 
 
 class QtFlowManagerApplication:
-    """Owns the Qt event loop and shared application services."""
+    """Qt のイベントループとアプリ共通サービスを管理する。"""
 
     def __init__(self) -> None:
         frozen = getattr(sys, 'frozen', False)
         self.project_dir = Path(sys.executable).resolve().parent if frozen else Path(__file__).resolve().parents[1]
+        # PyInstaller 版の同梱リソースは実行ファイル横ではなく _MEIPASS 配下に展開される。
+        self.resource_dir = Path(getattr(sys, '_MEIPASS', self.project_dir))
         (self.project_dir / 'data').mkdir(parents=True, exist_ok=True)
         (self.project_dir / 'log').mkdir(parents=True, exist_ok=True)
         self.db = Database(self.project_dir / 'data' / 'flows.db')
@@ -159,11 +159,11 @@ class QtFlowManagerApplication:
         self.qt = QApplication.instance() or QApplication(sys.argv)
         self.qt.setApplicationName('WebFlowManager')
         # アプリケーションアイコンを先に設定し、全ダイアログへ継承させる。
-        icon_path = self.project_dir / 'assets' / 'app-icon.png'
+        icon_path = self.resource_dir / 'assets' / 'app-icon.png'
         if icon_path.is_file():
             self.qt.setWindowIcon(QIcon(str(icon_path)))
         family, size = self.db.get_ui_font()
-        self.qt.setFont(QFont(family, size))
+        apply_application_font(family, size)
         theme_path = Path(__file__).with_name('theme.qss')
         arrow_path = Path(__file__).with_name('icons') / 'chevron-down.svg'
         up_arrow_path = Path(__file__).with_name('icons') / 'chevron-up.svg'

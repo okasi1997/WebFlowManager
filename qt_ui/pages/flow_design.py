@@ -2,15 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import ctypes
+import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 from PySide6.QtCore import QEvent, QTimer, Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QFrame, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QSpinBox, QSplitter,
-    QSizePolicy, QTabWidget, QTableWidget, QTableWidgetItem, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+    QTabWidget, QTableWidget, QTableWidgetItem, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
     QWidget,
 )
 
@@ -23,18 +26,19 @@ from i18n import tr
 from .auth import profile_path
 from ..ui_loader import (
     confirm_action, confirm_deletion, load_ui_into, localize_dialog_buttons, require, set_button_icon,
+    set_tree_toggle_icon, show_file_exported, show_file_imported,
     show_error, show_information, show_warning,
 )
 from ..table_view import (
     HierarchicalReorderTreeWidget, capture_scroll_position,
     capture_tree_display_state, configure_row_move_tooltips, configure_table_view,
     order_with_inserted_after, restore_scroll_position, restore_tree_display_state,
-    set_column_layout, update_preserving_scroll,
+    set_column_layout, set_row_enabled_appearance, update_preserving_scroll,
 )
 
 ACTION_LABELS = {
     'goto': 'ページへ移動', 'click': 'クリック', 'fill': '入力', 'select': '選択',
-    'wait': '待機', 'press': 'キー入力', 'get_text': '文字取得', 'screenshot': '画面保存',
+    'wait': '待機', 'press': 'キー入力', 'get_text': '文字取得', 'screenshot': 'スクリーンショット',
     'pause': '一時停止', 'upload_file': 'ファイル送信', 'group_start': 'グループ',
 }
 FAILURE_ACTION_LABELS = {
@@ -42,9 +46,15 @@ FAILURE_ACTION_LABELS = {
     'refresh': 'ページを再読み込み', 'goto': '指定 URL へ移動',
 }
 WAIT_CONDITION_LABELS = {'visible': '表示', 'hidden': '非表示', 'operable': '操作可能'}
-FORM_LABEL_WIDTH = 108
-FORM_ACTION_WIDTH = 100
-LOCATOR_REFERENCE_WIDTH = 82
+CLICK_SUCCESS_LABELS = {
+    'none': '確認しない', 'visible': '要素が表示', 'hidden': '要素が非表示',
+    'operable': '要素が操作可能', 'url_contains': 'URL に文字列を含む',
+}
+# locator を実行時に使用する操作だけで、画面からの要素選択を許可する。
+ELEMENT_SELECTOR_ACTIONS = frozenset({
+    'click', 'fill', 'select', 'wait', 'press', 'get_text', 'upload_file',
+})
+SUCCESS_CONFIRM_ACTIONS = frozenset({'click', 'goto', 'select', 'press'})
 GROUP_ACTION_WIDTH = 120
 
 
@@ -61,20 +71,6 @@ def _inline_host(*items: tuple[QWidget, int] | QWidget, spacing: int = 8) -> QWi
     return host
 
 
-def _vertical_page(*widgets: QWidget) -> QWidget:
-    """複数の領域を上詰めで表示するタブページを生成する。"""
-    page = QFrame()
-    page.setProperty('formHost', True)
-    page.setProperty('card', True)
-    layout = QVBoxLayout(page)
-    layout.setContentsMargins(8, 10, 8, 8)
-    layout.setSpacing(10)
-    for widget in widgets:
-        layout.addWidget(widget)
-    layout.addStretch(1)
-    return page
-
-
 def _iframe_path_text(value: Any) -> str:
     """iframe 未指定を空文字へ統一し、空配列の表示を防ぐ。"""
     if value in (None, '', '[]') or value == []:
@@ -82,13 +78,10 @@ def _iframe_path_text(value: Any) -> str:
     return str(value).strip()
 
 
-def _configure_form_action(
-        button: QPushButton, width: int = FORM_ACTION_WIDTH,
-) -> QPushButton:
-    """フォーム右端の補助操作を共通幅と省スペース表示へ統一する。"""
-    button.setProperty('formAction', True)
-    button.setFixedWidth(width)
-    return button
+def _localized_guard_summary(guard: dict[str, Any] | None) -> str:
+    """実行条件の演算子を現在言語へ変換して要約する。"""
+    labels = {key: tr(label) for key, label in GUARD_OPERATOR_LABELS.items()}
+    return summarize_guard(guard, labels)
 
 
 def _aligned_form_host(
@@ -105,7 +98,7 @@ def _aligned_form_host(
 
 
 class ReorderTableWidget(QTableWidget):
-    """A table that reports a whole-row insertion without moving individual cells."""
+    """個別セルを移動せず、行全体の挿入位置だけを通知するテーブル。"""
 
     rowReordered = Signal(int, int)
 
@@ -142,7 +135,10 @@ class ReorderTableWidget(QTableWidget):
 class EventEditorDialog(QDialog):
     """保存対象のイベント項目を編集する独立ウィンドウ。"""
 
-    def __init__(self, parent: QWidget, event: dict[str, Any] | None=None, *, group: bool=False) -> None:
+    def __init__(
+        self, parent: QWidget, event: dict[str, Any] | None=None, *,
+        group: bool=False, insert_at: int | None=None,
+    ) -> None:
         # ブラウザーとの比較中にこの画面だけを前面へ出せるよう、Qt の親子関係は持たせない。
         # データベースやデバッグ機能への参照は、通常の Python 参照として別に保持する。
         super().__init__(None, Qt.WindowType.Window)
@@ -150,6 +146,8 @@ class EventEditorDialog(QDialog):
         self.setWindowTitle('イベントグループ編集' if group else ('イベント編集' if event else 'イベント追加'))
         event = event or {}
         self.event_id = int(event.get('id', 0) or 0)
+        # 新規イベントでも「直前まで実行」できるよう、追加予定位置を保持する。
+        self.insert_at = insert_at
         self._load_designer_form(event, group)
 
     def _load_designer_form(self, event: dict[str, Any], group: bool) -> None:
@@ -161,7 +159,7 @@ class EventEditorDialog(QDialog):
             'fallback_selector_type': (QComboBox, 'fallbackTypeCombo'),
             'fallback_selector': (QLineEdit, 'fallbackSelectorEdit'),
             'iframe_path': (QLineEdit, 'iframeEdit'), 'value': (QLineEdit, 'valueEdit'),
-            'data_path': (QLineEdit, 'dataPathEdit'), 'timeout': (QSpinBox, 'timeoutSpin'),
+            'data_path': (QComboBox, 'dataPathCombo'), 'timeout': (QSpinBox, 'timeoutSpin'),
             'enabled': (QCheckBox, 'enabledCheck'), 'continue_on_error': (QCheckBox, 'continueCheck'),
             'failure_action': (QComboBox, 'failureActionCombo'),
             'failure_target': (QLineEdit, 'failureTargetEdit'),
@@ -171,9 +169,12 @@ class EventEditorDialog(QDialog):
         for attribute, (kind, name) in bindings.items():
             setattr(self, attribute, require(self, kind, name))
         actions = ['group_start'] if group else [a for a in SUPPORTED_ACTIONS if not a.endswith('_end') and a not in {'group_start', 'loop_start', 'retry_start'}]
+        if not group:
+            self.action.addItem('', '')
         for action in actions:
             self.action.addItem(ACTION_LABELS.get(action, action), action)
-        self.action.setCurrentIndex(max(0, self.action.findData(str(event.get('action', actions[0])))))
+        initial_action = str(event.get('action', 'group_start' if group else ''))
+        self.action.setCurrentIndex(max(0, self.action.findData(initial_action)))
         for combo, value in (
             (self.selector_type, event.get('selector_type', 'none')),
             (self.fallback_selector_type, event.get('fallback_selector_type', 'none')),
@@ -192,205 +193,116 @@ class EventEditorDialog(QDialog):
             (self.name, event.get('name', '')), (self.selector, event.get('selector', '')),
             (self.fallback_selector, event.get('fallback_selector', '')),
             (self.iframe_path, event.get('iframe_path', '')), (self.value, event.get('value', '')),
-            (self.data_path, event.get('data_path', '')), (self.failure_target, event.get('failure_target', '')),
+            (self.failure_target, event.get('failure_target', '')),
         ):
             widget.setText(str(value))
-        self.timeout.setValue(int(event.get('timeout_ms', 10_000)))
+        self.timeout.setValue(int(event.get('timeout_ms', self._service_host.db.get_default_timeout_ms())))
         self.retry_count.setValue(int(event.get('retry_count', 0)))
         self.retry_interval.setValue(int(event.get('retry_interval_ms', 0)))
         self.enabled.setChecked(bool(event.get('enabled', 1)))
+        # 画面構造は event_editor.ui で完成させ、Python では値と動作だけを設定する。
+        self._finish_designer_event_form(event)
+        return
+
+    def _finish_designer_event_form(self, event: dict[str, Any]) -> None:
+        """Designer で構築済みの画面へ、保存値と動作のみを割り当てる。"""
         self.continue_on_error.setChecked(bool(event.get('continue_on_error', 0)))
-        self.continue_on_error.hide()
-        self.data_path.setReadOnly(True)
         self.guard_data = decode_guard(event.get('guard_json', event.get('guard', '')))
-        for card_name in ('eventCard', 'locatorCard', 'executionCard', 'pageCard', 'resultCard'):
-            require(self, QFrame, card_name).setProperty('card', True)
-        for card_name in ('eventCard', 'locatorCard'):
-            require(self, QFrame, card_name).setSizePolicy(
-                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum,
-            )
-        execution_card = require(self, QFrame, 'executionCard')
-        execution_card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
-        require(self, QVBoxLayout, 'eventCardLayout').addStretch(1)
-        require(self, QVBoxLayout, 'executionCardLayout').addStretch(1)
-        left_layout = require(self, QVBoxLayout, 'leftLayout')
-        content_layout = require(self, QHBoxLayout, 'contentLayout')
-        # 左列はスクロールせず、入力設定と実行制御を固定タブで切り替える。
-        content_layout.takeAt(0)
-        event_card = require(self, QFrame, 'eventCard')
-        locator_card = require(self, QFrame, 'locatorCard')
-        for card in (event_card, locator_card, execution_card):
-            left_layout.removeWidget(card)
-            card.setProperty('card', False)
-            # タブページを唯一の白い面とし、内部区画は透明にして二重背景を避ける。
-            card.setProperty('embeddedCard', True)
-        self.left_tabs = QTabWidget()
-        self.left_tabs.setObjectName('eventEditorTabs')
-        root_layout = require(self, QVBoxLayout, 'rootLayout')
-        margins = root_layout.contentsMargins()
-        column_width = (
-            self.width() - margins.left() - margins.right() - content_layout.spacing()
-        ) // 2
-        self.left_tabs.setFixedWidth(column_width)
-        # タブ幅を内容に合わせ、左から自然に並べる。
+        self.left_tabs = require(self, QTabWidget, 'eventEditorTabs')
+        # QTabBar の expanding は Designer から保存できないため、実行時に補完する。
         self.left_tabs.tabBar().setExpanding(False)
-        self.left_tabs.addTab(_vertical_page(event_card, locator_card), 'イベント・検出')
-        self.left_tabs.addTab(_vertical_page(execution_card), '実行制御')
-        content_layout.insertWidget(0, self.left_tabs)
-        content_layout.setStretch(0, 0)
-        content_layout.setStretch(1, 1)
-        right_layout = require(self, QVBoxLayout, 'rightLayout')
-        tab_height = self.left_tabs.tabBar().sizeHint().height()
-        right_layout.setContentsMargins(0, tab_height, 0, 0)
-        for title_name in ('eventCardTitle', 'locatorCardTitle', 'executionCardTitle', 'pageCardTitle', 'resultCardTitle'):
-            title = require(self, QLabel, title_name)
-            title.setProperty('cardTitle', True)
-            title.setStyleSheet('border: none; background: transparent;')
-            title.setMinimumHeight(24)
-        # タブ名と同じ見出しは重複するため、フォーム内では表示しない。
-        require(self, QLabel, 'eventCardTitle').hide()
-        require(self, QLabel, 'executionCardTitle').hide()
-        for layout_name in ('eventCardLayout', 'locatorCardLayout', 'executionCardLayout'):
-            card_layout = require(self, QVBoxLayout, layout_name)
-            card_layout.setContentsMargins(14, 10, 14, 10)
-            card_layout.setSpacing(8)
-        for layout_name in ('pageCardLayout', 'resultCardLayout'):
-            card_layout = require(self, QVBoxLayout, layout_name)
-            card_layout.setContentsMargins(14, 12, 14, 12)
-            card_layout.setSpacing(10)
-        require(self, QLabel, 'pageHint').setProperty('muted', True)
-        basic_form = require(self, QFormLayout, 'eventFormBasic')
-        locator_form = require(self, QFormLayout, 'locatorForm')
-        execution_form = require(self, QFormLayout, 'executionForm')
-        for form in (basic_form, locator_form, execution_form):
-            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
-            form.setHorizontalSpacing(8)
-            form.setVerticalSpacing(6)
-            for row in range(form.rowCount()):
-                label_item = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
-                if label_item is not None and label_item.widget() is not None:
-                    label_item.widget().setFixedWidth(FORM_LABEL_WIDTH)
-        for widget in (
-            self.selector_type, self.selector,
-            self.fallback_selector_type, self.fallback_selector,
-        ):
-            locator_form.removeWidget(widget)
-        for row in range(3, -1, -1):
-            locator_form.removeRow(row)
+        self.selector_host = require(self, QWidget, 'selectorHost')
+        self.fallback_selector_host = require(self, QWidget, 'fallbackSelectorHost')
+        self.value_host = require(self, QWidget, 'valueHost')
+        self.path_host = require(self, QWidget, 'pathHost')
+        self.guard_host = require(self, QWidget, 'guardHost')
+        self.failure_target_host = require(self, QWidget, 'failureTargetHost')
 
-        def reference_row(edit: QLineEdit) -> tuple[QWidget, QPushButton]:
-            reference = _configure_form_action(
-                QPushButton('データ参照'), LOCATOR_REFERENCE_WIDTH,
-            )
-            # 内容欄を主領域として伸縮させ、参照操作だけを固定幅にする。
-            reference.clicked.connect(lambda _checked=False, target=edit: self._insert_data_reference(target))
-            return _inline_host((edit, 1), reference), reference
-
-        self.selector_host, self.selector_reference_button = reference_row(self.selector)
-        self.fallback_selector_host, self.fallback_reference_button = reference_row(self.fallback_selector)
-        locator_form.insertRow(0, '検出方法', self.selector_type)
-        locator_form.insertRow(1, '検出内容', self.selector_host)
-        locator_form.insertRow(2, '予備検出方法', self.fallback_selector_type)
-        locator_form.insertRow(3, '予備検出内容', self.fallback_selector_host)
-        for row in range(locator_form.rowCount()):
-            label_item = locator_form.itemAt(row, QFormLayout.ItemRole.LabelRole)
-            if label_item is not None and label_item.widget() is not None:
-                label_item.widget().setFixedWidth(FORM_LABEL_WIDTH)
-        basic_form.removeWidget(self.name)
-        basic_form.removeWidget(self.enabled)
-        basic_form.removeRow(4)
-        self.enabled.setFixedWidth(88)
-        name_host = _inline_host((self.name, 1), self.enabled)
-        basic_form.setWidget(0, QFormLayout.ItemRole.FieldRole, name_host)
-        self.wait_condition = QComboBox()
+        # 選択肢は保存用キーを userData に保持するため、実行時に設定する。
+        self.wait_condition = require(self, QComboBox, 'waitConditionCombo')
         for key, label in WAIT_CONDITION_LABELS.items():
             self.wait_condition.addItem(label, key)
         stored_wait = str(event.get('value', ''))
         self.wait_condition.setCurrentIndex(max(0, self.wait_condition.findData(
             stored_wait if stored_wait in WAIT_CONDITION_LABELS else 'visible'
         )))
-        self.wait_condition.hide()
-        value_host = QWidget()
-        value_host.setProperty('formHost', True)
-        value_layout = QHBoxLayout(value_host)
-        value_layout.setContentsMargins(0, 0, 0, 0)
-        value_layout.setSpacing(8)
-        basic_form.removeWidget(self.value)
-        value_layout.addWidget(self.value, 1)
-        value_layout.addWidget(self.wait_condition, 1)
-        self.value_data_reference_button = _configure_form_action(QPushButton('データ参照'))
-        self.value_data_reference_button.clicked.connect(
-            lambda: self._insert_data_reference(self.value)
-        )
-        value_layout.addWidget(self.value_data_reference_button)
-        self.value_action_button = _configure_form_action(QPushButton())
-        self.value_action_button.clicked.connect(self._value_action)
-        self.value_action_button.hide()
-        value_layout.addWidget(self.value_action_button)
-        self.value_host = value_host
-        basic_form.setWidget(2, QFormLayout.ItemRole.FieldRole, value_host)
-        raw_guard = require(self, QLineEdit, 'guardEdit')
-        execution_form.removeWidget(raw_guard)
-        raw_guard.hide()
-        raw_guard.setParent(None)
-        raw_guard.deleteLater()
-        self.guard_summary = QLineEdit()
-        self.guard_summary.setReadOnly(True)
-        guard_button = QPushButton('条件を設定')
-        guard_button.clicked.connect(self.edit_guard)
-        self.guard_host = _inline_host((self.guard_summary, 1), guard_button)
-        execution_form.setWidget(3, QFormLayout.ItemRole.FieldRole, self.guard_host)
-        current_data_path = self.data_path.text().strip()
-        basic_form.removeWidget(self.data_path)
-        self.data_path.hide()
-        self.data_path.setParent(None)
-        self.data_path.deleteLater()
-        self.data_path = QComboBox()
+        current_data_path = str(event.get('data_path', '')).strip()
         self.data_path.addItem('')
-        schema = self._data_schema()
-        self.data_path.addItems(_schema_condition_paths(schema))
+        self.data_path.addItems(_schema_condition_paths(self._data_schema()))
         if current_data_path and self.data_path.findText(current_data_path) < 0:
             self.data_path.addItem(current_data_path)
         self.data_path.setCurrentText(current_data_path)
-        path_button = _configure_form_action(QPushButton('構造から選択'))
-        path_button.clicked.connect(self.choose_data_path)
-        self.path_host = _inline_host((self.data_path, 1), path_button)
-        basic_form.setWidget(3, QFormLayout.ItemRole.FieldRole, self.path_host)
-        execution_form.removeWidget(self.failure_target)
-        failure_reference = _configure_form_action(QPushButton('データ参照'))
-        failure_reference.clicked.connect(lambda: self._insert_data_reference(self.failure_target))
-        self.failure_target_host = _inline_host((self.failure_target, 1), failure_reference)
-        execution_form.setWidget(5, QFormLayout.ItemRole.FieldRole, self.failure_target_host)
+
+        click_success: dict[str, Any] = {}
+        raw_success = str(event.get('success_json', '') or '')
+        # 旧 click データだけは value に成功確認が入っているため読み込み互換を保つ。
+        if not raw_success and str(event.get('action', '')) == 'click':
+            raw_success = str(event.get('value', '') or '')
+        if raw_success:
+            try:
+                decoded = json.loads(raw_success)
+                click_success = decoded if isinstance(decoded, dict) else {}
+            except (TypeError, ValueError):
+                pass
+        if click_success and not event.get('success_json') and str(event.get('action', '')) == 'click':
+            self.value.clear()
+        self.click_success_condition = require(self, QComboBox, 'clickSuccessCombo')
+        for key, label in CLICK_SUCCESS_LABELS.items():
+            self.click_success_condition.addItem(label, key)
+        self.click_success_condition.setCurrentIndex(max(0, self.click_success_condition.findData(
+            str(click_success.get('condition', 'none'))
+        )))
+        self.click_success_selector_type = require(self, QComboBox, 'clickSuccessTypeCombo')
+        self.click_success_selector_type.addItems(SUPPORTED_SELECTOR_TYPES)
+        self.click_success_selector_type.setCurrentText(str(click_success.get('selector_type', 'css')))
+        self.click_success_target = require(self, QLineEdit, 'clickSuccessTargetEdit')
+        self.click_success_target.setText(str(click_success.get('target', '')))
+        self.click_success_iframe_path = str(click_success.get('iframe_path', ''))
+
+        self.guard_summary = require(self, QLineEdit, 'guardSummaryEdit')
+        self.selector_reference_button = require(self, QPushButton, 'selectorReferenceButton')
+        self.fallback_reference_button = require(self, QPushButton, 'fallbackReferenceButton')
+        self.value_data_reference_button = require(self, QPushButton, 'valueReferenceButton')
+        self.value_action_button = require(self, QPushButton, 'valueActionButton')
+        self.selector_reference_button.clicked.connect(lambda: self._insert_data_reference(self.selector))
+        self.fallback_reference_button.clicked.connect(lambda: self._insert_data_reference(self.fallback_selector))
+        self.value_data_reference_button.clicked.connect(lambda: self._insert_data_reference(self.value))
+        self.value_action_button.clicked.connect(self._value_action)
+        require(self, QPushButton, 'pathButton').clicked.connect(self.choose_data_path)
+        require(self, QPushButton, 'guardButton').clicked.connect(self.edit_guard)
+        require(self, QPushButton, 'failureReferenceButton').clicked.connect(
+            lambda: self._insert_data_reference(self.failure_target)
+        )
+
         self.target_url = require(self, QLineEdit, 'targetUrlEdit')
         self.target_url.setText(self._service_host.db.get_start_url() or 'https://github.com/?locale=ja')
         self.debug_result = require(self, QPlainTextEdit, 'resultEdit')
-        require(self, QPushButton, 'pickButton').clicked.connect(self.pick_element)
+        self.pick_button = require(self, QPushButton, 'pickButton')
+        self.pick_button.clicked.connect(self.pick_element)
         require(self, QPushButton, 'closeDebugButton').clicked.connect(self.close_debug_browser)
-        require(self, QPushButton, 'tryEventButton').clicked.connect(self.try_event)
+        self.try_event_button = require(self, QPushButton, 'tryEventButton')
+        self.try_event_button.clicked.connect(self.try_event)
         self.execute_until_button = require(self, QPushButton, 'executeUntilButton')
         self.execute_until_button.clicked.connect(self.execute_until_event)
-        self.execute_until_button.setEnabled(bool(event.get('id')))
-        for name in ('pickButton', 'closeDebugButton', 'tryEventButton', 'executeUntilButton'):
-            require(self, QPushButton, name).setMinimumWidth(FORM_ACTION_WIDTH)
-        # ブラウザー操作は文字と共通アイコンを併用し、用途を素早く判別できるようにする。
         for name, icon_name in {
-            'pickButton': 'page-pick',
-            'closeDebugButton': 'page-close',
-            'tryEventButton': 'page-try',
-            'executeUntilButton': 'page-until',
+            'pickButton': 'page-pick', 'closeDebugButton': 'page-close',
+            'tryEventButton': 'page-try', 'executeUntilButton': 'page-until',
         }.items():
             set_button_icon(require(self, QPushButton, name), icon_name, 16)
+
         self.action.currentIndexChanged.connect(self._update_action_fields)
         self.selector_type.currentIndexChanged.connect(self._update_action_fields)
         self.fallback_selector_type.currentIndexChanged.connect(self._update_action_fields)
         self.failure_action.currentIndexChanged.connect(self._update_action_fields)
+        self.click_success_condition.currentIndexChanged.connect(self._update_action_fields)
+        self.left_tabs.currentChanged.connect(self._update_picker_destination)
         buttons = require(self, QDialogButtonBox, 'buttonBox')
         localize_dialog_buttons(buttons)
         buttons.accepted.connect(self._accept_if_valid)
         buttons.rejected.connect(self.reject)
         self._update_guard_summary()
         self._update_action_fields()
+        self._update_picker_destination()
         self.iframe_path.setText(_iframe_path_text(self.iframe_path.text()))
 
     def _accept_if_valid(self) -> None:
@@ -403,6 +315,13 @@ class EventEditorDialog(QDialog):
             show_warning(self, '実行条件', str(error))
             return
         action = self.action.currentData()
+        if (
+            action in SUCCESS_CONFIRM_ACTIONS
+            and self.click_success_condition.currentData() != 'none'
+            and not self.click_success_target.text().strip()
+        ):
+            show_warning(self, '入力エラー', '成功条件の内容を入力してください。')
+            return
         if action == 'upload_file' and not (self.value.text().strip() or self.data_path.currentText().strip()):
             show_warning(self, '入力エラー', '送信するファイルまたはデータリンクを指定してください。')
             return
@@ -415,7 +334,7 @@ class EventEditorDialog(QDialog):
         self.accept()
 
     def _update_guard_summary(self) -> None:
-        self.guard_summary.setText(summarize_guard(self.guard_data) or '常に実行')
+        self.guard_summary.setText(_localized_guard_summary(self.guard_data) or tr('常に実行'))
 
     def _data_schema(self) -> dict[str, Any]:
         """親画面が保持するデータ構造を安全に取得する。"""
@@ -450,7 +369,7 @@ class EventEditorDialog(QDialog):
 
     def _update_action_fields(self) -> None:
         action = self.action.currentData()
-        selector_enabled = action in {'click', 'fill', 'select', 'wait', 'press', 'get_text', 'upload_file'}
+        selector_enabled = action in ELEMENT_SELECTOR_ACTIONS
         require(self, QFrame, 'locatorCard').setVisible(selector_enabled)
         # 項目数が少ない操作でも各入力欄は常に上詰めで表示する。
         require(self, QFrame, 'eventCard').setMinimumHeight(0)
@@ -481,7 +400,12 @@ class EventEditorDialog(QDialog):
         self.value.setVisible(value_enabled and action != 'wait')
         self.value_action_button.setVisible(action in {'select', 'upload_file'})
         self.value_data_reference_button.setVisible(action in {'goto', 'fill', 'press', 'screenshot'})
-        self.value_action_button.setText('先頭を選択' if action == 'select' else 'ファイルを選択')
+        # 右側ボタンを持たない操作も、ほかの入力欄と同じ右端位置に揃える。
+        require(self, QWidget, 'valueTrailing').setVisible(action in {'wait', 'get_text', 'pause'})
+        # 小型アイコンの機能は、操作ごとのツールチップで明確に区別する。
+        self.value_action_button.setToolTip(tr(
+            '先頭項目を選択' if action == 'select' else 'ファイルを選択'
+        ))
         if action == 'select':
             self.value_action_button.setProperty('selected', self.value.text() == SELECT_FIRST_VALUE)
         data_path_enabled = action in {'fill', 'select', 'get_text', 'upload_file'}
@@ -489,11 +413,44 @@ class EventEditorDialog(QDialog):
         require(self, QLabel, 'dataPathLabel').setVisible(data_path_enabled)
         failure_target_visible = self.failure_action.currentData() == 'goto'
         show_row(execution_form, self.failure_target_host, failure_target_visible)
+        click_success_visible = action in SUCCESS_CONFIRM_ACTIONS
+        click_success_condition = str(self.click_success_condition.currentData())
+        require(self, QLabel, 'successConfirmationTitle').setVisible(click_success_visible)
+        show_row(execution_form, self.click_success_condition, click_success_visible)
+        show_row(
+            execution_form, self.click_success_selector_type,
+            click_success_visible and click_success_condition in {'visible', 'hidden', 'operable'},
+        )
+        show_row(
+            execution_form, self.click_success_target,
+            click_success_visible and click_success_condition != 'none',
+        )
+        self._update_picker_destination()
+
+    def _update_picker_destination(self, _index: int=-1) -> None:
+        if not hasattr(self, 'pick_button'):
+            return
+        success_mode = (
+            self.action.currentData() in SUCCESS_CONFIRM_ACTIONS
+            and self.left_tabs.currentIndex() == 1
+            and self.click_success_condition.currentData() in {'visible', 'hidden', 'operable'}
+        )
+        self.pick_button.setProperty('pickDestination', 'click_success' if success_mode else 'event')
+        self.pick_button.setText(tr('成功確認対象を選択' if success_mode else '操作対象を選択'))
+        # goto 自体に操作対象は不要だが、要素を使う成功確認では選択を許可する。
+        action = str(self.action.currentData())
+        # 初期状態は要素選択から操作を推定するため、操作が空でも選択可能にする。
+        self.pick_button.setEnabled(not action or success_mode or action in ELEMENT_SELECTOR_ACTIONS)
+        # 未入力イベントは実行できないが、既存イベントの直前実行は新規追加時も利用できる。
+        self.try_event_button.setEnabled(bool(action))
+        self.execute_until_button.setEnabled(True)
+        self.pick_button.style().unpolish(self.pick_button)
+        self.pick_button.style().polish(self.pick_button)
 
     def _value_action(self) -> None:
         action = self.action.currentData()
         if action == 'upload_file':
-            path, _ = QFileDialog.getOpenFileName(self, '送信するファイルを選択')
+            path, _ = QFileDialog.getOpenFileName(self, tr('送信するファイルを選択'))
             if path:
                 self.value.setText(path)
         elif action == 'select':
@@ -507,7 +464,7 @@ class EventEditorDialog(QDialog):
         ]
         for button in buttons:
             button.setEnabled(False)
-        self.debug_result.appendPlainText(working_text)
+        self.debug_result.appendPlainText(tr(working_text))
         future: Future = self._service_host.debug_pool.submit(operation)
         timer = QTimer(self)
         timer.setInterval(100)
@@ -517,28 +474,71 @@ class EventEditorDialog(QDialog):
                 return
             timer.stop()
             for button in buttons:
-                button.setEnabled(button is not self.execute_until_button or bool(self.event_id))
+                button.setEnabled(True)
+            # 操作内容に依存するボタンは、現在の入力状態を使って再判定する。
+            self._update_picker_destination()
             try:
                 result = future.result()
                 message = success_text(result) if callable(success_text) else str(success_text)
                 self.debug_result.appendPlainText(message)
             except Exception as error:
                 message = tr(str(error))
-                self.debug_result.appendPlainText(message)
+                self.debug_result.appendPlainText(tr(message))
+            finally:
+                self._restore_editor_focus()
 
         timer.timeout.connect(poll)
         timer.start()
 
+    def _restore_editor_focus(self) -> None:
+        """ブラウザー選択の成否にかかわらず、編集画面を前面へ戻す。"""
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        handle = self.windowHandle()
+        if handle is not None:
+            handle.requestActivate()
+        if sys.platform != 'win32':
+            self.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+            return
+        # Windows は別プロセスの Chrome が前面にあると通常の activateWindow() を
+        # 拒否するため、前面スレッドへ一時的に接続してダイアログを復帰させる。
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        window_id = int(self.winId())
+        foreground = user32.GetForegroundWindow()
+        current_thread = kernel32.GetCurrentThreadId()
+        foreground_thread = user32.GetWindowThreadProcessId(foreground, None) if foreground else 0
+        attached = bool(
+            foreground_thread and foreground_thread != current_thread
+            and user32.AttachThreadInput(current_thread, foreground_thread, True)
+        )
+        try:
+            user32.ShowWindow(window_id, 9)  # Windows の SW_RESTORE を指定する。
+            user32.BringWindowToTop(window_id)
+            user32.SetForegroundWindow(window_id)
+            user32.SetFocus(window_id)
+        finally:
+            if attached:
+                user32.AttachThreadInput(current_thread, foreground_thread, False)
+
     def pick_element(self) -> None:
         action = str(self.action.currentData())
+        # ブラウザー側へフォーカスが移る前に、選択結果の反映先を確定する。
+        pick_success_target = self.pick_button.property('pickDestination') == 'click_success'
         def picked(result: dict[str, str]) -> str:
+            if pick_success_target:
+                self.click_success_selector_type.setCurrentText(result['selector_type'])
+                self.click_success_target.setText(result['selector'])
+                self.click_success_iframe_path = _iframe_path_text(result.get('iframe_path', ''))
+                return f'成功確認要素を選択しました: {result.get("display", result["selector"])}'
             self.selector_type.setCurrentText(result['selector_type'])
             self.selector.setText(result['selector'])
             self.fallback_selector_type.setCurrentText(result.get('fallback_selector_type', 'none'))
             self.fallback_selector.setText(result.get('fallback_selector', ''))
             self.iframe_path.setText(_iframe_path_text(result.get('iframe_path', '')))
             suggested = result.get('suggested_action', '')
-            if suggested and self.action.findData(suggested) >= 0:
+            if not self.action.currentData() and suggested and self.action.findData(suggested) >= 0:
                 self.action.setCurrentIndex(self.action.findData(suggested))
             return f'要素を選択しました: {result.get("display", result["selector"])}'
         self._run_debug(
@@ -554,6 +554,27 @@ class EventEditorDialog(QDialog):
 
     def try_event(self) -> None:
         event = self.result_data()
+        preview_success = (
+            event['action'] in SUCCESS_CONFIRM_ACTIONS
+            and self.left_tabs.currentIndex() == 1
+            and self.click_success_condition.currentData() in {'visible', 'hidden', 'operable'}
+        )
+        if preview_success:
+            success_event = {
+                'selector_type': self.click_success_selector_type.currentText(),
+                'selector': self.click_success_target.text().strip(),
+                'fallback_selector_type': 'none', 'fallback_selector': '',
+                'iframe_path': self.click_success_iframe_path,
+                'timeout_ms': self.timeout.value(),
+            }
+            self._run_debug(
+                '成功確認要素を検索しています',
+                lambda: self._service_host.debug_browser.highlight_element(
+                    success_event, self.target_url.text().strip(),
+                ),
+                '成功確認要素をブラウザー上で強調表示しました',
+            )
+            return
         self._run_debug(
             'イベントを実行しています',
             lambda: self._service_host.debug_browser.execute_event(event, self.target_url.text().strip()),
@@ -561,19 +582,20 @@ class EventEditorDialog(QDialog):
         )
 
     def execute_until_event(self) -> None:
-        if not self.event_id:
-            return
-        jobs = self._service_host.debug_jobs(self.event_id)
+        jobs = self._service_host.debug_jobs(
+            self.event_id or None,
+            current_event_limit=self.insert_at if not self.event_id else None,
+        )
         variables: dict[str, str] = {}
         for name in sorted({name for job in jobs for name in find_variables(job['events'])}):
-            value, ok = QInputDialog.getText(self, '変数入力', name)
+            value, ok = QInputDialog.getText(self, tr('変数入力'), name)
             if not ok:
                 return
             variables[name] = value
         self._run_debug(
             '対象イベントの直前まで実行しています',
             lambda: self._service_host.debug_browser.execute_until(
-                jobs, self.event_id, variables, self.target_url.text().strip(),
+                jobs, self.event_id or None, variables, self.target_url.text().strip(),
             ),
             '対象イベントの直前まで実行しました',
         )
@@ -581,7 +603,19 @@ class EventEditorDialog(QDialog):
     def result_data(self) -> dict[str, Any]:
         failure_choice = str(self.failure_action.currentData())
         action = str(self.action.currentData())
-        value = str(self.wait_condition.currentData()) if action == 'wait' else self.value.text()
+        if action == 'wait':
+            value = str(self.wait_condition.currentData())
+        else:
+            value = self.value.text()
+        success_condition = str(self.click_success_condition.currentData())
+        success_json = '' if action not in SUCCESS_CONFIRM_ACTIONS or success_condition == 'none' else json.dumps(
+            {
+                'condition': success_condition,
+                'selector_type': self.click_success_selector_type.currentText(),
+                'target': self.click_success_target.text().strip(),
+            } | ({'iframe_path': self.click_success_iframe_path} if self.click_success_iframe_path else {}),
+            ensure_ascii=False,
+        )
         return {
             'name': self.name.text().strip(),
             'action': action,
@@ -591,6 +625,7 @@ class EventEditorDialog(QDialog):
             'fallback_selector': self.fallback_selector.text().strip(),
             'iframe_path': _iframe_path_text(self.iframe_path.text()),
             'value': value,
+            'success_json': success_json,
             'timeout_ms': self.timeout.value(),
             'enabled': int(self.enabled.isChecked()),
             'continue_on_error': int(failure_choice != 'stop'),
@@ -604,7 +639,7 @@ class EventEditorDialog(QDialog):
 
 
 class EventGroupEditorDialog(QDialog):
-    """Edits the loop/retry capabilities stored on a group boundary pair."""
+    """グループ境界の組に保存されるループ・再試行機能を編集する。"""
 
     def __init__(self, parent: QWidget, event: dict[str, Any] | None = None) -> None:
         super().__init__(parent)
@@ -654,7 +689,7 @@ class EventGroupEditorDialog(QDialog):
         self.retry_interval.setEnabled(self.retry_enabled.isChecked())
 
     def _update_guard_summary(self) -> None:
-        self.guard_summary.setText(summarize_guard(self.guard_data) or '常に実行')
+        self.guard_summary.setText(_localized_guard_summary(self.guard_data) or tr('常に実行'))
 
     def choose_data_path(self) -> None:
         dialog = DataPathPickerDialog(
@@ -808,8 +843,7 @@ class DataPathPickerDialog(QDialog):
     def _sync_toggle_all_button(self, *_args) -> None:
         """現在のツリー状態に合わせてボタンの図案と説明を切り替える。"""
         has_expanded = any(item.isExpanded() for item in self._container_items())
-        self.toggle_all_button.setText('⏵' if has_expanded else '⏷')
-        self.toggle_all_button.setToolTip('すべて折りたたむ' if has_expanded else 'すべて展開')
+        set_tree_toggle_icon(self.toggle_all_button, not has_expanded)
 
     def _toggle_all(self) -> None:
         """一つのボタンで全項目の展開と折りたたみを反転する。"""
@@ -982,7 +1016,7 @@ class FlowEditorDialog(QDialog):
 
     def update_guard_summary(self) -> None:
         self.guard_summary.setText(
-            summarize_guard(self.guard_value, GUARD_OPERATOR_LABELS) or '常に実行'
+            _localized_guard_summary(self.guard_value) or tr('常に実行')
         )
 
     def edit_guard(self) -> None:
@@ -1084,7 +1118,7 @@ class FlowDesignPage(QWidget):
         set_column_layout(
             self.event_tree,
             logical_order=(0, 5, 4, 3, 1, 2),
-            widths=(300, 110, 220, 120, 70, 60),
+            widths=(240, 110, 220, 120, 70, 60),
         )
         self.event_tree.setDefaultDropAction(Qt.DropAction.CopyAction)
         self.event_tree.setContainerTest(
@@ -1121,11 +1155,13 @@ class FlowDesignPage(QWidget):
         self.workflow_table.setRowCount(len(rows))
         selected_row = -1
         for index, row in enumerate(rows):
-            values = [row['position'], row['name'], tr('msg.0037') if row['enabled'] else tr('msg.0038'), '★' if row['pcl_loop_start'] else '', summarize_guard(decode_guard(row['guard_json'])) or '常に実行']
+            values = [row['position'], row['name'], tr('msg.0037') if row['enabled'] else tr('msg.0038'), '★' if row['pcl_loop_start'] else '', _localized_guard_summary(decode_guard(row['guard_json'])) or tr('常に実行')]
             for column, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 item.setData(Qt.ItemDataRole.UserRole, row['id'])
+                if not row['enabled']:
+                    item.setForeground(QColor('#929da6'))
                 self.workflow_table.setItem(index, column, item)
             if row['id'] == current:
                 selected_row = index
@@ -1220,9 +1256,12 @@ class FlowDesignPage(QWidget):
                     parent_stack.pop()
                 continue
             # DB の内部 action 名をそのまま見せず、利用者向けの操作名で表示する。
-            shown_action = ACTION_LABELS.get(action, action)
-            values = [row['name'], shown_action, row['value'], summarize_guard(decode_guard(row['guard_json'])) or '常に実行', tr('msg.0037') if row['enabled'] else tr('msg.0038'), row['position']]
+            shown_action = tr(ACTION_LABELS.get(action, action))
+            # クリック成功確認は内部設定であり、固定値列には表示しない。
+            shown_value = '' if action == 'click' else row['value']
+            values = [row['name'], shown_action, shown_value, _localized_guard_summary(decode_guard(row['guard_json'])) or tr('常に実行'), tr('msg.0037') if row['enabled'] else tr('msg.0038'), row['position']]
             item = QTreeWidgetItem([str(value) for value in values])
+            set_row_enabled_appearance(item, bool(row['enabled']))
             item.setData(0, Qt.ItemDataRole.UserRole, row['id'])
             item.setData(0, Qt.ItemDataRole.UserRole + 1, row)
             # ドロップ位置を全行で受け付け、実際の移動先は専用ツリー側で同階層に限定する。
@@ -1263,8 +1302,7 @@ class FlowDesignPage(QWidget):
         groups = self._group_items()
         all_expanded = bool(groups) and all(item.isExpanded() for item in groups)
         self.group_toggle_button.setEnabled(bool(groups))
-        self.group_toggle_button.setText('⏵' if all_expanded else '⏷')
-        self.group_toggle_button.setToolTip('すべて折りたたむ' if all_expanded else 'すべて展開')
+        set_tree_toggle_icon(self.group_toggle_button, not all_expanded)
 
     def _toggle_all_groups(self) -> None:
         """現在のグループ状態と反対の一括操作を実行する。"""
@@ -1317,7 +1355,10 @@ class FlowDesignPage(QWidget):
         item = self.event_tree.currentItem()
         return dict(item.data(0, Qt.ItemDataRole.UserRole + 1)) if item is not None else None
 
-    def debug_jobs(self, target_event_id: int) -> list[dict[str, Any]]:
+    def debug_jobs(
+        self, target_event_id: int | None,
+        *, current_event_limit: int | None=None,
+    ) -> list[dict[str, Any]]:
         if self.current_workflow_id is None:
             return []
         workflows = [dict(row) for row in self.db.list_workflows()]
@@ -1331,6 +1372,8 @@ class FlowDesignPage(QWidget):
                 continue
             events = [dict(row) for row in self.db.list_events(workflow['id'])]
             if workflow['id'] == self.current_workflow_id:
+                if current_event_limit is not None:
+                    events = events[:current_event_limit]
                 for event in events:
                     if event['id'] == target_event_id:
                         event['enabled'] = 1
@@ -1443,11 +1486,18 @@ class FlowDesignPage(QWidget):
             return
         self.current_workflow_id = None
         self.reload()
+        show_file_imported(self, path)
 
     def export_json(self) -> None:
         path, _filter = QFileDialog.getSaveFileName(self, tr('msg.0017'), str(self.project_dir / 'workflows.json'), 'JSON (*.json)')
-        if path:
+        if not path:
+            return
+        try:
             self.db.export_workflow_collection(Path(path))
+        except (OSError, ValueError) as error:
+            show_error(self, tr('msg.0057'), tr(str(error)))
+            return
+        show_file_exported(self, path)
 
     def _event_insertion_index(self) -> int:
         """選択行の種類から、新規イベントを挿入する平坦順序位置を取得する。"""
@@ -1488,7 +1538,7 @@ class FlowDesignPage(QWidget):
             show_information(self, tr('msg.0048'), tr('msg.0049'))
             return
         insert_at = self._event_insertion_index()
-        dialog = EventEditorDialog(self)
+        dialog = EventEditorDialog(self, insert_at=insert_at)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             event_id = self.db.add_event(self.current_workflow_id, dialog.result_data())
             self._place_new_events([event_id], insert_at)
