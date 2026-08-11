@@ -89,7 +89,7 @@ class ElementPicker:
             if len(actionable) == 1:
                 valid_candidates.append((selector_type, selector))
         if not valid_candidates:
-            raise RuntimeError('msg.0172')
+            raise RuntimeError('error.element_unique_locator_unavailable')
         selector_type, selector = valid_candidates[0]
         fallback_candidates = valid_candidates[1:]
         fallback = next(
@@ -195,7 +195,7 @@ class ElementPicker:
             }""")
             selector = str(selector)
             if not selector:
-                raise RuntimeError('msg.0593')
+                raise RuntimeError('error.iframe_locator_unavailable')
             matches = []
             for child in current.parent_frame.child_frames:
                 try:
@@ -211,7 +211,7 @@ class ElementPicker:
                     if child.frame_element().is_visible()
                 ]
             if len(matches) != 1 or matches[0] is not current:
-                raise RuntimeError('msg.0593')
+                raise RuntimeError('error.iframe_locator_unavailable')
             selectors.append(selector)
             current = current.parent_frame
         selectors.reverse()
@@ -286,7 +286,7 @@ class DebugBrowserSession:
                 if task is None:
                     future.set_result(None)
                     return
-                future.set_exception(RuntimeError('msg.0169'))
+                future.set_exception(RuntimeError('error.playwright_not_installed'))
         playwright = sync_playwright().start()
         context = page = None
         temporary_profile: tempfile.TemporaryDirectory[str] | None = None
@@ -382,10 +382,10 @@ class DebugBrowserSession:
             bring_page_to_front(page)
             picker = ElementPicker()
             run_id = uuid.uuid4().hex
-            script = picker_script(run_id, tr('msg.0490'), tr('msg.0491'))
+            script = picker_script(run_id, tr('selector.open_target_hint'), tr('selector.selection_mode_hint'))
             while True:
                 if self._cancel_requested.is_set():
-                    raise RuntimeError('msg.0170')
+                    raise RuntimeError('event.element_selection_cancelled')
                 page = active_page(page)
                 page.wait_for_timeout(100)
                 for frame in page_frames(page):
@@ -400,7 +400,7 @@ class DebugBrowserSession:
                         continue
                     if result:
                         if result.get('cancelled'):
-                            raise RuntimeError('msg.0170')
+                            raise RuntimeError('event.element_selection_cancelled')
                         return picker._choose_unique_locator(page, result, frame, action)
         return self._submit(task)
 
@@ -482,7 +482,7 @@ class DebugBrowserSession:
                 page = active_page(page)
                 bring_page_to_front(page)
                 return
-            raise RuntimeError('msg.0359')
+            raise RuntimeError('error.target_event_unreachable')
         self._submit(task)
 
     def close_browser(self) -> None:
@@ -491,7 +491,7 @@ class DebugBrowserSession:
         try:
             self._submit(lambda: self._dispose(), timeout=10)
         except FutureTimeoutError as error:
-            raise RuntimeError('msg.0562') from error
+            raise RuntimeError('browser.close_timeout') from error
 
     def shutdown(self) -> None:
         self._cancel_requested.set()

@@ -108,15 +108,15 @@ class AuthPage(QWidget):
             item.setText(1, tr('使用中') if item.text(0) == name else '')
         self.selected.setText(name)
         directory = persistent_profile_dir(self.project_dir, profile_path(self.project_dir, name))
-        self.path.setText(tr('msg.0470') if directory is None else str(directory))
+        self.path.setText(tr('login.no_state_description') if directory is None else str(directory))
 
     def new_profile(self) -> None:
-        name, ok = QInputDialog.getText(self, tr('msg.0462'), tr('msg.0471'))
+        name, ok = QInputDialog.getText(self, tr('common.new'), tr('login.state_name_prompt'))
         name = name.strip()
         if not ok or not name:
             return
         if not re.fullmatch(r'[A-Za-z0-9_-]+', name) or name in {DEFAULT_PROFILE, NO_PROFILE}:
-            show_warning(self, tr('msg.0159'), tr('msg.0472'))
+            show_warning(self, tr('error.input_title'), tr('login.state_name_invalid'))
             return
         path = profile_path(self.project_dir, name)
         assert path is not None
@@ -129,7 +129,7 @@ class AuthPage(QWidget):
     def delete_profile(self) -> None:
         name = self.profiles.currentItem().text(0)
         if name in {DEFAULT_PROFILE, NO_PROFILE}:
-            show_information(self, tr('msg.0048'), tr('msg.0473'))
+            show_information(self, tr('common.notice'), tr('login.protected_state_delete_denied'))
             return
         if not confirm_deletion(self, f'{name} を削除しますか？'):
             return
@@ -143,7 +143,7 @@ class AuthPage(QWidget):
         self.reload()
 
     def _background(self, operation, success: str) -> None:
-        self.status.setText(tr('msg.0475'))
+        self.status.setText(tr('login.processing'))
         future: Future = self.pool.submit(operation)
         timer = QTimer(self)
         timer.setInterval(80)
@@ -161,17 +161,17 @@ class AuthPage(QWidget):
 
     def open_browser(self) -> None:
         path = profile_path(self.project_dir, self.profiles.currentItem().text(0))
-        self._background(lambda: self.session.open(path, self.url.text()), tr('msg.0477'))
+        self._background(lambda: self.session.open(path, self.url.text()), tr('login.browser_opened'))
 
     def save_state(self) -> None:
         path = profile_path(self.project_dir, self.profiles.currentItem().text(0))
         if path is None:
-            show_information(self, tr('msg.0048'), tr('msg.0478'))
+            show_information(self, tr('common.notice'), tr('login.no_state_save_denied'))
             return
         self._background(lambda: self.session.save(path), '保存しました: {result}')
 
     def close_browser(self) -> None:
-        self._background(self.session.close_browser, tr('msg.0481'))
+        self._background(self.session.close_browser, tr('login.browser_closed'))
 
     def shutdown(self) -> None:
         self.session.shutdown()

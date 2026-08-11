@@ -7,6 +7,7 @@ import threading
 from pathlib import Path
 from typing import Any
 from core.conditions import decode_guard
+from i18n import tr
 
 class Database:
     """画面と実行スレッドから共有される SQLite アクセス層。"""
@@ -124,10 +125,6 @@ class Database:
                     changed = True
                     break
 
-    @staticmethod
-    def _default_data_schema() -> dict[str, Any]:
-        return {'name': 'Data', 'type': 'object', 'children': [{'name': 'case_no', 'type': 'text'}, {'name': 'opp_name', 'type': 'text'}, {'name': 'plans', 'type': 'list', 'children': [{'name': 'plan', 'type': 'text'}, {'name': 'quantity', 'type': 'number'}, {'name': 'attrs', 'type': 'list', 'children': [{'name': 'attr', 'type': 'text'}]}]}]}
-
     @classmethod
     def _merge_schemas(cls, base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
         """同名で互換性のあるフィールドを統合し、型競合時は先の型を維持する。"""
@@ -242,7 +239,7 @@ class Database:
     def reorder_workflows(self, workflow_ids: list[int]) -> None:
         existing = {row['id'] for row in self.list_workflows()}
         if set(workflow_ids) != existing or len(workflow_ids) != len(existing):
-            raise ValueError('msg.0096')
+            raise ValueError('flow.order_mismatch')
         with self.connection:
             for position, workflow_id in enumerate(workflow_ids, 1):
                 self.connection.execute('UPDATE workflows SET position=? WHERE id=?', (position, workflow_id))
@@ -279,7 +276,7 @@ class Database:
     def reorder_events(self, workflow_id: int, event_ids: list[int]) -> None:
         existing = {row['id'] for row in self.list_events(workflow_id)}
         if set(event_ids) != existing or len(event_ids) != len(existing):
-            raise ValueError('msg.0097')
+            raise ValueError('event.order_mismatch')
         with self.connection:
             for index, current_id in enumerate(event_ids, 1):
                 self.connection.execute('UPDATE events SET position=? WHERE id=?', (-index, current_id))
@@ -384,33 +381,36 @@ class Database:
         try:
             payload = json.loads(path.read_text(encoding='utf-8-sig'))
         except json.JSONDecodeError as error:
-            raise ValueError(f'msg.0098{error}') from error
+            raise ValueError(f'{tr("flow.json_format_error_prefix")}{error}') from error
         if not isinstance(payload, dict) or payload.get('version') not in {1, 2}:
-            raise ValueError('msg.0114')
+            raise ValueError('flow.json_version_unsupported')
         workflows = payload.get('workflows')
         if payload.get('type') not in {'web-flow-collection', 'salesforce-flow-collection'} or not isinstance(workflows, list):
-            raise ValueError('msg.0115')
+            raise ValueError('flow.json_type_invalid')
         browser_visible = payload.get('browser_visible', True)
         if not isinstance(browser_visible, bool):
-            raise ValueError('msg.0116')
+            raise ValueError('flow.browser_visible_invalid')
         normalized: list[dict[str, Any]] = []
         names: set[str] = set()
         for workflow_index, workflow in enumerate(workflows, 1):
             if not isinstance(workflow, dict) or not isinstance(workflow.get('name'), str) or (not workflow['name'].strip()):
-                raise ValueError(f'msg.0103{workflow_index}msg.0117')
+                raise ValueError(f'{tr("validation.ordinal_prefix")}{workflow_index}{tr("flow.invalid_name_suffix")}')
             name = workflow['name'].strip()
             if name in names:
-                raise ValueError(f'msg.0118{name}')
+                raise ValueError(f'{tr("flow.duplicate_name_prefix")}{name}')
             names.add(name)
             events = workflow.get('events')
             if not isinstance(events, list):
-                raise ValueError(f'msg.0119{name}msg.0120')
+                raise ValueError(f'{tr("flow.name_quote_prefix")}{name}{tr("flow.events_array_suffix")}')
             events = self._group_items_to_events(events)
             checked_events: list[dict[str, Any]] = []
             required = ('name', 'action', 'selector_type', 'selector', 'value')
             for event_index, event in enumerate(events, 1):
                 if not isinstance(event, dict) or any((not isinstance(event.get(key), str) for key in required)):
-                    raise ValueError(f'msg.0119{name}msg.0121{event_index}msg.0122')
+                    raise ValueError(
+                        f'{tr("flow.name_quote_prefix")}{name}{tr("validation.item_ordinal_infix")}'
+                        f'{event_index}{tr("flow.event_format_invalid_suffix")}'
+                    )
                 if event['action'] == 'wait_hidden':
                     event = dict(event)
                     event['action'] = 'wait'
@@ -419,15 +419,26 @@ class Database:
                     event = dict(event)
                     event['value'] = 'operable'
                 if event['action'] not in allowed_actions:
-                    raise ValueError(f"msg.0119{name}msg.0123{event['action']}")
+                    raise ValueError(
+                        f'{tr("flow.name_quote_prefix")}{name}{tr("flow.unsupported_action_infix")}{event["action"]}'
+                    )
                 if event['selector_type'] not in allowed_selector_types:
-                    raise ValueError(f"msg.0119{name}msg.0124{event['selector_type']}")
+                    raise ValueError(
+                        f'{tr("flow.name_quote_prefix")}{name}{tr("flow.unsupported_selector_infix")}'
+                        f'{event["selector_type"]}'
+                    )
                 try:
                     timeout = int(event.get('timeout_ms', 10000))
                 except (TypeError, ValueError) as error:
-                    raise ValueError(f'msg.0119{name}msg.0121{event_index}msg.0125') from error
+                    raise ValueError(
+                        f'{tr("flow.name_quote_prefix")}{name}{tr("validation.item_ordinal_infix")}'
+                        f'{event_index}{tr("flow.event_timeout_invalid_suffix")}'
+                    ) from error
                 if timeout <= 0:
-                    raise ValueError(f'msg.0119{name}msg.0121{event_index}msg.0126')
+                    raise ValueError(
+                        f'{tr("flow.name_quote_prefix")}{name}{tr("validation.item_ordinal_infix")}'
+                        f'{event_index}{tr("flow.event_timeout_nonpositive_suffix")}'
+                    )
                 failure_action = str(event.get('failure_action', 'none'))
                 if failure_action not in {'none', 'refresh', 'goto'}:
                     failure_action = 'none'
@@ -437,11 +448,14 @@ class Database:
                     if retry_count < 0 or retry_interval_ms < 0:
                         raise ValueError
                 except (TypeError, ValueError) as error:
-                    raise ValueError(f'msg.0119{name}msg.0121{event_index}msg.0571') from error
+                    raise ValueError(
+                        f'{tr("flow.name_quote_prefix")}{name}{tr("validation.item_ordinal_infix")}'
+                        f'{event_index}{tr("event.retry_values_invalid")}'
+                    ) from error
                 checked_events.append({'name': event['name'], 'action': event['action'], 'selector_type': event['selector_type'], 'selector': event['selector'], 'fallback_selector_type': str(event.get('fallback_selector_type', 'none')), 'fallback_selector': str(event.get('fallback_selector', '')), 'iframe_path': str(event.get('iframe_path', '')), 'value': event['value'], 'success_json': str(event.get('success_json', '')), 'timeout_ms': timeout, 'enabled': int(bool(event.get('enabled', 1))), 'continue_on_error': int(bool(event.get('continue_on_error', 0))), 'refresh_on_retry': 0, 'failure_action': failure_action, 'failure_target': str(event.get('failure_target', '')), 'data_path': str(event.get('data_path', '')), 'retry_count': retry_count, 'retry_interval_ms': retry_interval_ms, 'guard': decode_guard(event.get('guard'))})
             normalized.append({'name': name, 'description': str(workflow.get('description', '')), 'enabled': int(bool(workflow.get('enabled', 1))), 'events': checked_events, 'pcl_loop_start': int(bool(workflow.get('pcl_loop_start', 0))), 'guard': decode_guard(workflow.get('guard'))})
         if sum((workflow['pcl_loop_start'] for workflow in normalized)) > 1:
-            raise ValueError('msg.0127')
+            raise ValueError('flow.multiple_data_loop_starts')
         with self.connection:
             self.connection.execute('DELETE FROM runs')
             self.connection.execute('DELETE FROM events')
@@ -602,7 +616,7 @@ class Database:
 
     def set_pcl_session_limit(self, limit: int) -> None:
         if not 1 <= limit <= 20:
-            raise ValueError('msg.0128')
+            raise ValueError('settings.session_count_invalid')
         self._set_meta('pcl_session_limit', limit)
 
     def create_run(self, workflow_id: int) -> int:
@@ -619,7 +633,8 @@ class Database:
     def get_data_schema(self, _workflow_id: int=0) -> dict[str, Any]:
         row = self.connection.execute('SELECT schema_json FROM global_data_schema WHERE id=1').fetchone()
         if row is None:
-            return self._default_data_schema()
+            # 初回起動時はサンプル項目を作らず、利用者が設計する空の構造を返す。
+            return {'name': 'Data', 'type': 'object', 'children': []}
         schema = json.loads(row['schema_json'])
         # 旧版の list ルートも、一件分のデータを表す object として扱う。
         schema['type'] = 'object'
@@ -645,7 +660,7 @@ class Database:
         existing = {row['id'] for row in self.connection.execute(
             'SELECT id FROM global_data_records').fetchall()}
         if set(record_ids) != existing or len(record_ids) != len(existing):
-            raise ValueError('msg.0096')
+            raise ValueError('flow.order_mismatch')
         with self.connection:
             # position は UNIQUE のため、入れ替え途中の衝突を避けて一度負数へ退避する。
             for temporary_position, record_id in enumerate(record_ids, 1):
@@ -675,7 +690,7 @@ class Database:
     def set_data_record_group(self, record_id: int, group: str) -> None:
         group = group.strip()
         if not group:
-            raise ValueError('msg.0130')
+            raise ValueError('execution.group_empty')
         self.connection.execute('UPDATE global_data_records SET execution_group=? WHERE id=?', (group, record_id))
         self.connection.commit()
 

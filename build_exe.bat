@@ -108,6 +108,8 @@ if errorlevel 1 goto :error
 if not exist "main.py" goto :missing_input
 if not exist "locales" goto :missing_input
 if not exist "assets\app-icon.png" goto :missing_input
+if not exist "qt_ui\icons\expand-all.svg" goto :missing_input
+if not exist "qt_ui\icons\collapse-all.svg" goto :missing_input
 for /d %%D in (*) do if exist "%%D\index.html" if exist "%%D\style.css" echo   Manual: %%D
 echo Build script check passed.
 exit /b 0

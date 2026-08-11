@@ -23,7 +23,7 @@ class MainWindow(QMainWindow):
         self.project_dir = project_dir
         self.db = db
         self._force_close = False
-        self.setWindowTitle(tr('msg.0002'))
+        self.setWindowTitle(tr('app.title'))
         self.resize(1180, 720)
         self.setMinimumSize(QSize(1180, 720))
         # QApplication に設定済みの共通アイコンを使用する。

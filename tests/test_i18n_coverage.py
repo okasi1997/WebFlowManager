@@ -23,11 +23,54 @@ def _contains_japanese(value: str) -> bool:
 
 
 class I18nCoverageTests(unittest.TestCase):
-    def test_msgid_sets_remain_shared_and_do_not_grow_for_source_texts(self) -> None:
+    def test_each_language_uses_one_complete_catalog(self) -> None:
+        locale_dir = PROJECT_DIR / 'locales'
         ja = json.loads((PROJECT_DIR / 'locales' / 'ja.json').read_text(encoding='utf-8'))
         zh = json.loads((PROJECT_DIR / 'locales' / 'zh.json').read_text(encoding='utf-8'))
+        # 言語ごとの補助辞書を作らず、同一キーを持つ主辞書だけを管理する。
+        self.assertEqual({path.name for path in locale_dir.glob('*.json')}, {'ja.json', 'zh.json'})
         self.assertEqual(set(ja), set(zh))
-        self.assertEqual(len(ja), 478)
+        self.assertFalse(any(key.startswith('msg.') for key in ja))
+        common_keys = {key for key in ja if key.startswith('common.')}
+        self.assertEqual(len(common_keys), 23)
+        error_keys = {key for key in ja if key.startswith('error.')}
+        self.assertEqual(len(error_keys), 28)
+        event_keys = {key for key in ja if key.startswith('event.')}
+        self.assertEqual(len(event_keys), 47)
+        flow_keys = {key for key in ja if key.startswith('flow.')}
+        self.assertEqual(len(flow_keys), 36)
+        schema_keys = {key for key in ja if key.startswith('schema.')}
+        self.assertEqual(len(schema_keys), 5)
+        data_excel_keys = {key for key in ja if key.startswith('data_excel.')}
+        self.assertEqual(len(data_excel_keys), 8)
+        login_keys = {key for key in ja if key.startswith('login.')}
+        self.assertEqual(len(login_keys), 25)
+        settings_keys = {key for key in ja if key.startswith('settings.')}
+        self.assertEqual(len(settings_keys), 21)
+        selector_keys = {key for key in ja if key.startswith('selector.')}
+        self.assertEqual(len(selector_keys), 8)
+        execution_keys = {key for key in ja if key.startswith('execution.')}
+        self.assertEqual(len(execution_keys), 26)
+        condition_keys = {key for key in ja if key.startswith('condition.')}
+        self.assertEqual(len(condition_keys), 2)
+        browser_keys = {key for key in ja if key.startswith('browser.')}
+        self.assertEqual(len(browser_keys), 1)
+        app_keys = {key for key in ja if key.startswith('app.')}
+        self.assertEqual(len(app_keys), 1)
+        validation_keys = {key for key in ja if key.startswith('validation.')}
+        self.assertEqual(len(validation_keys), 2)
+        source_keys = [
+            key for key in ja
+            if not key.startswith(
+                (
+                    'common.', 'error.', 'event.', 'flow.', 'schema.',
+                    'data_excel.', 'login.', 'settings.', 'selector.', 'execution.',
+                    'condition.', 'browser.', 'app.', 'validation.',
+                )
+            )
+        ]
+        self.assertGreater(len(source_keys), 0)
+        self.assertTrue(all(ja[key] == key for key in source_keys))
 
     def test_all_designer_texts_have_a_chinese_translation(self) -> None:
         missing: list[str] = []

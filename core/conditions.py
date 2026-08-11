@@ -15,7 +15,7 @@ def decode_guard(value: Any) -> dict[str, Any]:
         try:
             value = json.loads(value)
         except json.JSONDecodeError as error:
-            raise ValueError('msg.0380') from error
+            raise ValueError('error.guard_format_invalid') from error
     return normalize_guard(value)
 
 
@@ -25,16 +25,16 @@ def normalize_guard(value: Any) -> dict[str, Any]:
     logic = value.get('logic', 'all')
     rules = value.get('rules', [])
     if logic not in {'all', 'any'} or not isinstance(rules, list):
-        raise ValueError('msg.0380')
+        raise ValueError('error.guard_format_invalid')
     normalized: list[dict[str, str]] = []
     for rule in rules:
         if not isinstance(rule, dict):
-            raise ValueError('msg.0380')
+            raise ValueError('error.guard_format_invalid')
         path = str(rule.get('path', '')).strip()
         operator = str(rule.get('operator', 'eq'))
         expected = str(rule.get('value', ''))
         if not path or operator not in OPERATORS:
-            raise ValueError('msg.0380')
+            raise ValueError('error.guard_format_invalid')
         normalized.append({'path': path, 'operator': operator, 'value': expected})
     return {'logic': logic, 'rules': normalized}
 

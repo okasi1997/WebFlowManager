@@ -69,22 +69,22 @@ def schema_name_path_map(
 
 def validate_schema(node: Any, location: str='Data') -> None:
     if not isinstance(node, dict) or not isinstance(node.get('name'), str) or (not node['name'].strip()):
-        raise ValueError(f'{location}msg.0236')
+        raise ValueError(f'{location}{tr("schema.invalid_name_suffix")}')
     if node.get('type') not in TYPES:
-        raise ValueError(f"{location}msg.0237{node.get('type')}")
+        raise ValueError(f'{location}{tr("schema.invalid_type_prefix")}{node.get("type")}')
     children = node.get('children', [])
     if node['type'] in ('object', 'list'):
         if not isinstance(children, list):
-            raise ValueError(f'{location}msg.0238')
+            raise ValueError(f'{location}{tr("schema.children_array_suffix")}')
         names: set[str] = set()
         for child in children:
             child_name = child.get('name') if isinstance(child, dict) else '?'
             if child_name in names:
-                raise ValueError(f'{location}msg.0239{child_name}')
+                raise ValueError(f'{location}{tr("schema.duplicate_field_prefix")}{child_name}')
             names.add(child_name)
             validate_schema(child, f'{location}.{child_name}')
     elif 'children' in node and children:
-        raise ValueError(f'{location}msg.0240')
+        raise ValueError(f'{location}{tr("schema.scalar_children_suffix")}')
 
 def scalar_paths(schema: dict[str, Any]) -> list[str]:
     return [path for path, node in schema_paths(schema) if node['type'] not in ('object', 'list')]
@@ -152,8 +152,8 @@ def write_records_excel(path: str | Path, schema: dict[str, Any], records: list[
     max_depth = max((len(column.split('.')) for column in columns), default=1)
     workbook = Workbook()
     sheet = workbook.active
-    sheet.title = tr('msg.0241')
-    sheet.cell(1, 1, tr('msg.0242'))
+    sheet.title = tr('data_excel.data_sheet')
+    sheet.cell(1, 1, tr('data_excel.record_name'))
     if max_depth > 1:
         sheet.merge_cells(start_row=1, start_column=1, end_row=max_depth, end_column=1)
     path_parts = [column.split('.') for column in columns]
@@ -194,12 +194,12 @@ def write_records_excel(path: str | Path, schema: dict[str, Any], records: list[
             cell.font = Font(bold=True, color='FFFFFF')
             cell.fill = PatternFill('solid', fgColor=color)
     sheet.freeze_panes = f'A{max_depth + 1}'
-    headers = [tr('msg.0242'), *columns]
+    headers = [tr('data_excel.record_name'), *columns]
     for index, header in enumerate(headers, 1):
         values = [str(sheet.cell(row, index).value or '') for row in range(1, sheet.max_row + 1)]
         sheet.column_dimensions[get_column_letter(index)].width = min(max(len(header) + 2, *(len(value) + 2 for value in values)), 45)
-    settings_sheet = workbook.create_sheet(tr('msg.0243'))
-    settings_sheet.append([tr('msg.0242'), tr('msg.0517'), tr('msg.0244'), tr('msg.0245')])
+    settings_sheet = workbook.create_sheet(tr('data_excel.settings_sheet'))
+    settings_sheet.append([tr('data_excel.record_name'), tr('common.summary'), tr('data_excel.enabled'), tr('data_excel.execution_group')])
     for record in records:
         settings_sheet.append([
             str(record['name']).strip(),
@@ -251,7 +251,7 @@ def read_records_excel(path: str | Path, schema: dict[str, Any]) -> list[dict[st
     unexpected = sorted(actual - expected)
     missing = sorted(expected - actual)
     if not columns or unexpected:
-        details = ['msg.0246']
+        details = [tr('data_excel.header_mismatch')]
         if unexpected:
             details.append(f"Excel only: {', '.join(unexpected)}")
         if missing:
@@ -277,9 +277,9 @@ def read_records_excel(path: str | Path, schema: dict[str, Any]) -> list[dict[st
     if current_name:
         grouped.append((current_name, current_rows))
     if not grouped:
-        raise ValueError('msg.0247')
+        raise ValueError('data_excel.no_data')
     execution_settings: list[tuple[str, bool, str]] = []
-    settings_names = {tr_language('msg.0243', language) for language in SUPPORTED_LANGUAGES}
+    settings_names = {tr_language('data_excel.settings_sheet', language) for language in SUPPORTED_LANGUAGES}
     # 出力時と現在の UI 言語が異なっても設定シートを認識する。
     settings_name = next((name for name in workbook.sheetnames if name in settings_names), None)
     if settings_name is not None:
@@ -290,8 +290,8 @@ def read_records_excel(path: str | Path, schema: dict[str, Any]) -> list[dict[st
             enabled_index = 2 if has_summary_column else 1
             group_index = 3 if has_summary_column else 2
             enabled_value = row[enabled_index] if len(row) > enabled_index else True
-            enabled_words = {tr_language('msg.0037', language).lower() for language in SUPPORTED_LANGUAGES}
-            enabled_words.add(tr('msg.0248').lower())
+            enabled_words = {tr_language('common.yes', language).lower() for language in SUPPORTED_LANGUAGES}
+            enabled_words.add(tr('data_excel.enabled_value').lower())
             enabled = enabled_value if isinstance(enabled_value, bool) else str(enabled_value).lower() in {'true', '1', 'yes', *enabled_words}
             group = str(row[group_index] if len(row) > group_index and row[group_index] not in (None, '') else '1').strip()
             execution_settings.append((summary, enabled, group))
@@ -319,7 +319,7 @@ def read_records_excel(path: str | Path, schema: dict[str, Any]) -> list[dict[st
                 if node['type'] == 'number' and value not in (None, ''):
                     value = float(value) if isinstance(value, float) and (not value.is_integer()) else int(value)
                 elif node['type'] == 'boolean':
-                    yes_words = {tr_language('msg.0037', language).lower() for language in SUPPORTED_LANGUAGES}
+                    yes_words = {tr_language('common.yes', language).lower() for language in SUPPORTED_LANGUAGES}
                     value = value if isinstance(value, bool) else str(value).lower() in {'true', '1', 'yes', *yes_words}
                 container[part] = value
             elif node['type'] == 'object':

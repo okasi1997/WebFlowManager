@@ -200,12 +200,12 @@ def show_error(parent: QWidget, title: str, message: str) -> None:
 
 def show_file_exported(parent: QWidget, path: str | Path) -> None:
     """ファイル出力の完了通知を、各画面で共通表示する。"""
-    show_information(parent, tr('msg.0269'), f'{tr("出力しました：\n")}{path}')
+    show_information(parent, tr('common.file_exported_title'), f'{tr("出力しました：\n")}{path}')
 
 
 def show_file_imported(parent: QWidget, path: str | Path) -> None:
     """ファイル読込の完了通知を、各画面で共通表示する。"""
-    show_information(parent, tr('msg.0274'), f'{tr("読み込みました：\n")}{path}')
+    show_information(parent, tr('common.file_imported_title'), f'{tr("読み込みました：\n")}{path}')
 
 
 def load_ui_into(target: T, filename: str) -> T:
@@ -273,7 +273,11 @@ def set_button_icon(button, icon_name: str, size: int = 16) -> None:
     icon_path = ICON_DIR / f'{icon_name}.svg'
     if not icon_path.exists():
         raise RuntimeError(f'Cannot find Qt icon: {icon_path}')
-    button.setIcon(QIcon(str(icon_path)))
+    # パッケージ版でも無効ボタンの SVG が消えないよう、各表示モードを明示登録する。
+    icon = QIcon()
+    for mode in (QIcon.Mode.Normal, QIcon.Mode.Disabled):
+        icon.addFile(str(icon_path), QSize(), mode, QIcon.State.Off)
+    button.setIcon(icon)
     button.setIconSize(QSize(size, size))
 
 

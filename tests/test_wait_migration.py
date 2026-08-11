@@ -8,6 +8,14 @@ from core.settings import SUPPORTED_ACTIONS, SUPPORTED_SELECTOR_TYPES
 
 
 class WaitMigrationTests(unittest.TestCase):
+    def test_new_database_starts_with_an_empty_data_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            database = Database(Path(folder) / 'test.db')
+            schema = database.get_data_schema()
+            database.close()
+
+        self.assertEqual(schema, {'name': 'Data', 'type': 'object', 'children': []})
+
     def test_existing_wait_hidden_event_is_migrated_when_database_opens(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'test.db'

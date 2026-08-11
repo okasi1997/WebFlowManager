@@ -27,7 +27,7 @@ class AuthBrowserSession:
                 if task is None:
                     future.set_result(None)
                     return
-                future.set_exception(RuntimeError('msg.0169'))
+                future.set_exception(RuntimeError('error.playwright_not_installed'))
         playwright = sync_playwright().start()
         context = page = None
 
@@ -58,10 +58,10 @@ class AuthBrowserSession:
         def save(state_path: Path) -> str:
             nonlocal page
             if context is None or page is None:
-                raise RuntimeError('msg.0468')
+                raise RuntimeError('login.browser_not_open')
             page = active_page(page)
             if page.is_closed():
-                raise RuntimeError('msg.0468')
+                raise RuntimeError('login.browser_not_open')
             state_path.parent.mkdir(parents=True, exist_ok=True)
             context.storage_state(path=str(state_path))
             return page.url
@@ -69,10 +69,10 @@ class AuthBrowserSession:
         def status() -> tuple[str, str, int]:
             nonlocal page
             if context is None or page is None:
-                raise RuntimeError('msg.0468')
+                raise RuntimeError('login.browser_not_open')
             page = active_page(page)
             if page.is_closed():
-                raise RuntimeError('msg.0468')
+                raise RuntimeError('login.browser_not_open')
             return page.url, page.title(), len(context.cookies())
 
         self._open_browser, self._save, self._status, self._close_browser = open_browser, save, status, close
@@ -121,7 +121,7 @@ class AuthBrowserSession:
         try:
             self._submit(lambda: self._close_browser(), timeout=10)
         except FutureTimeoutError as error:
-            raise RuntimeError('msg.0562') from error
+            raise RuntimeError('browser.close_timeout') from error
 
     def shutdown(self) -> None:
         future: Future[Any] = Future()

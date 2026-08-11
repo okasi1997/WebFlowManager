@@ -196,6 +196,12 @@ class EventEditorDialog(QDialog):
             (self.failure_target, event.get('failure_target', '')),
         ):
             widget.setText(str(value))
+        # 「先頭を選択」は保存用の内部値であり、入力欄には表示しない。
+        self._select_first = (
+            initial_action == 'select' and str(event.get('value', '')) == SELECT_FIRST_VALUE
+        )
+        if self._select_first:
+            self.value.clear()
         self.timeout.setValue(int(event.get('timeout_ms', self._service_host.db.get_default_timeout_ms())))
         self.retry_count.setValue(int(event.get('retry_count', 0)))
         self.retry_interval.setValue(int(event.get('retry_interval_ms', 0)))
@@ -268,6 +274,8 @@ class EventEditorDialog(QDialog):
         self.fallback_reference_button.clicked.connect(lambda: self._insert_data_reference(self.fallback_selector))
         self.value_data_reference_button.clicked.connect(lambda: self._insert_data_reference(self.value))
         self.value_action_button.clicked.connect(self._value_action)
+        # 利用者が選択値を直接入力した場合は、先頭選択状態を解除する。
+        self.value.textEdited.connect(lambda _text: setattr(self, '_select_first', False))
         require(self, QPushButton, 'pathButton').clicked.connect(self.choose_data_path)
         require(self, QPushButton, 'guardButton').clicked.connect(self.edit_guard)
         require(self, QPushButton, 'failureReferenceButton').clicked.connect(
@@ -307,7 +315,7 @@ class EventEditorDialog(QDialog):
 
     def _accept_if_valid(self) -> None:
         if not self.name.text().strip():
-            show_warning(self, tr('msg.0042'), 'イベント名を入力してください')
+            show_warning(self, tr('error.create_title'), 'イベント名を入力してください')
             return
         try:
             decode_guard(self.guard_data)
@@ -407,7 +415,7 @@ class EventEditorDialog(QDialog):
             '先頭項目を選択' if action == 'select' else 'ファイルを選択'
         ))
         if action == 'select':
-            self.value_action_button.setProperty('selected', self.value.text() == SELECT_FIRST_VALUE)
+            self.value_action_button.setProperty('selected', self._select_first)
         data_path_enabled = action in {'fill', 'select', 'get_text', 'upload_file'}
         self.path_host.setVisible(data_path_enabled)
         require(self, QLabel, 'dataPathLabel').setVisible(data_path_enabled)
@@ -454,7 +462,8 @@ class EventEditorDialog(QDialog):
             if path:
                 self.value.setText(path)
         elif action == 'select':
-            self.value.setText('' if self.value.text() == SELECT_FIRST_VALUE else SELECT_FIRST_VALUE)
+            self._select_first = not self._select_first
+            self.value.clear()
             self._update_action_fields()
 
     def _run_debug(self, working_text: str, operation, success_text) -> None:
@@ -605,6 +614,8 @@ class EventEditorDialog(QDialog):
         action = str(self.action.currentData())
         if action == 'wait':
             value = str(self.wait_condition.currentData())
+        elif action == 'select' and self._select_first:
+            value = SELECT_FIRST_VALUE
         else:
             value = self.value.text()
         success_condition = str(self.click_success_condition.currentData())
@@ -1027,7 +1038,7 @@ class FlowEditorDialog(QDialog):
 
     def _accept_if_valid(self) -> None:
         if not self.name.text().strip():
-            show_warning(self, tr('msg.0042'), '業務フロー名を入力してください。')
+            show_warning(self, tr('error.create_title'), '業務フロー名を入力してください。')
             return
         self.accept()
 
@@ -1074,7 +1085,7 @@ class FlowDesignPage(QWidget):
         designer_table.setParent(None)
         designer_table.deleteLater()
         self.workflow_table.setColumnCount(5)
-        self.workflow_table.setHorizontalHeaderLabels([tr('msg.0005'), tr('msg.0003'), tr('msg.0006'), tr('msg.0007'), tr('msg.0405')])
+        self.workflow_table.setHorizontalHeaderLabels([tr('common.order'), tr('flow.name'), tr('common.enabled'), tr('flow.data_start'), tr('condition.execution_condition')])
         configure_table_view(self.workflow_table, reorder=True)
         # CopyAction を受け付け、Qt 標準の移動後削除による行欠落を防ぐ。
         self.workflow_table.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
@@ -1096,8 +1107,8 @@ class FlowDesignPage(QWidget):
         require(self, QPushButton, 'deleteWorkflowButton').clicked.connect(self.delete_workflow)
         json_button = require(self, QPushButton, 'workflowJsonButton')
         json_menu = QMenu(json_button)
-        json_menu.addAction(tr('msg.0016'), self.import_json)
-        json_menu.addAction(tr('msg.0017'), self.export_json)
+        json_menu.addAction(tr('flow.import_all_json'), self.import_json)
+        json_menu.addAction(tr('flow.export_all_json'), self.export_json)
         json_button.setMenu(json_menu)
         self.event_title = require(self, QLabel, 'eventTitle')
         designer_event_tree = require(self, QTreeWidget, 'eventTree')
@@ -1109,7 +1120,7 @@ class FlowDesignPage(QWidget):
         designer_event_tree.setParent(None)
         designer_event_tree.deleteLater()
         self.event_tree.setColumnCount(6)
-        self.event_tree.setHeaderLabels([tr('msg.0028'), tr('msg.0029'), tr('msg.0032'), tr('msg.0405'), tr('msg.0006'), tr('msg.0027')])
+        self.event_tree.setHeaderLabels([tr('event.name'), tr('common.action'), tr('event.fixed_value'), tr('condition.execution_condition'), tr('common.enabled'), tr('common.order')])
         configure_table_view(self.event_tree, reorder=True)
         self.event_tree.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         event_header = self.event_tree.header()
@@ -1131,8 +1142,8 @@ class FlowDesignPage(QWidget):
         self.event_tree.itemDoubleClicked.connect(self._event_double_clicked)
         add = require(self, QPushButton, 'addEventButton')
         add_menu = QMenu(add)
-        add_menu.addAction(tr('msg.0034'), self.add_event)
-        add_menu.addAction(tr('msg.0413'), self.add_group)
+        add_menu.addAction(tr('event.add'), self.add_event)
+        add_menu.addAction(tr('event.group_add'), self.add_group)
         add.setMenu(add_menu)
         require(self, QPushButton, 'editEventButton').clicked.connect(self.edit_event)
         require(self, QPushButton, 'deleteEventButton').clicked.connect(self.delete_event)
@@ -1155,7 +1166,7 @@ class FlowDesignPage(QWidget):
         self.workflow_table.setRowCount(len(rows))
         selected_row = -1
         for index, row in enumerate(rows):
-            values = [row['position'], row['name'], tr('msg.0037') if row['enabled'] else tr('msg.0038'), '★' if row['pcl_loop_start'] else '', _localized_guard_summary(decode_guard(row['guard_json'])) or tr('常に実行')]
+            values = [row['position'], row['name'], tr('common.yes') if row['enabled'] else tr('common.no'), '★' if row['pcl_loop_start'] else '', _localized_guard_summary(decode_guard(row['guard_json'])) or tr('常に実行')]
             for column, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -1172,7 +1183,7 @@ class FlowDesignPage(QWidget):
             self.workflow_table.selectRow(0)
         else:
             self.current_workflow_id = None
-            self.event_title.setText(tr('msg.0018'))
+            self.event_title.setText(tr('flow.selection_required'))
             self.event_tree.clear()
         restore_scroll_position(self.workflow_table, workflow_scroll)
 
@@ -1259,7 +1270,7 @@ class FlowDesignPage(QWidget):
             shown_action = tr(ACTION_LABELS.get(action, action))
             # クリック成功確認は内部設定であり、固定値列には表示しない。
             shown_value = '' if action == 'click' else row['value']
-            values = [row['name'], shown_action, shown_value, _localized_guard_summary(decode_guard(row['guard_json'])) or tr('常に実行'), tr('msg.0037') if row['enabled'] else tr('msg.0038'), row['position']]
+            values = [row['name'], shown_action, shown_value, _localized_guard_summary(decode_guard(row['guard_json'])) or tr('常に実行'), tr('common.yes') if row['enabled'] else tr('common.no'), row['position']]
             item = QTreeWidgetItem([str(value) for value in values])
             set_row_enabled_appearance(item, bool(row['enabled']))
             item.setData(0, Qt.ItemDataRole.UserRole, row['id'])
@@ -1397,7 +1408,7 @@ class FlowDesignPage(QWidget):
             return
         data = dialog.result_data()
         if any(row['name'] == data['name'] for row in self.db.list_workflows()):
-            show_warning(self, tr('msg.0042'), tr('msg.0043'))
+            show_warning(self, tr('error.create_title'), tr('flow.name_duplicate'))
             return
         workflow_id = self.db.add_workflow(data['name'], data['description'])
         self.db.set_workflow_enabled(workflow_id, data['enabled'])
@@ -1424,7 +1435,7 @@ class FlowDesignPage(QWidget):
             return
         data = dialog.result_data()
         if any(item['id'] != row['id'] and item['name'] == data['name'] for item in self.db.list_workflows()):
-            show_warning(self, tr('msg.0042'), tr('msg.0043'))
+            show_warning(self, tr('error.create_title'), tr('flow.name_duplicate'))
             return
         self.db.update_workflow(row['id'], data['name'], data['description'])
         self.db.set_workflow_enabled(row['id'], data['enabled'])
@@ -1437,7 +1448,7 @@ class FlowDesignPage(QWidget):
 
     def delete_workflow(self) -> None:
         row = self._selected_workflow()
-        if row is None or not confirm_deletion(self, tr('msg.0047')):
+        if row is None or not confirm_deletion(self, tr('flow.delete_confirmation')):
             return
         self.db.delete_workflow(row['id'])
         self.current_workflow_id = None
@@ -1470,7 +1481,7 @@ class FlowDesignPage(QWidget):
             self.reload(row['id'])
 
     def import_json(self) -> None:
-        path, _filter = QFileDialog.getOpenFileName(self, tr('msg.0016'), str(self.project_dir), 'JSON (*.json)')
+        path, _filter = QFileDialog.getOpenFileName(self, tr('flow.import_all_json'), str(self.project_dir), 'JSON (*.json)')
         if not path:
             return
         if not confirm_action(
@@ -1482,20 +1493,20 @@ class FlowDesignPage(QWidget):
         try:
             self.db.import_workflow_collection(Path(path), SUPPORTED_ACTIONS, SUPPORTED_SELECTOR_TYPES)
         except (OSError, ValueError) as error:
-            show_error(self, tr('msg.0057'), tr(str(error)))
+            show_error(self, tr('error.import_title'), tr(str(error)))
             return
         self.current_workflow_id = None
         self.reload()
         show_file_imported(self, path)
 
     def export_json(self) -> None:
-        path, _filter = QFileDialog.getSaveFileName(self, tr('msg.0017'), str(self.project_dir / 'workflows.json'), 'JSON (*.json)')
+        path, _filter = QFileDialog.getSaveFileName(self, tr('flow.export_all_json'), str(self.project_dir / 'workflows.json'), 'JSON (*.json)')
         if not path:
             return
         try:
             self.db.export_workflow_collection(Path(path))
         except (OSError, ValueError) as error:
-            show_error(self, tr('msg.0057'), tr(str(error)))
+            show_error(self, tr('error.import_title'), tr(str(error)))
             return
         show_file_exported(self, path)
 
@@ -1535,7 +1546,7 @@ class FlowDesignPage(QWidget):
 
     def add_event(self) -> None:
         if self.current_workflow_id is None:
-            show_information(self, tr('msg.0048'), tr('msg.0049'))
+            show_information(self, tr('common.notice'), tr('flow.create_or_select_first'))
             return
         insert_at = self._event_insertion_index()
         dialog = EventEditorDialog(self, insert_at=insert_at)
@@ -1608,7 +1619,7 @@ class FlowDesignPage(QWidget):
         row = self._selected_event()
         if row is None or self.current_workflow_id is None:
             return
-        if not confirm_deletion(self, tr('msg.0052')):
+        if not confirm_deletion(self, tr('event.delete_confirmation')):
             return
         rows = [dict(item) for item in self.db.list_events(self.current_workflow_id)]
         pair_id = self._paired_boundary_event_id(rows, row['id'])

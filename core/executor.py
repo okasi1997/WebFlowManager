@@ -105,7 +105,9 @@ class WorkflowExecutor:
                         if evaluate_guard(workflow_guard, lambda path: self._resolve_guard_data(root_data, path, {})):
                             self._execute_workflow_on_page(page, step['events'], variables, artifact_dir, root_data, f'step_{step_number}', 0, self._step_log_prefix(step), (lambda event, current=step: on_event_start(current, event)) if on_event_start else None)
                         else:
-                            self.logger(f'{self._step_log_prefix(step)}msg.0406')
+                            self.logger(
+                                f'{self._step_log_prefix(step)}{tr("condition.guard_skipped")}'
+                            )
                     except Exception as error:
                         if on_step_failure:
                             on_step_failure(step, token, error)
@@ -116,7 +118,10 @@ class WorkflowExecutor:
                 active_error = sys.exc_info()[1]
                 cleanup_error: Exception | None = None
                 if active_error is not None and browser_visible and context is not None:
-                    self.logger(f'{self._session_log_prefix}msg.0564')
+                    self.logger(
+                        f'{self._session_log_prefix}'
+                        f'{tr("execution.stopped_close_browser")}'
+                    )
                     while True:
                         try:
                             pages = open_pages(context)
@@ -165,7 +170,7 @@ class WorkflowExecutor:
         index = 0
         while index < len(events):
             if deadline is not None and time.monotonic() >= deadline:
-                raise TimeoutError('msg.0576')
+                raise TimeoutError('error.event_group_timeout')
             page = active_page(page)
             event = events[index]
             action = event['action']
@@ -187,7 +192,10 @@ class WorkflowExecutor:
                 end = self._matching_group_end(events, index)
                 group_guard = decode_guard(event.get('guard', event.get('guard_json', '')))
                 if not evaluate_guard(group_guard, lambda path: self._resolve_guard_data(root_data, path, loop_context)):
-                    self.logger(f'{self._event_log_prefix(log_prefix, event, loop_progress)}msg.0406')
+                    self.logger(
+                        f'{self._event_log_prefix(log_prefix, event, loop_progress)}'
+                        f'{tr("condition.guard_skipped")}'
+                    )
                     index = end + 1
                     continue
                 path = str(event.get('data_path', '')).strip()
@@ -195,7 +203,10 @@ class WorkflowExecutor:
                 if path:
                     items = self._resolve_data(root_data, path, loop_context)
                     if not isinstance(items, list):
-                        raise ValueError(f'msg.0180{path}msg.0181')
+                        raise ValueError(
+                            f'{tr("execution.loop_path_prefix")}{path}'
+                            f'{tr("execution.not_list_suffix")}'
+                        )
                     iterations = []
                     for item_number, item in enumerate(items, 1):
                         nested_context = dict(loop_context)
@@ -222,9 +233,16 @@ class WorkflowExecutor:
                             if attempt > retry_count:
                                 raise
                             group_prefix = self._event_log_prefix(log_prefix, event, progress)
-                            self.logger(f'{group_prefix}msg.0568{attempt}/{retry_count + 1}msg.0569{error}')
+                            self.logger(
+                                f'{group_prefix}{tr("event.retry_attempt_prefix")}'
+                                f'{attempt}/{retry_count + 1}'
+                                f'{tr("execution.retry_failed_infix")}{tr(str(error))}'
+                            )
                             if retry_interval_ms:
-                                self.logger(f'{group_prefix}msg.0570{retry_interval_ms} ms')
+                                self.logger(
+                                    f'{group_prefix}{tr("execution.retry_wait_prefix")}'
+                                    f'{retry_interval_ms} ms'
+                                )
                                 page.wait_for_timeout(retry_interval_ms)
                 index = end + 1
                 continue
@@ -234,32 +252,51 @@ class WorkflowExecutor:
                 end = self._matching_loop_end(events, index)
                 group_guard = decode_guard(event.get('guard', event.get('guard_json', '')))
                 if not evaluate_guard(group_guard, lambda path: self._resolve_guard_data(root_data, path, loop_context)):
-                    self.logger(f'{self._event_log_prefix(log_prefix, event, loop_progress)}msg.0406')
+                    self.logger(
+                        f'{self._event_log_prefix(log_prefix, event, loop_progress)}'
+                        f'{tr("condition.guard_skipped")}'
+                    )
                     index = end + 1
                     continue
                 path = str(event.get('data_path', ''))
                 if not path:
-                    raise ValueError(f"msg.0178{event['name']}msg.0179")
+                    raise ValueError(
+                        f'{tr("execution.loop_quote_prefix")}{event["name"]}'
+                        f'{tr("execution.loop_data_link_missing_suffix")}'
+                    )
                 items = self._resolve_data(root_data, path, loop_context)
                 if not isinstance(items, list):
-                    raise ValueError(f'msg.0180{path}msg.0181')
+                    raise ValueError(
+                        f'{tr("execution.loop_path_prefix")}{path}'
+                        f'{tr("execution.not_list_suffix")}'
+                    )
                 event_prefix = self._event_log_prefix(log_prefix, event, loop_progress)
-                self.logger(f'{event_prefix}msg.0182{path}msg.0183{len(items)}msg.0184')
+                self.logger(
+                    f'{event_prefix}{tr("execution.loop_log_infix")}{path}'
+                    f'{tr("execution.total_infix")}{len(items)}'
+                    f'{tr("execution.iterations_suffix")}'
+                )
                 for item_number, item in enumerate(items, 1):
                     progress = [*loop_progress, f'{item_number}/{len(items)}']
-                    self.logger(f'{self._event_log_prefix(log_prefix, event, progress)}msg.0182{path} [{item_number}/{len(items)}]')
+                    self.logger(
+                        f'{self._event_log_prefix(log_prefix, event, progress)}'
+                        f'{tr("execution.loop_log_infix")}{path} [{item_number}/{len(items)}]'
+                    )
                     nested_context = dict(loop_context)
                     nested_context[path] = item
                     self._execute_sequence(page, events[index + 1:end], variables, artifact_dir, root_data, nested_context, f'{trace}_{item_number}', log_prefix, progress, on_event_start, deadline)
                 index = end + 1
                 continue
             if action == 'loop_end':
-                raise ValueError('msg.0185')
+                raise ValueError('execution.unmatched_loop_end')
             if action == 'retry_start':
                 end = self._matching_retry_end(events, index)
                 group_guard = decode_guard(event.get('guard', event.get('guard_json', '')))
                 if not evaluate_guard(group_guard, lambda path: self._resolve_guard_data(root_data, path, loop_context)):
-                    self.logger(f'{self._event_log_prefix(log_prefix, event, loop_progress)}msg.0406')
+                    self.logger(
+                        f'{self._event_log_prefix(log_prefix, event, loop_progress)}'
+                        f'{tr("condition.guard_skipped")}'
+                    )
                     index = end + 1
                     continue
                 try:
@@ -271,22 +308,34 @@ class WorkflowExecutor:
                 total_attempts = retry_count + 1
                 for attempt in range(1, total_attempts + 1):
                     retry_prefix = self._event_log_prefix(log_prefix, event, loop_progress)
-                    self.logger(f'{retry_prefix}msg.0186{attempt}/{total_attempts}]')
+                    self.logger(
+                        f'{retry_prefix}{tr("execution.retry_scope_attempt_infix")}'
+                        f'{attempt}/{total_attempts}]'
+                    )
                     try:
                         self._execute_sequence(page, events[index + 1:end], variables, artifact_dir, root_data, loop_context, f'{trace}_retry_{attempt}', log_prefix, loop_progress, on_event_start, deadline)
                         break
                     except Exception:
                         if attempt >= total_attempts:
-                            self.logger(f'{retry_prefix}msg.0187{retry_count}msg.0188')
+                            self.logger(
+                                f'{retry_prefix}{tr("execution.retry_scope_failed_after_infix")}'
+                                f'{retry_count}{tr("execution.attempts_failed_suffix")}'
+                            )
                             raise
-                        self.logger(f'{retry_prefix}msg.0189{attempt + 1}/{total_attempts}]')
+                        self.logger(
+                            f'{retry_prefix}{tr("execution.retry_scope_next_attempt_infix")}'
+                            f'{attempt + 1}/{total_attempts}]'
+                        )
                 index = end + 1
                 continue
             if action == 'retry_end':
                 raise ValueError('retry_end has no matching retry_start')
             event_guard = decode_guard(event.get('guard', event.get('guard_json', '')))
             if not evaluate_guard(event_guard, lambda path: self._resolve_guard_data(root_data, path, loop_context)):
-                self.logger(f'{self._event_log_prefix(log_prefix, event, loop_progress)}msg.0406')
+                self.logger(
+                    f'{self._event_log_prefix(log_prefix, event, loop_progress)}'
+                    f'{tr("condition.guard_skipped")}'
+                )
                 index += 1
                 continue
             if on_event_start:
@@ -311,7 +360,7 @@ class WorkflowExecutor:
             except ValueError:
                 detail = action
             self.logger(
-                f"{prefix}msg.0191{event['name']}"
+                f'{prefix}{tr("execution.execute_infix")}{event["name"]}'
                 + (f' | {detail}' if detail else '')
                 + (f' <- {data_path}' if data_path else '')
             )
@@ -336,14 +385,20 @@ class WorkflowExecutor:
                                 effective,
                             )
                         if deadline is not None and time.monotonic() >= deadline:
-                            raise TimeoutError('msg.0576')
+                            raise TimeoutError('error.event_group_timeout')
                         break
                     except Exception as attempt_error:
                         if attempt > retry_count:
                             raise
-                        self.logger(f'{prefix}msg.0568{attempt}/{retry_count + 1}msg.0569{attempt_error}')
+                        self.logger(
+                            f'{prefix}{tr("event.retry_attempt_prefix")}'
+                            f'{attempt}/{retry_count + 1}'
+                            f'{tr("execution.retry_failed_infix")}{tr(str(attempt_error))}'
+                        )
                         if retry_interval_ms:
-                            self.logger(f'{prefix}msg.0570{retry_interval_ms} ms')
+                            self.logger(
+                                f'{prefix}{tr("execution.retry_wait_prefix")}{retry_interval_ms} ms'
+                            )
                             page.wait_for_timeout(retry_interval_ms)
                 if action == 'get_text' and data_path:
                     self._assign_data(root_data, data_path, loop_context, captured)
@@ -356,17 +411,17 @@ class WorkflowExecutor:
                 screenshot = artifact_dir / self._failure_screenshot_name(trace, event['id'])
                 artifact_dir.mkdir(parents=True, exist_ok=True)
                 page.screenshot(path=str(screenshot), full_page=True)
-                self.logger(f'{prefix}msg.0192{error}')
+                self.logger(f'{prefix}{tr("error.failure_prefix")}{tr(str(error))}')
                 if failure_url:
                     self.logger(f'{prefix}Failure URL: {failure_url}')
-                self.logger(f'{prefix}msg.0193{screenshot}')
+                self.logger(f'{prefix}{tr("execution.screenshot_prefix")}{screenshot}')
                 failure_action = str(event.get('failure_action', 'none'))
                 if failure_action == 'refresh':
-                    self.logger(f'{prefix}msg.0430')
+                    self.logger(f'{prefix}{tr("execution.failure_refresh")}')
                     page.reload(wait_until='domcontentloaded')
                 elif failure_action == 'goto':
                     target = substitute(str(effective.get('failure_target', '')), variables)
-                    self.logger(f'{prefix}msg.0431{target}')
+                    self.logger(f'{prefix}{tr("execution.failure_goto_prefix")}{target}')
                     page.goto(target, wait_until='domcontentloaded')
                 if not event.get('continue_on_error', 0):
                     raise
@@ -448,7 +503,10 @@ class WorkflowExecutor:
                 if depth == 0:
                     return index
                 depth -= 1
-        raise ValueError(f"msg.0178{events[start]['name']}msg.0198")
+        raise ValueError(
+            f'{tr("execution.loop_quote_prefix")}{events[start]["name"]}'
+            f'{tr("execution.missing_loop_end_suffix")}'
+        )
 
     @staticmethod
     def _matching_retry_end(events: list[dict[str, Any]], start: int) -> int:
@@ -477,19 +535,25 @@ class WorkflowExecutor:
     @staticmethod
     def _resolve_data(root_data: dict[str, Any] | None, path: str, loop_context: dict[str, Any]) -> Any:
         if root_data is None:
-            raise ValueError(f'msg.0199{path}msg.0200')
+            raise ValueError(
+                f'{tr("execution.linked_data_prefix")}{path}'
+                f'{tr("execution.data_missing_suffix")}'
+            )
         current: Any = root_data
         prefix: list[str] = []
         for part in path.split('.'):
             prefix.append(part)
             current_path = '.'.join(prefix)
             if not isinstance(current, dict) or part not in current:
-                raise ValueError(f'msg.0201{current_path}')
+                raise ValueError(f'{tr("execution.field_missing_prefix")}{current_path}')
             current = current[part]
             if isinstance(current, list) and current_path in loop_context:
                 current = loop_context[current_path]
             elif isinstance(current, list) and current_path != path:
-                raise ValueError(f'msg.0202{current_path}msg.0203')
+                raise ValueError(
+                    f'{tr("execution.field_prefix")}{current_path}'
+                    f'{tr("execution.list_requires_loop_suffix")}'
+                )
         return current
 
     @classmethod
@@ -522,7 +586,10 @@ class WorkflowExecutor:
     def _assign_data(root_data: dict[str, Any] | None, path: str, loop_context: dict[str, Any], value: Any) -> None:
         """取得した値を、現在処理中の PCL または list 要素へ書き戻す。"""
         if root_data is None:
-            raise ValueError(f'msg.0199{path}msg.0200')
+            raise ValueError(
+                f'{tr("execution.linked_data_prefix")}{path}'
+                f'{tr("execution.data_missing_suffix")}'
+            )
         current: Any = root_data
         prefix: list[str] = []
         parts = path.split('.')
@@ -530,16 +597,19 @@ class WorkflowExecutor:
             prefix.append(part)
             current_path = '.'.join(prefix)
             if not isinstance(current, dict) or part not in current:
-                raise ValueError(f'msg.0201{current_path}')
+                raise ValueError(f'{tr("execution.field_missing_prefix")}{current_path}')
             if index == len(parts) - 1:
                 if isinstance(current[part], (dict, list)):
-                    raise ValueError(f'msg.0201{current_path}')
+                    raise ValueError(f'{tr("execution.field_missing_prefix")}{current_path}')
                 current[part] = value
                 return
             current = current[part]
             if isinstance(current, list):
                 if current_path not in loop_context:
-                    raise ValueError(f'msg.0202{current_path}msg.0203')
+                    raise ValueError(
+                        f'{tr("execution.field_prefix")}{current_path}'
+                        f'{tr("execution.list_requires_loop_suffix")}'
+                    )
                 current = loop_context[current_path]
 
     def _locator(self, page: Any, selector_type: str, selector: str) -> Any:
@@ -605,7 +675,12 @@ class WorkflowExecutor:
             visible[0].scroll_into_view_if_needed(timeout=max(1, timeout))
         actionable = [item for item in visible if is_topmost(item)] if len(all_matches) == 1 else []
         if len(actionable) != 1:
-            raise RuntimeError(f'msg.0204{len(all_matches)}msg.0205{len(visible)}msg.0206{len(actionable)}msg.0073')
+            raise RuntimeError(
+                f'{tr("selector.unique_required_prefix")}{len(all_matches)}'
+                f'{tr("selector.visible_count_infix")}{len(visible)}'
+                f'{tr("selector.actionable_count_infix")}{len(actionable)}'
+                f'{tr("common.item_count_suffix")}'
+            )
         return actionable[0]
 
     def _unique_locator_in_frame(
@@ -640,8 +715,10 @@ class WorkflowExecutor:
                     raise
             if time.monotonic() >= deadline:
                 raise RuntimeError(
-                    f'msg.0204{len(matches)}msg.0205{len(visible)}'
-                    f'msg.0206{len(actionable)}msg.0073'
+                    f'{tr("selector.unique_required_prefix")}{len(matches)}'
+                    f'{tr("selector.visible_count_infix")}{len(visible)}'
+                    f'{tr("selector.actionable_count_infix")}{len(actionable)}'
+                    f'{tr("common.item_count_suffix")}'
                 )
             active_page(page).wait_for_timeout(100)
 
@@ -752,7 +829,7 @@ class WorkflowExecutor:
             if frame is not None:
                 return frame
             if time.monotonic() >= deadline:
-                raise RuntimeError('msg.0592')
+                raise RuntimeError('error.iframe_not_unique')
             active_page(page).wait_for_timeout(100)
 
     def _locator_in_saved_frame(
@@ -1012,12 +1089,12 @@ class WorkflowExecutor:
                 file_path = self.project_dir / file_path
             file_path = file_path.resolve()
             if not file_path.is_file():
-                raise ValueError(f'msg.0421{file_path}')
+                raise ValueError(f'{tr("error.upload_file_not_found_prefix")}{file_path}')
             self._file_input_locator(page, event, selector, fallback_selector, timeout).set_input_files(str(file_path))
         elif action == 'get_text':
             variable_name = value.strip()
             if variable_name and not re.fullmatch('[A-Za-z_][A-Za-z0-9_]*', variable_name):
-                raise ValueError('msg.0210')
+                raise ValueError('error.get_text_destination_required')
             locator = self._fast_event_locator(
                 page, event, selector, fallback_selector, timeout,
             )
@@ -1059,7 +1136,10 @@ class WorkflowExecutor:
             if visible_count == 0:
                 return
             if time.monotonic() >= deadline:
-                raise RuntimeError(f'msg.0566{visible_count}msg.0567')
+                raise RuntimeError(
+                    f'{tr("selector.hidden_wait_timeout_prefix")}{visible_count}'
+                    f'{tr("common.item_count_suffix")}'
+                )
             page.wait_for_timeout(100)
 
     def _wait_until_ready(
@@ -1102,7 +1182,7 @@ class WorkflowExecutor:
                 if not self._is_transient_target_error(error):
                     raise
             if time.monotonic() >= deadline:
-                raise RuntimeError(f'msg.0588{condition}')
+                raise RuntimeError(f'{tr("error.wait_condition_not_met_prefix")}{condition}')
             page.wait_for_timeout(100)
 
     @staticmethod
@@ -1251,7 +1331,10 @@ class WorkflowExecutor:
             if visible_count:
                 saw_spinner = True
                 if not logged:
-                    self.logger(f'{prefix}msg.0574{visible_count}msg.0567')
+                    self.logger(
+                        f'{prefix}{tr("selector.salesforce_loading_prefix")}{visible_count}'
+                        f'{tr("common.item_count_suffix")}'
+                    )
                     logged = True
             elif saw_spinner or changed:
                 return
@@ -1259,7 +1342,10 @@ class WorkflowExecutor:
             if not saw_spinner and now >= appearance_deadline:
                 return
             if now >= timeout_deadline:
-                raise RuntimeError(f'msg.0566{visible_count}msg.0567')
+                raise RuntimeError(
+                    f'{tr("selector.hidden_wait_timeout_prefix")}{visible_count}'
+                    f'{tr("common.item_count_suffix")}'
+                )
             active_page(page).wait_for_timeout(50)
 
     def _wait_for_salesforce_spinner_if_present(self, page: Any, timeout: int, prefix: str='') -> None:
@@ -1268,7 +1354,10 @@ class WorkflowExecutor:
         visible_count = self._visible_locator_count(page, 'css', SALESFORCE_SPINNER_SELECTOR)
         if visible_count == 0:
             return
-        self.logger(f'{prefix}msg.0574{visible_count}msg.0567')
+        self.logger(
+            f'{prefix}{tr("selector.salesforce_loading_prefix")}{visible_count}'
+            f'{tr("common.item_count_suffix")}'
+        )
         self._wait_until_hidden(page, 'css', SALESFORCE_SPINNER_SELECTOR, timeout)
 
     def _visible_locator_count(self, page: Any, selector_type: str, selector: str) -> int:
@@ -1304,7 +1393,10 @@ class WorkflowExecutor:
             except RuntimeError:
                 if fallback_type == 'none' or not fallback_selector:
                     raise
-                self.logger(f'{self._active_event_prefix}msg.0212{fallback_type}: "{fallback_selector}"')
+                self.logger(
+                    f'{self._active_event_prefix}{tr("selector.fallback_used_prefix")}'
+                    f'{fallback_type}: "{fallback_selector}"'
+                )
                 return self._unique_locator_in_frame(
                     page, frame, fallback_type, fallback_selector, timeout,
                     require_actionable,
@@ -1330,14 +1422,19 @@ class WorkflowExecutor:
         except RuntimeError:
             if fallback_type == 'none' or not fallback_selector:
                 raise
-            self.logger(f'{self._active_event_prefix}msg.0212{fallback_type}: "{fallback_selector}"')
+            self.logger(
+                f'{self._active_event_prefix}{tr("selector.fallback_used_prefix")}'
+                f'{fallback_type}: "{fallback_selector}"'
+            )
             try:
                 return self._unique_locator(
                     page, fallback_type, fallback_selector, timeout,
                     require_actionable,
                 )
             except Exception as fallback_error:
-                raise RuntimeError(f'msg.0565{fallback_error}') from fallback_error
+                raise RuntimeError(
+                    f'{tr("error.fallback_selector_failed_prefix")}{tr(str(fallback_error))}'
+                ) from fallback_error
 
     def _file_input_locator(self, page: Any, event: dict[str, Any], selector: str, fallback_selector: str, timeout: int=10000) -> Any:
         """非表示の場合もある file input を可視性判定なしで一意に取得する。"""
@@ -1372,4 +1469,4 @@ class WorkflowExecutor:
             fallback_matches = [locator.nth(index) for locator in fallbacks for index in range(locator.count())]
             if len(fallback_matches) == 1:
                 return fallback_matches[0]
-        raise RuntimeError(f'msg.0423{len(matches)}')
+        raise RuntimeError(f'{tr("error.upload_target_not_unique_prefix")}{len(matches)}')

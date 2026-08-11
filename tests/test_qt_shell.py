@@ -16,7 +16,8 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QStyle, QTableWidget,
     QTabWidget, QVBoxLayout, QWidget,
 )
-from PySide6.QtCore import QEvent, QModelIndex, QPoint, QTimer, Qt
+from PySide6.QtCore import QEvent, QModelIndex, QPoint, QSize, QTimer, Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtTest import QTest
 
 from core.database import Database
@@ -649,6 +650,19 @@ class QtShellTests(unittest.TestCase):
             self.assertEqual(json.loads(result['success_json'])['target'], '.completed')
             editor.close()
 
+    def test_select_first_internal_value_is_not_shown_in_the_editor(self) -> None:
+        editor = EventEditorDialog(self.window.pages['design'], {
+            'name': 'first', 'action': 'select', 'selector_type': 'css',
+            'selector': '#target', 'value': '__WEBFLOW_SELECT_FIRST__',
+        })
+        self.assertEqual(editor.value.text(), '')
+        self.assertTrue(editor.value_action_button.property('selected'))
+        self.assertEqual(editor.result_data()['value'], '__WEBFLOW_SELECT_FIRST__')
+        editor._value_action()
+        self.assertFalse(editor.value_action_button.property('selected'))
+        self.assertEqual(editor.result_data()['value'], '')
+        editor.close()
+
     def test_element_picker_suggests_action_only_when_action_is_empty(self) -> None:
         self.assertEqual(ElementPicker._suggest_action({'tag': 'input', 'input_type': 'text'}), 'fill')
         self.assertEqual(ElementPicker._suggest_action({'tag': 'input', 'input_type': 'file'}), 'upload_file')
@@ -776,6 +790,8 @@ class QtShellTests(unittest.TestCase):
         self.assertFalse(data.findChild(QPushButton, 'importDataJsonButton').isVisibleTo(data))
         self.assertEqual(data.values.columnCount(), 4)
         self.assertEqual(data.values.headerItem().text(2), '値  ✎')
+        value_toggle = data.findChild(QPushButton, 'valueToggleButton')
+        self.assertTrue(value_toggle.isHidden())
         self.db.save_data_schema(0, {
             'name': 'Data', 'type': 'object', 'children': [
                 {'name': 'output', 'type': 'object', 'children': [
@@ -789,9 +805,12 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(editable_value.toolTip(2), 'ダブルクリックで値を編集')
         self.assertTrue(editable_value.text(2).startswith('✎'))
         self.assertEqual(editable_value.foreground(2).color().name(), '#0b6fae')
-        value_toggle = data.findChild(QPushButton, 'valueToggleButton')
+        self.assertFalse(value_toggle.isHidden())
         self.assertEqual(value_toggle.text(), '')
         self.assertFalse(value_toggle.icon().isNull())
+        self.assertFalse(
+            value_toggle.icon().pixmap(QSize(18, 18), QIcon.Mode.Disabled).isNull()
+        )
         self.assertEqual(value_toggle.toolTip(), 'すべて折りたたむ')
         value_toggle.click()
         self.assertEqual(value_toggle.toolTip(), 'すべて展開')
@@ -799,6 +818,7 @@ class QtShellTests(unittest.TestCase):
         self.assertFalse(data.values.topLevelItem(0).isExpanded())
         self.assertEqual(value_toggle.toolTip(), 'すべて展開')
         schema = self.window.pages['schema']
+        schema.reload()
         add = schema.findChild(QPushButton, 'addFieldButton')
         io = schema.findChild(QPushButton, 'exportSchemaButton')
         self.assertEqual(add.text(), '追加')
@@ -967,8 +987,8 @@ class QtShellTests(unittest.TestCase):
 
     def test_execution_page_restores_status_log_and_record_controls(self) -> None:
         page = self.window.pages['execution']
-        page.append_log('msg.0588visible')
-        self.assertEqual(page._log_lines.pop(), f'{tr("msg.0588")}visible')
+        page.append_log(f'{tr("error.wait_condition_not_met_prefix")}visible')
+        self.assertEqual(page._log_lines.pop(), f'{tr("error.wait_condition_not_met_prefix")}visible')
         self.assertEqual(page.stack.count(), 2)
         self.assertEqual(page.records.columnCount(), 7)
         self.assertEqual(

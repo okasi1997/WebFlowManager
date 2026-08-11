@@ -159,6 +159,7 @@ class DataPage(QWidget):
         else:
             self.current_record, self.current_data = None, {}
             self.values.clear()
+            self._sync_value_toggle_button()
         restore_scroll_position(self.tree, scroll)
 
     def selected(self) -> dict[str, Any] | None:
@@ -282,6 +283,8 @@ class DataPage(QWidget):
         """展開状態に合わせて、次に行う一括操作をボタンへ表示する。"""
         items = self._expandable_value_items()
         all_expanded = bool(items) and all(item.isExpanded() for item in items)
+        # 展開対象がない場合は、機能しない空のボタンをツールバーに残さない。
+        self.value_toggle_button.setVisible(bool(items))
         self.value_toggle_button.setEnabled(bool(items))
         set_tree_toggle_icon(self.value_toggle_button, not all_expanded)
 

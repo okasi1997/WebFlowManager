@@ -92,16 +92,16 @@ class SettingsPage(QWidget):
 
         # 全項目を先に検証し、途中まで保存された状態を作らない。
         if not family.strip() or not 8 <= size <= 18:
-            show_warning(self, tr('msg.0048'), 'フォント設定を確認してください。')
+            show_warning(self, tr('common.notice'), 'フォント設定を確認してください。')
             return False
         if language not in {'ja', 'zh'}:
-            show_warning(self, tr('msg.0048'), '言語設定を確認してください。')
+            show_warning(self, tr('common.notice'), '言語設定を確認してください。')
             return False
         if not start_url.startswith(('http://', 'https://')):
-            show_warning(self, tr('msg.0048'), '開始 URL は http:// または https:// から入力してください。')
+            show_warning(self, tr('common.notice'), '開始 URL は http:// または https:// から入力してください。')
             return False
         if not 1 <= timeout <= 3600000 or not 1 <= session_limit <= 20:
-            show_warning(self, tr('msg.0048'), '実行設定の数値を確認してください。')
+            show_warning(self, tr('common.notice'), '実行設定の数値を確認してください。')
             return False
 
         self.db.set_ui_font(family, size)
@@ -115,5 +115,5 @@ class SettingsPage(QWidget):
         # 言語以外は再起動を待たず、既に開いている画面にも反映する。
         self.settings_applied.emit()
         if show_message:
-            show_information(self, tr('msg.0048'), '設定を保存しました。言語の変更は再起動後に反映されます。')
+            show_information(self, tr('common.notice'), '設定を保存しました。言語の変更は再起動後に反映されます。')
         return True
