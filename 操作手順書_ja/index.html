@@ -54,7 +54,7 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
 <section class="cover">
   <div class="tag">全体フロー</div>
   <h1>Web フロー管理<br>全体操作手順</h1>
-  <p class="lead">プログラムの準備、業務フローの登録、共通データの作成、実行、結果確認、バックアップまでの一連の流れを説明します。</p>
+  <p class="lead">プログラムの準備、業務フローの登録、実行データの作成、実行、結果確認、バックアップまでの一連の流れを説明します。</p>
   <div class="meta">対象プログラム：WebFlowManager<br>表示言語：日本語<br>更新日：2026年8月5日</div>
 </section>
 
@@ -65,18 +65,18 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
   <span>イベント登録</span><i>→</i>
   <span>データ準備</span><i>→</i>
   <span>動作確認</span><i>→</i>
-  <span>本実行</span><i>→</i>
+  <span>通常実行</span><i>→</i>
   <span>結果確認</span><i>→</i>
   <span>バックアップ</span>
 </div>
-<p>このプログラムでは、ブラウザー操作のまとまりを「業務フロー」、一つ一つの操作を「イベント」、実行ごとに差し替える値を「共通データ」として管理します。</p>
+<p>このプログラムでは、ブラウザー操作のまとまりを「業務フロー」、一つ一つの操作を「イベント」、実行ごとに差し替える値の一式を「実行データ」として管理します。</p>
 <table>
 <thead><tr><th>名称</th><th>役割</th><th>例</th></tr></thead>
 <tbody>
 <tr><td>業務フロー</td><td>目的ごとに分けた処理単位</td><td>ログイン、データ入力、結果確認</td></tr>
 <tr><td>イベント</td><td>ブラウザーで行う一つの操作</td><td>ページを開く、入力する、ボタンを押す</td></tr>
-<tr><td>共通データ</td><td>実行ごとに異なる値の一式</td><td>案件番号、氏名、プラン、数量</td></tr>
-<tr><td>実行グループ</td><td>同じ group は逐次、異なる group は並列で処理する単位</td><td>グループ1、グループ2</td></tr>
+<tr><td>実行データ</td><td>実行ごとに異なる値の一式</td><td>案件番号、氏名、数量</td></tr>
+<tr><td>実行グループ</td><td>同じグループは逐次、異なるグループは並列で処理する単位</td><td>グループ1、グループ2</td></tr>
 </tbody>
 </table>
 
@@ -107,12 +107,12 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
 <div class="step"><b>手順 1</b>　左メニューの「設定」で、言語、フォント、文字サイズ、開始 URL、Chrome 表示を確認します。</div>
 <div class="step"><b>手順 2</b>　ログインが必要なサイトでは、使用するログイン状態を準備します。</div>
 <div class="note"><span class="label">Chrome 表示：</span>フローの作成中や動作確認中は表示を有効にします。動作が安定した後は、必要に応じて非表示で実行します。</div>
-<h3>既定の開始 URL を変更する</h3>
+<h3>開始 URL を変更する</h3>
 <p>要素選択用ブラウザーと認証ブラウザーが最初に開く URL は、アプリの設定画面で変更できます。</p>
 <div class="step"><b>手順 1</b>　左メニュー最下部の「設定」を開きます。</div>
-<div class="step"><b>手順 2</b>　「ブラウザー設定」の「既定の開始 URL」に <code>http://</code> または <code>https://</code> で始まる URL を入力します。</div>
-<div class="step"><b>手順 3</b>　<span class="button">実行設定を保存</span> を押し、ログイン状態画面またはイベント編集画面から開始ページを確認します。</div>
-<div class="note"><span class="label">正式実行：</span>既定の開始 URL へ自動的に移動するものではありません。正式実行で開くページは、フロー内の <code>goto</code> イベントで指定します。</div>
+<div class="step"><b>手順 2</b>　「ブラウザーと実行設定」の「開始 URL」に <code>http://</code> または <code>https://</code> で始まる URL を入力します。</div>
+<div class="step"><b>手順 3</b>　<span class="button">設定を保存</span> を押し、ログイン状態画面またはイベント編集画面から開始ページを確認します。</div>
+<div class="note"><span class="label">通常実行：</span>開始 URL へ自動的に移動するものではありません。通常実行で開くページは、業務フロー内の「ページへ移動」イベントで指定します。</div>
 
 <h2>3. 業務をフローに分ける</h2>
 <p>実際のブラウザー操作を、目的ごとの業務フローへ分けます。</p>
@@ -120,54 +120,54 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
 <table>
 <thead><tr><th>順番</th><th>業務フロー</th><th>実行回数</th></tr></thead>
 <tbody>
-<tr><td>1</td><td>ログインまたは開始ページへ移動</td><td>共通データごと</td></tr>
-<tr><td>2</td><td>基本情報</td><td>共通データごと</td></tr>
-<tr><td>3</td><td>プラン登録</td><td>共通データごと</td></tr>
-<tr><td>4</td><td>登録結果確認</td><td>共通データごと</td></tr>
+<tr><td>1</td><td>ログインまたは開始ページへ移動</td><td>実行データごと</td></tr>
+<tr><td>2</td><td>基本情報入力</td><td>実行データごと</td></tr>
+<tr><td>3</td><td>基本情報登録</td><td>実行データごと</td></tr>
+<tr><td>4</td><td>登録結果確認</td><td>実行データごと</td></tr>
 </tbody>
 </table>
 <div class="step"><b>手順 1</b>　必要な業務フローを作成します。</div>
 <div class="step"><b>手順 2</b>　実際の操作順と同じ順番に並べます。</div>
-<div class="step"><b>手順 3</b>　各共通データで必要な初期ページ移動やログイン確認も、フローの先頭側へ配置します。</div>
-<div class="note"><span class="label">実行回数：</span>現在は、すべての有効な業務フローが各「今回実行」データに対して順番に実行されます。「データ開始」は正式実行の前処理境界にはなりません。</div>
+<div class="step"><b>手順 3</b>　各実行データで必要な初期ページ移動やログイン確認も、業務フローの先頭側へ配置します。</div>
+<div class="note"><span class="label">実行回数：</span>現在は、すべての有効な業務フローが各「今回実行」データに対して順番に実行されます。「データ開始」は通常実行の処理境界にはなりません。</div>
 
 <h2>4. イベントを登録する</h2>
 <p>各業務フローに、実際のブラウザー操作と同じ順番でイベントを登録します。</p>
 <div class="step"><b>手順 1</b>　対象の業務フローを選び、イベントを追加します。</div>
-<div class="step"><b>手順 2</b>　ページ移動、クリック、入力、選択などの操作種別を設定します。</div>
-<div class="step"><b>手順 3</b>　対象要素が必要な操作では、イベント編集画面の「画面から選択」を押し、Chrome 上で要素を選択します。</div>
-<div class="step"><b>手順 4</b>　現在ページで検証し、対象要素を1件だけ検出できることを確認します。</div>
-<div class="step"><b>手順 5</b>　固定値を入力するか、共通データのフィールドをリンクします。</div>
-<div class="step"><b>手順 6</b>　必要に応じて実行条件と失敗時の動作を設定し、保存します。</div>
+<div class="step"><b>手順 2</b>　ページ移動、クリック、入力、選択などの「操作」を設定します。</div>
+<div class="step"><b>手順 3</b>　対象要素が必要な操作では、イベント編集画面の「操作対象を選択」を押し、Chrome 上で要素を選択します。</div>
+<div class="step"><b>手順 4</b>　「操作結果」と検出方法／検出内容を確認し、必要に応じて「このイベントを試す」でテストします。</div>
+<div class="step"><b>手順 5</b>　固定値を入力するか、実行データのデータ項目をリンクします。</div>
+<div class="step"><b>手順 6</b>　必要に応じて実行条件と失敗時の操作を設定し、保存します。</div>
 <div class="step"><b>手順 7</b>　イベント一覧を実際の操作順に並べます。</div>
-<div class="tip"><span class="label">途中のページを登録する場合：</span>「このイベントまで実行」で対象イベントの直前まで進めてから、現在ページ上の要素を選択します。</div>
+<div class="tip"><span class="label">途中のページを登録する場合：</span>「直前まで実行」で対象イベントの直前まで進めてから、現在ページ上の要素を選択します。</div>
 
 <h3>イベントグループを使う場面</h3>
 <ul>
   <li>明細などのリストデータを繰り返し処理する</li>
-  <li>複数イベントをまとめて再試行する</li>
+  <li>複数イベントをまとめて再実行する</li>
   <li>複数イベントへ同じ実行条件を設定する</li>
 </ul>
 
-<h2>5. 共通データを準備する</h2>
+<h2>5. 実行データを準備する</h2>
 <p>案件ごとに異なる値を使う場合は、先にデータ構造を定義し、その構造に沿って値を登録します。</p>
 <div class="step"><b>手順 1</b>　「データ構造」で必要な項目と型を定義します。</div>
 <div class="step"><b>手順 2</b>　構造を保存し、「データ管理」を開きます。</div>
 <div class="step"><b>手順 3</b>　データを追加し、項目ごとの値を入力します。</div>
 <div class="step"><b>手順 4</b>　必要なデータ件数分、追加または複製して値を整えます。</div>
 <div class="step"><b>手順 5</b>　各データの「今回実行」と実行グループを確認します。</div>
-<div class="step"><b>手順 6</b>　並列処理を行う場合は「並列 Session 数」を設定します。</div>
+<div class="step"><b>手順 6</b>　並列処理を行う場合は「同時セッション数」を設定します。</div>
 
 <h3>実行グループの考え方</h3>
 <p>同じグループのデータは順番に実行され、異なるグループは並列に実行されます。</p>
 <div class="flow">
-  <span>グループ1：PCL_001 → PCL_002</span>
-  <span>グループ2：PCL_003 → PCL_004</span>
+  <span>グループ1：PCL_001-1 → PCL_001-2</span>
+  <span>グループ2：PCL_002-1 → PCL_002-2</span>
 </div>
-<div class="warning"><span class="label">Excel 読込：</span>現在データへの追加ではなく完全な置き換えです。必要なデータは先に JSON または Excel で出力してください。</div>
+<div class="warning"><span class="label">JSON／Excel 読込：</span>どちらも現在データへの追加ではなく完全な置き換えです。必要なデータは先に JSON または Excel で出力してください。</div>
 
 <h2>6. ログイン状態を準備する</h2>
-<p>ログインや二段階認証が必要なサイトでは、認証用 Chrome でログインを完了し、その状態を保存します。</p>
+<p>ログインや二段階認証が必要なサイトでは、認証ブラウザーでログインを完了し、その状態を保存します。</p>
 <div class="step"><b>手順 1</b>　「ログイン状態」を開き、保存する状態を新規作成または選択します。</div>
 <div class="step"><b>手順 2</b>　認証ブラウザーを開き、サイトへログインします。</div>
 <div class="step"><b>手順 3</b>　ログイン完了後、現在の状態を保存します。</div>
@@ -176,32 +176,32 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
 <div class="danger"><span class="label">取扱注意：</span>保存したログイン状態には Cookie などの認証情報が含まれます。第三者へ送付しないでください。</div>
 
 <h2>7. 動作確認を行う</h2>
-<p>本実行の前に、少ないデータで各フローが正しく動くことを確認します。</p>
+<p>通常実行の前に、少ない実行データで各業務フローが正しく動くことを確認します。</p>
 <ul class="checklist">
   <li>Chrome 表示が有効になっている。</li>
-  <li>確認用の共通データ1件だけが「今回実行」になっている。</li>
+  <li>確認用の実行データ1件だけが「今回実行」になっている。</li>
   <li>業務フローとイベントの有効／無効が正しい。</li>
-  <li>各データで実行される全フローの順番が正しい。</li>
+  <li>各実行データで実行される全業務フローの順番が正しい。</li>
   <li>各 locator の検出結果が1件になっている。</li>
   <li>使用するログイン状態でログインできる。</li>
 </ul>
-<div class="step"><b>手順 1</b>　「順番に実行」を押します。</div>
+<div class="step"><b>手順 1</b>　実行管理画面で「実行開始」を押します。</div>
 <div class="step"><b>手順 2</b>　Chrome 上の動きと「実行状況」を確認します。</div>
 <div class="step"><b>手順 3</b>　完了後、「実行ログ」で失敗やスキップがないか確認します。</div>
 <div class="step"><b>手順 4</b>　問題があれば対象イベントを修正し、同じデータでもう一度確認します。</div>
 
-<h2>8. 本実行を行う</h2>
-<div class="step"><b>手順 1</b>　本実行に必要な共通データを「今回実行」に切り替えます。</div>
-<div class="step"><b>手順 2</b>　実行グループと並列 Session 数を確認します。</div>
+<h2>8. 通常実行を行う</h2>
+<div class="step"><b>手順 1</b>　通常実行に必要な実行データを「今回実行」に切り替えます。</div>
+<div class="step"><b>手順 2</b>　実行グループと同時セッション数を確認します。</div>
 <div class="step"><b>手順 3</b>　業務フロー、イベント、実行条件、ログイン状態を最終確認します。</div>
-<div class="step"><b>手順 4</b>　「順番に実行」を押します。</div>
+<div class="step"><b>手順 4</b>　実行管理画面で「実行開始」を押します。</div>
 <div class="step"><b>手順 5</b>　「実行状況」で実行中、待機中、完了、失敗の状態を確認します。</div>
-<div class="note"><span class="label">並列 Session 数：</span>数を増やすと処理速度が上がる場合がありますが、端末と対象サイトの負荷も増えます。少ない数から確認してください。</div>
+<div class="note"><span class="label">同時セッション数：</span>数を増やすと処理速度が上がる場合がありますが、端末と対象サイトの負荷も増えます。少ない数から確認してください。</div>
 
 <h2>9. 結果を確認する</h2>
 <div class="step"><b>手順 1</b>　「実行状況」で全データの処理が終了したことを確認します。</div>
-<div class="step"><b>手順 2</b>　「実行ログ」で失敗、再試行、条件によるスキップを確認します。</div>
-<div class="step"><b>手順 3</b>　失敗した場合は、ログに表示された業務フロー、イベント、データ名と <code>Failure URL</code> を確認します。</div>
+<div class="step"><b>手順 2</b>　「実行ログ」で失敗、再実行、条件によるスキップを確認します。</div>
+<div class="step"><b>手順 3</b>　失敗した場合は、ログに表示された業務フロー、イベント、実行データ名、失敗時 URL（ログ表記：<code>Failure URL</code>）を確認します。</div>
 <div class="step"><b>手順 4</b>　必要に応じて <code>artifacts/yyyyMMdd_HHmmss/</code> 内のエラー画像を確認します。画像がない実行ではフォルダーは作成されません。</div>
 <div class="step"><b>手順 5</b>　原因を修正し、失敗したデータだけを「今回実行」にして再実行します。</div>
 
@@ -224,9 +224,9 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
 <table>
 <thead><tr><th>対象</th><th>バックアップ方法</th><th>復元時の注意</th></tr></thead>
 <tbody>
-<tr><td>全業務フロー</td><td>「全フロー Json を出力」</td><td>読込時に現在の全フローを置き換えます。</td></tr>
-<tr><td>データ構造</td><td>データ構造画面の「Json 出力」</td><td>読込後、既存データが新しい構造へ同期されます。</td></tr>
-<tr><td>データ管理</td><td>「Json 出力」または「Excel 出力」</td><td>JSON は追加、Excel は完全置換です。</td></tr>
+<tr><td>全業務フロー</td><td>「全フロー Json を出力」</td><td>読込時に現在の全業務フローを置き換えます。</td></tr>
+<tr><td>データ構造</td><td>データ構造画面の「JSON 入出力」→「JSON を出力」</td><td>読込後は内容を確認して保存し、既存の実行データも確認します。</td></tr>
+<tr><td>データ管理</td><td>「JSON を出力」または「Excel を出力」</td><td>JSON、Excel ともに読込時は全件置換です。</td></tr>
 <tr><td>ログイン状態</td><td><code>data/browser_state.json</code>、<code>data/browser_states/</code>、<code>data/chrome_profiles/</code></td><td>認証情報を含むため、安全な場所で管理します。<code>_group_*</code> は並列実行用の内部状態で、画面一覧には表示されません。</td></tr>
 </tbody>
 </table>
@@ -235,7 +235,7 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
   <span>バックアップ</span><i>→</i>
   <span>少量変更</span><i>→</i>
   <span>データ1件で確認</span><i>→</i>
-  <span>本実行</span>
+  <span>通常実行</span>
 </div>
 
 <h2>11. 画面ごとの詳しい手順</h2>

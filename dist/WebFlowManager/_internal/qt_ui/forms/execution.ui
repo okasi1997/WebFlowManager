@@ -249,7 +249,7 @@
                   </column>
                   <column>
                     <property name="text">
-                      <string>本次実行</string>
+                      <string>今回実行</string>
                     </property>
                   </column>
                   <column>

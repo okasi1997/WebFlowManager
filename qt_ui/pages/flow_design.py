@@ -406,14 +406,18 @@ class EventEditorDialog(QDialog):
         require(self, QLabel, 'valueLabel').setVisible(value_enabled)
         self.wait_condition.setVisible(action == 'wait')
         self.value.setVisible(value_enabled and action != 'wait')
-        self.value_action_button.setVisible(action in {'select', 'upload_file'})
+        # 「選択」の先頭項目指定は互換用データとして保持するが、意味の異なる
+        # データ参照アイコンでは判別しにくいため画面には表示しない。
+        self.value_action_button.setVisible(action == 'upload_file')
         self.value_data_reference_button.setVisible(action in {'goto', 'fill', 'press', 'screenshot'})
         # 右側ボタンを持たない操作も、ほかの入力欄と同じ右端位置に揃える。
-        require(self, QWidget, 'valueTrailing').setVisible(action in {'wait', 'get_text', 'pause'})
+        # 右端ボタンを表示しない操作でも42pxの占有幅を残し、入力欄の右端を
+        # ほかのコンボボックスや入力欄と揃える。
+        require(self, QWidget, 'valueTrailing').setVisible(
+            action in {'select', 'wait', 'get_text', 'pause'}
+        )
         # 小型アイコンの機能は、操作ごとのツールチップで明確に区別する。
-        self.value_action_button.setToolTip(tr(
-            '先頭項目を選択' if action == 'select' else 'ファイルを選択'
-        ))
+        self.value_action_button.setToolTip(tr('ファイルを選択'))
         if action == 'select':
             self.value_action_button.setProperty('selected', self._select_first)
         data_path_enabled = action in {'fill', 'select', 'get_text', 'upload_file'}

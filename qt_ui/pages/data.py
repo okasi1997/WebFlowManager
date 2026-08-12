@@ -109,8 +109,8 @@ class DataPage(QWidget):
         for name, callback in callbacks.items():
             require(self, QPushButton, name).clicked.connect(callback)
 
-        # 左側はデータ自体の作成・編集・複製だけに絞る。
-        require(self, QPushButton, 'deleteRecordButton').hide()
+        # 今回実行と実行グループは実行管理へ集約し、左側にはデータ自体を
+        # 管理する新規・編集・複製・削除を表示する。
         require(self, QPushButton, 'toggleRecordButton').hide()
 
         list_button = require(self, QPushButton, 'addListItemButton')
