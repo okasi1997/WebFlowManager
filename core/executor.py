@@ -1262,6 +1262,10 @@ class WorkflowExecutor:
         view_width, view_height = int(metrics['clientWidth']), int(metrics['clientHeight'])
         crop = (0, 0, width, height)
         capture_handle = None
+        capture_contains_scroll = False
+        shell_box = None
+        shell_image = None
+        shell_content_rect = None
         if capture_area is not None:
             capture_handle = capture_area.element_handle(timeout=timeout)
             if capture_handle is None:
@@ -1271,28 +1275,39 @@ class WorkflowExecutor:
                 raise RuntimeError('Screenshot boundary is not visible')
             content_x = box['x'] + metrics['clientLeft']
             content_y = box['y'] + metrics['clientTop']
-            left = round(
-                area_box['x']
-                - content_x + metrics['scrollLeft']
-            )
-            top = round(
-                area_box['y']
-                - content_y + metrics['scrollTop']
-            )
-            right = round(
-                area_box['x'] + area_box['width']
-                - content_x + metrics['scrollLeft']
-            )
-            bottom = round(
-                area_box['y'] + area_box['height']
-                - content_y + metrics['scrollTop']
-            )
-            left, right = sorted((left, right))
-            top, bottom = sorted((top, bottom))
-            crop = (
-                max(0, min(left, width - 1)), max(0, min(top, height - 1)),
-                max(1, min(right, width)), max(1, min(bottom, height)),
-            )
+            try:
+                capture_contains_scroll = bool(capture_handle.evaluate(
+                    '(boundary, scrolling) => boundary !== scrolling && boundary.contains(scrolling)',
+                    handle,
+                ))
+            except Exception:
+                # frame が異なる場合は DOM の包含判定ができないため、従来の範囲裁切を使う。
+                capture_contains_scroll = False
+            if capture_contains_scroll:
+                shell_box = area_box
+                shell_content_rect = {
+                    'x': content_x - area_box['x'],
+                    'y': content_y - area_box['y'],
+                    'width': view_width,
+                    'height': view_height,
+                }
+            else:
+                left = round(area_box['x'] - content_x + metrics['scrollLeft'])
+                top = round(area_box['y'] - content_y + metrics['scrollTop'])
+                right = round(
+                    area_box['x'] + area_box['width']
+                    - content_x + metrics['scrollLeft']
+                )
+                bottom = round(
+                    area_box['y'] + area_box['height']
+                    - content_y + metrics['scrollTop']
+                )
+                left, right = sorted((left, right))
+                top, bottom = sorted((top, bottom))
+                crop = (
+                    max(0, min(left, width - 1)), max(0, min(top, height - 1)),
+                    max(1, min(right, width)), max(1, min(bottom, height)),
+                )
         # Qt と Chromium の画像上限を越えて不安定になる前に明示的に停止する。
         if width > 32767 or height > 32767 or width * height > 100_000_000:
             raise RuntimeError(f'Screenshot area is too large: {width}x{height}')
@@ -1370,6 +1385,12 @@ class WorkflowExecutor:
                     // finally で確実に元へ戻すため、対象要素側へ一時的に保持する。
                     boundary.__wfmScreenshotHiddenOverlays = hidden;
                 }""")
+                if capture_contains_scroll and shell_box is not None:
+                    shell_image = QImage.fromData(locator.page.screenshot(
+                        clip=shell_box, animations='disabled', timeout=timeout,
+                    ), 'PNG')
+                    if shell_image.isNull():
+                        raise RuntimeError('Screenshot boundary could not be decoded')
             for y in positions(height, view_height):
                 for x in positions(width, view_width):
                     for parent_frame, state in ancestor_frames:
@@ -1475,6 +1496,10 @@ class WorkflowExecutor:
                 round(left * scale_x), round(top * scale_y),
                 round((right - left) * scale_x), round((bottom - top) * scale_y),
             )
+        if canvas is not None and shell_image is not None and shell_box is not None:
+            canvas = WorkflowExecutor._compose_screenshot_shell(
+                shell_image, canvas, shell_box, shell_content_rect,
+            )
         if canvas is not None and capture_area is None:
             # 分割画像は内側だけを撮影し、最後に選択要素自身の外枠を一度だけ付ける。
             border_left = round(float(metrics.get('borderLeftWidth', 0)) * scale_x)
@@ -1518,6 +1543,57 @@ class WorkflowExecutor:
                 canvas = framed
         if canvas is None or not canvas.save(str(path), 'PNG'):
             raise RuntimeError(f'Screenshot could not be saved: {path}')
+
+    @staticmethod
+    def _compose_screenshot_shell(
+        shell: QImage, content: QImage, shell_box: dict[str, float],
+        content_rect: dict[str, float] | None,
+    ) -> QImage:
+        """外枠を九分割し、中央だけを展開済みスクロール画像へ置き換える。"""
+        if content_rect is None or shell_box['width'] <= 0 or shell_box['height'] <= 0:
+            return content
+        scale_x = shell.width() / shell_box['width']
+        scale_y = shell.height() / shell_box['height']
+        left = max(0, min(shell.width(), round(content_rect['x'] * scale_x)))
+        top = max(0, min(shell.height(), round(content_rect['y'] * scale_y)))
+        viewport_width = max(0, round(content_rect['width'] * scale_x))
+        viewport_height = max(0, round(content_rect['height'] * scale_y))
+        right = max(0, shell.width() - min(shell.width(), left + viewport_width))
+        bottom = max(0, shell.height() - min(shell.height(), top + viewport_height))
+        result = QImage(
+            left + content.width() + right,
+            top + content.height() + bottom,
+            QImage.Format.Format_ARGB32,
+        )
+        result.fill(QColor('white'))
+        painter = QPainter(result)
+
+        # 外枠の角はそのまま、辺は展開方向だけへ伸ばして中央内容を囲む。
+        source_x = (0, left, shell.width() - right)
+        source_y = (0, top, shell.height() - bottom)
+        source_w = (left, max(0, shell.width() - left - right), right)
+        source_h = (top, max(0, shell.height() - top - bottom), bottom)
+        target_x = (0, left, left + content.width())
+        target_y = (0, top, top + content.height())
+        target_w = (left, content.width(), right)
+        target_h = (top, content.height(), bottom)
+        for row in range(3):
+            for column in range(3):
+                if row == 1 and column == 1:
+                    continue
+                if source_w[column] <= 0 or source_h[row] <= 0:
+                    continue
+                painter.drawImage(
+                    QRectF(target_x[column], target_y[row], target_w[column], target_h[row]),
+                    shell,
+                    QRectF(source_x[column], source_y[row], source_w[column], source_h[row]),
+                )
+        painter.drawImage(
+            QRectF(left, top, content.width(), content.height()), content,
+            QRectF(0, 0, content.width(), content.height()),
+        )
+        painter.end()
+        return result
 
     def _wait_until_hidden(
         self, page: Any, selector_type: str, selector: str,

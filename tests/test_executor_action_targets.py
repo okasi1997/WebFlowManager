@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from PySide6.QtGui import QColor, QImage
+
 from core.executor import WorkflowExecutor
 
 
@@ -156,6 +158,24 @@ class ExecutorActionTargetTests(unittest.TestCase):
         restore_point = handle.evaluate.call_args_list[-1].args[1]
         self.assertEqual((restore_point['x'], restore_point['y']), (40, 20))
         canvas.save.assert_called_once_with(str(path), 'PNG')
+
+    def test_screenshot_shell_keeps_outer_area_once_around_expanded_content(self) -> None:
+        """祖先範囲の外枠を残し、スクロール表示部だけを展開画像へ置き換える。"""
+        shell = QImage(40, 30, QImage.Format.Format_ARGB32)
+        shell.fill(QColor('black'))
+        content = QImage(60, 50, QImage.Format.Format_ARGB32)
+        content.fill(QColor('white'))
+
+        result = self.executor._compose_screenshot_shell(
+            shell, content,
+            {'width': 40, 'height': 30},
+            {'x': 10, 'y': 5, 'width': 20, 'height': 10},
+        )
+
+        self.assertEqual((result.width(), result.height()), (80, 70))
+        self.assertEqual(result.pixelColor(0, 0), QColor('black'))
+        self.assertEqual(result.pixelColor(10, 5), QColor('white'))
+        self.assertEqual(result.pixelColor(79, 69), QColor('black'))
 
 
 if __name__ == '__main__':
