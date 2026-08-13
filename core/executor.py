@@ -1116,11 +1116,53 @@ class WorkflowExecutor:
         elif action == 'screenshot':
             filename = value or f"screenshot_{event['id']}.png"
             artifact_dir.mkdir(parents=True, exist_ok=True)
-            page.screenshot(path=str(artifact_dir / filename), full_page=True)
+            screenshot_path = artifact_dir / filename
+            if selector and event.get('selector_type') != 'none':
+                locator = self._fast_event_locator(
+                    page, event, selector, fallback_selector, timeout,
+                )
+                self._screenshot_scroll_area(locator, screenshot_path, timeout)
+            else:
+                # 対象未指定の既存イベントは、従来どおり主画面全体を保存する。
+                page.screenshot(path=str(screenshot_path), full_page=True)
         elif action == 'pause':
             page.wait_for_timeout(int(value or timeout))
         else:
             raise ValueError(f'Unsupported action: {action}')
+
+    @staticmethod
+    def _screenshot_scroll_area(locator: Any, path: Path, timeout: int) -> None:
+        """選択領域のスクロール範囲を一時展開し、背景を含めず一枚で保存する。"""
+        # 分割画像を合成せず DOM 側で対象だけを展開するため、固定背景の継ぎ目が発生せず、
+        # 画像の再エンコードも不要になる。元の style とスクロール位置は必ず復元する。
+        state = locator.evaluate("""element => {
+            const state = {
+                style: element.getAttribute('style'),
+                scrollLeft: element.scrollLeft,
+                scrollTop: element.scrollTop,
+            };
+            const rect = element.getBoundingClientRect();
+            const width = Math.max(Math.ceil(rect.width), element.scrollWidth);
+            const height = Math.max(Math.ceil(rect.height), element.scrollHeight);
+            element.style.setProperty('box-sizing', 'border-box', 'important');
+            element.style.setProperty('width', `${width}px`, 'important');
+            element.style.setProperty('height', `${height}px`, 'important');
+            element.style.setProperty('max-width', 'none', 'important');
+            element.style.setProperty('max-height', 'none', 'important');
+            element.style.setProperty('overflow', 'visible', 'important');
+            element.scrollLeft = 0;
+            element.scrollTop = 0;
+            return state;
+        }""")
+        try:
+            locator.screenshot(path=str(path), timeout=timeout, animations='disabled')
+        finally:
+            locator.evaluate("""(element, state) => {
+                if (state.style === null) element.removeAttribute('style');
+                else element.setAttribute('style', state.style);
+                element.scrollLeft = state.scrollLeft;
+                element.scrollTop = state.scrollTop;
+            }""", state)
 
     def _wait_until_hidden(
         self, page: Any, selector_type: str, selector: str,

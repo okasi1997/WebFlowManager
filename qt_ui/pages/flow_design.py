@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.conditions import OPERATORS, decode_guard, summarize_guard
+from core.daily_log import DailyLogWriter
 from core.database import Database
 from core.executor import find_variables
 from core.settings import SELECT_FIRST_VALUE, SUPPORTED_ACTIONS, SUPPORTED_SELECTOR_TYPES
@@ -54,7 +55,7 @@ CLICK_SUCCESS_LABELS = {
 }
 # locator を実行時に使用する操作だけで、画面からの要素選択を許可する。
 ELEMENT_SELECTOR_ACTIONS = frozenset({
-    'click', 'fill', 'select', 'wait', 'press', 'get_text', 'upload_file',
+    'click', 'fill', 'select', 'wait', 'press', 'get_text', 'screenshot', 'upload_file',
 })
 SUCCESS_CONFIRM_ACTIONS = frozenset({'click', 'goto', 'select', 'press'})
 GROUP_ACTION_WIDTH = 120
@@ -658,11 +659,18 @@ class EventEditorDialog(QDialog):
                 return
             variables[name] = value
         execution_logs: queue.Queue[str] = queue.Queue()
+
+        def append_execution_log(message: str) -> None:
+            """画面表示用キューと日次ログへ同じ実行内容を渡す。"""
+            translated = tr(str(message))
+            self._service_host.file_log.append(translated)
+            execution_logs.put(translated)
+
         self._run_debug(
             '対象イベントの直前まで実行しています',
             lambda: self._service_host.debug_browser.execute_until(
                 jobs, self.event_id or None, variables, self.target_url.text().strip(),
-                logger=execution_logs.put,
+                logger=append_execution_log,
             ),
             '対象イベントの直前まで実行しました',
             log_queue=execution_logs,
@@ -1123,6 +1131,7 @@ class FlowDesignPage(QWidget):
         self.db = db
         self.current_workflow_id: int | None = None
         self.debug_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='qt-event-debug')
+        self.file_log = DailyLogWriter(project_dir)
         self.debug_browser = DebugBrowserSession(
             project_dir, self.db.get_start_url() or 'https://github.com/?locale=ja',
             lambda _message, _source='DebugBrowserSession': None,

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.conditions import decode_guard
+from core.daily_log import DailyLogWriter
 from core.database import Database
 from core.executor import WorkflowExecutor, find_variables
 from i18n import tr
@@ -55,6 +56,7 @@ class ExecutionPage(QWidget):
         self.future: Future | None = None
         self._log_lines: list[str] = []
         self._log_lock = Lock()
+        self.file_log = DailyLogWriter(self.project_dir)
         self._runtime_lock = Lock()
         self._runtime_details: dict[int, tuple[str, str]] = {}
         self._table_signature: tuple[Any, ...] | None = None
@@ -234,9 +236,11 @@ class ExecutionPage(QWidget):
             button.style().polish(button)
 
     def append_log(self, message: str) -> None:
-        # Executor から渡される複合 msgid も、表示キューへ入れる前に一括翻訳する。
+        # 旧版と同じ日次ファイル形式を保ち、画面表示とファイル出力で翻訳結果を共用する。
+        translated = tr(str(message))
+        self.file_log.append(translated)
         with self._log_lock:
-            self._log_lines.append(tr(str(message)))
+            self._log_lines.append(translated)
 
     def _set_runtime_detail(self, record_id: int, workflow: str, event: str) -> None:
         with self._runtime_lock:
@@ -322,6 +326,8 @@ class ExecutionPage(QWidget):
                     'pcl_index': record_positions[record['id']], 'pcl_total': len(records),
                     'id': job['id'], 'position': job['position'], 'name': job['name'],
                     'events': job['events'], 'guard': job['guard'],
+                    # ID の並びに依存せず、各実行データの最終フローを明示する。
+                    'is_last_for_record': job is jobs[-1],
                 }
                 for record in group_records for job in jobs
             ]
@@ -346,7 +352,7 @@ class ExecutionPage(QWidget):
             self.db.finish_run(run_id, 'success', '')
             record = step['record']
             self.db.update_data_record(record['id'], record['name'], record['data'])
-            if step['id'] == jobs[-1]['id']:
+            if step['is_last_for_record']:
                 self.db.set_data_record_status(record['id'], 'success')
 
         def step_failure(step, run_id, error):

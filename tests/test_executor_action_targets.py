@@ -88,6 +88,21 @@ class ExecutorActionTargetTests(unittest.TestCase):
         locator.fill.assert_called_once_with('text')
         locator.press.assert_called_once_with('Enter')
 
+    def test_scroll_area_screenshot_restores_element_state(self) -> None:
+        """全景撮影後は対象要素のスタイルとスクロール位置を必ず元へ戻す。"""
+        locator = Mock()
+        state = {'style': 'width: 300px', 'scrollLeft': 40, 'scrollTop': 80}
+        locator.evaluate.side_effect = [state, None]
+        path = Path(self.temporary_dir.name) / 'area.png'
+
+        self.executor._screenshot_scroll_area(locator, path, 1500)
+
+        self.assertEqual(locator.evaluate.call_count, 2)
+        locator.screenshot.assert_called_once_with(
+            path=str(path), timeout=1500, animations='disabled',
+        )
+        self.assertEqual(locator.evaluate.call_args_list[1].args[1], state)
+
 
 if __name__ == '__main__':
     unittest.main()

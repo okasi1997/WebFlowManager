@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -216,6 +217,26 @@ class QtShellTests(unittest.TestCase):
         self.assertFalse(self.window.pages['schema'].tree.expandsOnDoubleClick())
         self.assertEqual(self.window.pages['data'].tree.objectName(), 'recordTree')
         self.assertEqual(self.window.pages['execution'].records.objectName(), 'executionTree')
+
+    def test_execution_log_is_appended_to_daily_file(self) -> None:
+        """画面ログと同じ内容が旧版互換の日次ログへ保存される。"""
+        page = self.window.pages['execution']
+        page.append_log('ログ保存テスト')
+
+        log_path = self.project_dir / 'log' / f'{datetime.now():%Y-%m-%d}.log'
+        text = log_path.read_text(encoding='utf-8')
+        self.assertIn('ログ保存テスト', text)
+        self.assertRegex(text, r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[MainThread\] ')
+
+    def test_data_update_keeps_completed_execution_status(self) -> None:
+        """実行結果データの保存後も、完了状態を明示的なクリアまで維持する。"""
+        record_id = self.db.add_data_record(0, '完了データ', {'value': 'before'})
+        self.db.set_data_record_status(record_id, 'success')
+
+        self.db.update_data_record(record_id, '完了データ', {'value': 'after'})
+
+        record = next(row for row in self.db.list_data_records() if row['id'] == record_id)
+        self.assertEqual(record['execution_status'], 'success')
 
     def test_auth_page_keeps_active_profile_status_column(self) -> None:
         page = self.window.pages['auth']
@@ -439,6 +460,8 @@ class QtShellTests(unittest.TestCase):
         editor.action.setCurrentIndex(editor.action.findData('goto'))
         self.assertFalse(editor.pick_button.isEnabled())
         editor.action.setCurrentIndex(editor.action.findData('click'))
+        self.assertTrue(editor.pick_button.isEnabled())
+        editor.action.setCurrentIndex(editor.action.findData('screenshot'))
         self.assertTrue(editor.pick_button.isEnabled())
         self.assertEqual(editor.timeout.suffix(), ' ms')
         self.assertEqual(editor.retry_interval.suffix(), ' ms')
@@ -758,6 +781,24 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(value_right, action_right)
         self.assertTrue(editor.value_action_button.property('selected'))
         self.assertEqual(editor.result_data()['value'], '__WEBFLOW_SELECT_FIRST__')
+        editor.close()
+
+    def test_execute_until_event_appends_to_daily_file(self) -> None:
+        """「直前まで実行」の詳細ログも実行管理と同じ日次ファイルへ保存する。"""
+        editor = EventEditorDialog(self.window.pages['design'], insert_at=0)
+        editor._run_debug = lambda _working, operation, _success, log_queue=None: operation()
+
+        def execute_until(*_args, logger, **_kwargs):
+            logger('直前実行ログテスト')
+
+        with (
+            patch.object(editor._service_host, 'debug_jobs', return_value=[]),
+            patch.object(editor._service_host.debug_browser, 'execute_until', side_effect=execute_until),
+        ):
+            editor.execute_until_event()
+
+        log_path = self.project_dir / 'log' / f'{datetime.now():%Y-%m-%d}.log'
+        self.assertIn('直前実行ログテスト', log_path.read_text(encoding='utf-8'))
         editor.close()
 
     def test_element_picker_suggests_action_only_when_action_is_empty(self) -> None:
