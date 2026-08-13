@@ -699,7 +699,9 @@ class EventEditorDialog(QDialog):
             'success_json': success_json,
             'timeout_ms': self.timeout.value(),
             'enabled': int(self.enabled.isChecked()),
-            'continue_on_error': int(failure_choice != 'stop'),
+            # 「再読み込み」「指定 URL へ移動」は失敗後の復旧操作であり、
+            # 失敗自体を成功扱いにはしない。明示的な「次へ進む」のみ継続する。
+            'continue_on_error': int(failure_choice == 'continue'),
             'failure_action': failure_choice if failure_choice in {'refresh', 'goto'} else 'none',
             'failure_target': self.failure_target.text().strip() if failure_choice == 'goto' else '',
             'data_path': self.data_path.currentText().strip(),
@@ -1125,6 +1127,7 @@ class FlowDesignPage(QWidget):
             project_dir, self.db.get_start_url() or 'https://github.com/?locale=ja',
             lambda _message, _source='DebugBrowserSession': None,
             lambda: profile_path(project_dir, self.db.get_auth_profile()),
+            self.db.get_action_stable_ms,
         )
         self._load_designer_form()
         self.reload()

@@ -570,6 +570,20 @@ class Database:
             raise ValueError('Invalid default timeout')
         self._set_meta('default_timeout_ms', timeout_ms)
 
+    def get_action_stable_ms(self) -> int:
+        """操作直前に対象要素が静止している必要時間を返す。"""
+        stored = self._get_meta('action_stable_ms')
+        try:
+            value = int(stored) if stored is not None else 250
+        except (TypeError, ValueError):
+            return 250
+        return value if 0 <= value <= 5000 else 250
+
+    def set_action_stable_ms(self, stable_ms: int) -> None:
+        if not 0 <= stable_ms <= 5000:
+            raise ValueError('Invalid action stable time')
+        self._set_meta('action_stable_ms', stable_ms)
+
     def get_language(self) -> str:
         language = self._get_meta('language')
         return language if language in {'ja', 'zh'} else 'ja'

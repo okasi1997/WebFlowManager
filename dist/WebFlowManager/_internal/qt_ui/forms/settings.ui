@@ -15,8 +15,8 @@
      <property name="spacing"><number>12</number></property>
      <item alignment="Qt::AlignTop">
       <widget class="QFrame" name="displayCard">
-       <property name="minimumSize"><size><width>0</width><height>330</height></size></property>
-       <property name="maximumSize"><size><width>16777215</width><height>330</height></size></property>
+       <property name="minimumSize"><size><width>0</width><height>380</height></size></property>
+       <property name="maximumSize"><size><width>16777215</width><height>380</height></size></property>
        <property name="card" stdset="0"><bool>true</bool></property>
        <layout class="QVBoxLayout" name="displayLayout">
         <property name="spacing"><number>12</number></property>
@@ -41,8 +41,8 @@
      </item>
      <item alignment="Qt::AlignTop">
       <widget class="QFrame" name="runtimeCard">
-       <property name="minimumSize"><size><width>0</width><height>330</height></size></property>
-       <property name="maximumSize"><size><width>16777215</width><height>330</height></size></property>
+       <property name="minimumSize"><size><width>0</width><height>380</height></size></property>
+       <property name="maximumSize"><size><width>16777215</width><height>380</height></size></property>
        <property name="card" stdset="0"><bool>true</bool></property>
        <layout class="QVBoxLayout" name="runtimeLayout">
         <property name="spacing"><number>12</number></property>
@@ -57,9 +57,11 @@
           <item row="0" column="1"><widget class="QLineEdit" name="startUrlEdit"><property name="clearButtonEnabled"><bool>true</bool></property></widget></item>
           <item row="1" column="0"><widget class="QLabel" name="timeoutLabel"><property name="text"><string>既定タイムアウト</string></property></widget></item>
           <item row="1" column="1"><widget class="QSpinBox" name="timeoutSpin"><property name="suffix"><string> ms</string></property><property name="minimum"><number>1</number></property><property name="maximum"><number>3600000</number></property><property name="singleStep"><number>1000</number></property></widget></item>
-          <item row="2" column="0"><widget class="QLabel" name="sessionLabel"><property name="text"><string>同時セッション数</string></property></widget></item>
-          <item row="2" column="1"><widget class="QSpinBox" name="sessionSpin"><property name="minimum"><number>1</number></property><property name="maximum"><number>20</number></property></widget></item>
-          <item row="3" column="1"><widget class="QCheckBox" name="browserVisibleCheck"><property name="text"><string>実行時にブラウザーを表示</string></property></widget></item>
+          <item row="2" column="0"><widget class="QLabel" name="actionStableLabel"><property name="text"><string>操作前の安定待機</string></property></widget></item>
+          <item row="2" column="1"><widget class="QSpinBox" name="actionStableSpin"><property name="suffix"><string> ms</string></property><property name="minimum"><number>0</number></property><property name="maximum"><number>5000</number></property><property name="singleStep"><number>50</number></property></widget></item>
+          <item row="3" column="0"><widget class="QLabel" name="sessionLabel"><property name="text"><string>同時セッション数</string></property></widget></item>
+          <item row="3" column="1"><widget class="QSpinBox" name="sessionSpin"><property name="minimum"><number>1</number></property><property name="maximum"><number>20</number></property></widget></item>
+          <item row="4" column="1"><widget class="QCheckBox" name="browserVisibleCheck"><property name="text"><string>実行時にブラウザーを表示</string></property></widget></item>
          </layout>
         </item>
         <item><spacer name="runtimeStretch"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint"><size><width>20</width><height>40</height></size></property></spacer></item>

@@ -46,6 +46,8 @@ class SettingsPage(QWidget):
         self.start_url.setText(self.db.get_start_url() or 'https://github.com/?locale=ja')
         self.timeout = require(self, QSpinBox, 'timeoutSpin')
         self.timeout.setValue(self.db.get_default_timeout_ms())
+        self.action_stable = require(self, QSpinBox, 'actionStableSpin')
+        self.action_stable.setValue(self.db.get_action_stable_ms())
         self.browser_visible = require(self, QCheckBox, 'browserVisibleCheck')
         self.browser_visible.setChecked(self.db.get_browser_visible())
         self.session_limit = require(self, QSpinBox, 'sessionSpin')
@@ -56,7 +58,7 @@ class SettingsPage(QWidget):
         return (
             self.font_family.currentText(), self.font_size.currentText(),
             self.language.currentData(), self.start_url.text(), self.timeout.value(),
-            self.session_limit.value(), self.browser_visible.isChecked(),
+            self.action_stable.value(), self.session_limit.value(), self.browser_visible.isChecked(),
         )
 
     def has_pending_changes(self) -> bool:
@@ -74,12 +76,13 @@ class SettingsPage(QWidget):
         return False
 
     def _restore_saved_values(self) -> None:
-        family, size, language, url, timeout, session, visible = self._saved_values
+        family, size, language, url, timeout, stable, session, visible = self._saved_values
         self.font_family.setCurrentText(str(family))
         self.font_size.setCurrentText(str(size))
         self.language.setCurrentIndex(max(0, self.language.findData(language)))
         self.start_url.setText(str(url))
         self.timeout.setValue(int(timeout))
+        self.action_stable.setValue(int(stable))
         self.session_limit.setValue(int(session))
         self.browser_visible.setChecked(bool(visible))
 
@@ -88,6 +91,7 @@ class SettingsPage(QWidget):
         language = str(self.language.currentData())
         start_url = self.start_url.text().strip()
         timeout = self.timeout.value()
+        action_stable = self.action_stable.value()
         session_limit = self.session_limit.value()
 
         # 全項目を先に検証し、途中まで保存された状態を作らない。
@@ -108,6 +112,7 @@ class SettingsPage(QWidget):
         self.db.set_language(language)
         self.db.set_start_url(start_url)
         self.db.set_default_timeout_ms(timeout)
+        self.db.set_action_stable_ms(action_stable)
         self.db.set_browser_visible(self.browser_visible.isChecked())
         self.db.set_pcl_session_limit(session_limit)
         apply_application_font(family, size)

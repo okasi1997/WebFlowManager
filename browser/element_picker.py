@@ -265,12 +265,14 @@ class DebugBrowserSession:
     """固定スレッド上でブラウザーを保持し、選択と試行で現在ページを再利用する。"""
 
     def __init__(self, project_dir: Path, start_url: str, logger: Callable[[str, str], None],
-                 storage_state_getter: Callable[[], Path | None] | None=None) -> None:
+                 storage_state_getter: Callable[[], Path | None] | None=None,
+                 action_stable_ms_getter: Callable[[], int] | None=None) -> None:
         self.project_dir = project_dir
         self.start_url = start_url
         self._log_sink = logger
         self.logger = lambda message: logger(message, self.__class__.__name__)
         self.storage_state_getter = storage_state_getter or (lambda: self.project_dir / 'data' / 'browser_state.json')
+        self.action_stable_ms_getter = action_stable_ms_getter or (lambda: 250)
         self._tasks: queue.Queue[tuple[Callable[[], Any] | None, Future[Any]]] = queue.Queue()
         self._cancel_requested = threading.Event()
         self._thread = threading.Thread(target=self._worker, name='locator-debug-browser', daemon=True)
@@ -415,6 +417,7 @@ class DebugBrowserSession:
             executor = WorkflowExecutor(
                 self.project_dir,
                 lambda message: self._log_sink(message, 'WorkflowExecutor'),
+                self.action_stable_ms_getter(),
             )
             executor._execute_event(page, event, {}, artifact_dir)
         self._submit(task)
@@ -428,6 +431,7 @@ class DebugBrowserSession:
             executor = WorkflowExecutor(
                 self.project_dir,
                 lambda message: self._log_sink(message, 'WorkflowExecutor'),
+                self.action_stable_ms_getter(),
             )
             timeout = int(event.get('timeout_ms', 10_000))
             locator = executor._event_locator(
@@ -469,6 +473,7 @@ class DebugBrowserSession:
             executor = WorkflowExecutor(
                 self.project_dir,
                 logger or (lambda message: self._log_sink(message, 'WorkflowExecutor')),
+                self.action_stable_ms_getter(),
             )
 
             def pause_at_target(event: dict[str, Any]) -> None:

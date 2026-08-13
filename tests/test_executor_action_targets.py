@@ -40,13 +40,24 @@ class ExecutorActionTargetTests(unittest.TestCase):
         locator = _Locator()
 
         with (
-            patch('core.executor.CLICK_STABLE_MS', 0),
             patch('core.executor.is_topmost', side_effect=lambda item: item.calls.append('topmost') or True),
             patch.object(self.executor, '_click_target_snapshot', return_value=('target', 0, 0, 10, 10)),
         ):
             self.executor._wait_for_stable_action_target(locator, 1000)
 
         self.assertEqual(locator.calls[:4], ['scroll', 'visible', 'enabled', 'topmost'])
+
+    def test_zero_stable_time_returns_after_first_actionability_check(self) -> None:
+        locator = _Locator()
+        executor = WorkflowExecutor(Path(self.temporary_dir.name), lambda _message: None, 0)
+
+        with (
+            patch('core.executor.is_topmost', return_value=True),
+            patch.object(executor, '_click_target_snapshot', return_value=('target', 0, 0, 10, 10)),
+        ):
+            executor._wait_for_stable_action_target(locator, 1000)
+
+        self.assertEqual(locator.calls.count('scroll'), 1)
 
     def test_fill_and_press_use_the_common_pre_action_wait(self) -> None:
         page = Mock()

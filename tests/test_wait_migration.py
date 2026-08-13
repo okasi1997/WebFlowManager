@@ -8,6 +8,14 @@ from core.settings import SUPPORTED_ACTIONS, SUPPORTED_SELECTOR_TYPES
 
 
 class WaitMigrationTests(unittest.TestCase):
+    def test_action_stable_time_defaults_to_250_and_can_be_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            database = Database(Path(folder) / 'test.db')
+            self.assertEqual(database.get_action_stable_ms(), 250)
+            database.set_action_stable_ms(0)
+            self.assertEqual(database.get_action_stable_ms(), 0)
+            database.close()
+
     def test_new_database_persists_visible_browser_as_first_run_default(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             database = Database(Path(folder) / 'test.db')

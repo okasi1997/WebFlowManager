@@ -19,7 +19,7 @@ VARIABLE_PATTERN = re.compile('\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}')
 DATA_REFERENCE_PATTERN = re.compile(r'\$\{data:([^{}]+)\}')
 SALESFORCE_SPINNER_SELECTOR = '.slds-spinner, lightning-spinner'
 SPINNER_TRIGGER_ACTIONS = {'click', 'select', 'goto', 'upload_file'}
-CLICK_STABLE_MS = 250
+DEFAULT_ACTION_STABLE_MS = 250
 CLICK_STABLE_POLL_MS = 50
 
 def find_variables(events: list[dict[str, Any]]) -> list[str]:
@@ -47,7 +47,10 @@ def substitute(text: str, variables: dict[str, str]) -> str:
 class WorkflowExecutor:
     """一つのブラウザーセッション内でフロー群を実行する。"""
 
-    def __init__(self, project_dir: Path, logger: Callable[[str], None]) -> None:
+    def __init__(
+        self, project_dir: Path, logger: Callable[[str], None],
+        action_stable_ms: int=DEFAULT_ACTION_STABLE_MS,
+    ) -> None:
         self.project_dir = project_dir
         self.logger = lambda message: logger(tr(message))
         self._input_frame_cache: tuple[Any, Any] | None = None
@@ -55,6 +58,7 @@ class WorkflowExecutor:
         self._spinner_observed_frames: set[Any] = set()
         self._active_event_prefix = ''
         self._session_log_prefix = '[S1] | '
+        self.action_stable_ms = max(0, int(action_stable_ms))
 
     def run_batch(self, steps: list[dict[str, Any]], variables: dict[str, str], on_step_start: Callable[[dict[str, Any]], Any] | None=None, on_step_success: Callable[[dict[str, Any], Any], None] | None=None, on_step_failure: Callable[[dict[str, Any], Any, Exception], None] | None=None, on_event_start: Callable[[dict[str, Any], dict[str, Any]], None] | None=None, browser_visible: bool=True, session_name: str='batch', storage_state_path: Path | None | bool=False) -> None:
         """計画済みの全ステップを、一つの browser/context/page で実行する。"""
@@ -925,9 +929,11 @@ class WorkflowExecutor:
                     raise
                 current = None
             now = time.monotonic()
+            if current is not None and self.action_stable_ms == 0:
+                return
             if current is not None and current == previous:
                 stable_since = stable_since if stable_since is not None else now
-                if (now - stable_since) * 1000 >= CLICK_STABLE_MS:
+                if (now - stable_since) * 1000 >= self.action_stable_ms:
                     return
             else:
                 previous = current

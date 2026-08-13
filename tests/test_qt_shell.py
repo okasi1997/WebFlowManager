@@ -483,6 +483,13 @@ class QtShellTests(unittest.TestCase):
             [editor.failure_action.itemData(index) for index in range(editor.failure_action.count())],
             ['stop', 'continue', 'refresh', 'goto'],
         )
+        for failure_choice, expected_continue in (
+            ('stop', 0), ('continue', 1), ('refresh', 0), ('goto', 0),
+        ):
+            editor.failure_action.setCurrentIndex(editor.failure_action.findData(failure_choice))
+            self.assertEqual(
+                editor.result_data()['continue_on_error'], expected_continue, failure_choice,
+            )
         editor.action.setCurrentIndex(editor.action.findData('wait'))
         self.assertTrue(editor.wait_condition.isVisibleTo(editor))
         self.assertTrue(editor.selector.isVisibleTo(editor))
@@ -1123,7 +1130,7 @@ class QtShellTests(unittest.TestCase):
         page = self.window.pages['settings']
         display_card = page.findChild(QFrame, 'displayCard')
         runtime_card = page.findChild(QFrame, 'runtimeCard')
-        self.assertEqual((display_card.height(), runtime_card.height()), (330, 330))
+        self.assertEqual((display_card.height(), runtime_card.height()), (380, 380))
         save_buttons = [
             button for button in page.findChildren(QPushButton)
             if '保存' in button.text()
@@ -1134,16 +1141,20 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(page.language.currentText(), '日本語')
         self.assertEqual(page.language.currentData(), 'ja')
         self.assertEqual(page.timeout.suffix(), ' ms')
+        self.assertEqual(page.action_stable.value(), 250)
+        self.assertEqual(page.action_stable.suffix(), ' ms')
 
     def test_settings_edits_are_pending_until_single_save(self) -> None:
         page = self.window.pages['settings']
         stored_url = self.db.get_start_url()
         page.start_url.setText('https://example.com/pending')
         page.font_size.setCurrentText('8')
+        page.action_stable.setValue(100)
         self.assertTrue(page.has_pending_changes())
         self.assertEqual(self.db.get_start_url(), stored_url)
         self.assertTrue(page.save_all(show_message=False))
         self.assertEqual(self.db.get_start_url(), 'https://example.com/pending')
+        self.assertEqual(self.db.get_action_stable_ms(), 100)
         data_tree = self.window.pages['data'].tree
         self.assertEqual(data_tree.font().pointSize(), 8)
         self.assertEqual(data_tree.viewport().font().pointSize(), 8)

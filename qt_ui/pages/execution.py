@@ -359,7 +359,10 @@ class ExecutionPage(QWidget):
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix='qt-flow-group') as group_pool:
             futures = {
                 group_pool.submit(
-                    WorkflowExecutor(self.project_dir, self.append_log).run_batch,
+                    WorkflowExecutor(
+                        self.project_dir, self.append_log,
+                        self.db.get_action_stable_ms(),
+                    ).run_batch,
                     steps(group, group_records), {},
                     on_step_start=step_start,
                     on_step_success=step_success,
