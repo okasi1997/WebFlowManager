@@ -1223,17 +1223,52 @@ class WorkflowExecutor:
         locator: Any, path: Path, timeout: int,
         capture_area: Any | None=None,
     ) -> None:
-        """レイアウトを変えず、実際のスクロール領域だけを分割撮影して結合する。"""
+        """元の位置を保存し、原点で測定してからスクロール撮影を行う。"""
         locator.scroll_into_view_if_needed(timeout=timeout)
-        selected = locator.element_handle(timeout=timeout)
-        if selected is None:
+        handle = locator.element_handle(timeout=timeout)
+        if handle is None:
             raise RuntimeError('Screenshot target was not found')
+        original = handle.evaluate("""element => ({
+            x: element.scrollLeft,
+            y: element.scrollTop,
+            behavior: element.style.getPropertyValue('scroll-behavior'),
+            behaviorPriority: element.style.getPropertyPriority('scroll-behavior'),
+        })""")
+        try:
+            handle.evaluate("""element => {
+                element.style.setProperty('scroll-behavior', 'auto', 'important');
+                element.scrollLeft = 0;
+                element.scrollTop = 0;
+            }""")
+            handle.evaluate(
+                "element => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+            )
+            WorkflowExecutor._screenshot_scroll_area_from_origin(
+                locator, handle, path, timeout, capture_area,
+            )
+        finally:
+            # 測定や撮影が失敗しても、PCL 実行前のスクロール位置と CSS を復元する。
+            handle.evaluate("""(element, state) => {
+                element.scrollLeft = state.x;
+                element.scrollTop = state.y;
+                if (state.behavior) {
+                    element.style.setProperty(
+                        'scroll-behavior', state.behavior, state.behaviorPriority,
+                    );
+                } else {
+                    element.style.removeProperty('scroll-behavior');
+                }
+            }""", original)
+
+    @staticmethod
+    def _screenshot_scroll_area_from_origin(
+        locator: Any, handle: Any, path: Path, timeout: int,
+        capture_area: Any | None=None,
+    ) -> None:
+        """原点を基準に範囲を測定し、実際のスクロール領域を分割撮影する。"""
         # 新規イベントは選択時に確定したスクロール要素を直接渡す。
         # 旧イベントでは従来どおり撮影対象自身を使用し、曖昧な祖先推測は行わない。
-        handle = selected
         metrics = handle.evaluate("""element => {
-            const scrollBehavior = element.style.getPropertyValue('scroll-behavior');
-            const scrollBehaviorPriority = element.style.getPropertyPriority('scroll-behavior');
             return {
                 clientWidth: element.clientWidth,
                 clientHeight: element.clientHeight,
@@ -1251,8 +1286,6 @@ class WorkflowExecutor:
                 borderTopColor: getComputedStyle(element).borderTopColor,
                 borderRightColor: getComputedStyle(element).borderRightColor,
                 borderBottomColor: getComputedStyle(element).borderBottomColor,
-                scrollBehavior,
-                scrollBehaviorPriority,
             };
         }""")
         box = handle.bounding_box()
@@ -1316,15 +1349,10 @@ class WorkflowExecutor:
             last = max(0, total - viewport)
             return list(dict.fromkeys([*range(0, last + 1, viewport), last]))
 
-        original = (metrics['scrollLeft'], metrics['scrollTop'])
         canvas = None
         painter = None
         ancestor_frames: list[tuple[Any, dict[str, Any]]] = []
         try:
-            # CSS の smooth scroll が座標確定前の撮影を引き起こさないようにする。
-            handle.evaluate(
-                "element => element.style.setProperty('scroll-behavior', 'auto', 'important')",
-            )
             if capture_handle is not None:
                 # iframe の外側にある Salesforce などの固定ヘッダーもタイルへ写り込む。
                 # 撮影対象 frame の祖先だけを処理し、iframe 内の選択範囲には触れない。
@@ -1451,9 +1479,8 @@ class WorkflowExecutor:
                         delete boundary.__wfmScreenshotHiddenOverlays;
                     }""")
             finally:
-                try:
-                    for parent_frame, state in reversed(ancestor_frames):
-                        parent_frame.evaluate("""state => {
+                for parent_frame, state in reversed(ancestor_frames):
+                    parent_frame.evaluate("""state => {
                             for (const item of window.__wfmScreenshotParentOverlays || []) {
                                 if (item.value) {
                                     item.element.style.setProperty('visibility', item.value, item.priority);
@@ -1472,24 +1499,7 @@ class WorkflowExecutor:
                             } else {
                                 scrolling.style.removeProperty('scroll-behavior');
                             }
-                        }""", state)
-                finally:
-                    # 親 frame の復元に失敗しても、撮影対象の状態は必ず復元する。
-                    handle.evaluate("""(element, point) => {
-                        element.scrollLeft = point.x;
-                        element.scrollTop = point.y;
-                        if (point.scrollBehavior) {
-                            element.style.setProperty(
-                                'scroll-behavior', point.scrollBehavior, point.scrollBehaviorPriority,
-                            );
-                        } else {
-                            element.style.removeProperty('scroll-behavior');
-                        }
-                    }""", {
-                        'x': original[0], 'y': original[1],
-                        'scrollBehavior': metrics.get('scrollBehavior', ''),
-                        'scrollBehaviorPriority': metrics.get('scrollBehaviorPriority', ''),
-                    })
+                    }""", state)
         if canvas is not None and crop != (0, 0, width, height):
             left, top, right, bottom = crop
             canvas = canvas.copy(

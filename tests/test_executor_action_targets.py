@@ -131,7 +131,10 @@ class ExecutorActionTargetTests(unittest.TestCase):
             'clientLeft': 0, 'clientTop': 0,
         }
         handle.bounding_box.return_value = {'x': 10, 'y': 15, 'width': 100, 'height': 80}
-        handle.evaluate.side_effect = [metrics, None, {'x': 0, 'y': 0}, None, None]
+        original = {'x': 40, 'y': 20, 'behavior': '', 'behaviorPriority': ''}
+        handle.evaluate.side_effect = [
+            original, None, None, metrics, {'x': 0, 'y': 0}, None, None,
+        ]
         path = Path(self.temporary_dir.name) / 'area.png'
         tile = Mock()
         tile.isNull.return_value = False
@@ -155,6 +158,8 @@ class ExecutorActionTargetTests(unittest.TestCase):
             clip={'x': 10, 'y': 15, 'width': 100, 'height': 80},
             animations='disabled', timeout=1500,
         )
+        reset_script = handle.evaluate.call_args_list[1].args[0]
+        self.assertIn('element.scrollTop = 0', reset_script)
         restore_point = handle.evaluate.call_args_list[-1].args[1]
         self.assertEqual((restore_point['x'], restore_point['y']), (40, 20))
         canvas.save.assert_called_once_with(str(path), 'PNG')
