@@ -81,12 +81,19 @@ class ElementPicker:
             )
             if len(matches) != 1:
                 continue
-            actionable = (
-                self._actionable_matches_in_context(picked_frame, selector_type, selector)
-                if picked_frame is not None
-                else self._actionable_matches_in_page(page, selector_type, selector)
-            )
-            if len(actionable) == 1:
+            if action == 'screenshot':
+                # 撮影範囲やスクロール要素は子要素に覆われる大きなコンテナーも対象になる。
+                # クリック操作用の hit-test は行わず、一意かつ可視であれば採用する。
+                visible = [match for match in matches if match.is_visible()]
+                usable = len(visible) == 1
+            else:
+                actionable = (
+                    self._actionable_matches_in_context(picked_frame, selector_type, selector)
+                    if picked_frame is not None
+                    else self._actionable_matches_in_page(page, selector_type, selector)
+                )
+                usable = len(actionable) == 1
+            if usable:
                 valid_candidates.append((selector_type, selector))
         if not valid_candidates:
             raise RuntimeError('error.element_unique_locator_unavailable')
@@ -376,7 +383,10 @@ class DebugBrowserSession:
             bring_page_to_front(page)
         self._submit(task)
 
-    def pick(self, target_url: str='', action: str='') -> dict[str, str]:
+    def pick(
+        self, target_url: str='', action: str='', require_scroll: bool=False,
+        selection_hint: str='',
+    ) -> dict[str, Any]:
         self._cancel_requested.clear()
 
         def task() -> dict[str, str]:
@@ -384,7 +394,12 @@ class DebugBrowserSession:
             bring_page_to_front(page)
             picker = ElementPicker()
             run_id = uuid.uuid4().hex
-            script = picker_script(run_id, tr('selector.open_target_hint'), tr('selector.selection_mode_hint'))
+            waiting_text = tr('スクロール領域を選択する画面を開き、F2 を押してください') if require_scroll else tr('selector.open_target_hint')
+            active_text = (
+                tr('スクロール領域を選択してください（Enter で確定、Esc で省略）')
+                if require_scroll else tr(selection_hint or 'selector.selection_mode_hint')
+            )
+            script = picker_script(run_id, waiting_text, active_text)
             while True:
                 if self._cancel_requested.is_set():
                     raise RuntimeError('event.element_selection_cancelled')
@@ -403,7 +418,20 @@ class DebugBrowserSession:
                     if result:
                         if result.get('cancelled'):
                             raise RuntimeError('event.element_selection_cancelled')
-                        return picker._choose_unique_locator(page, result, frame, action)
+                        picked = picker._choose_unique_locator(page, result, frame, action)
+                        if require_scroll:
+                            target = picker._locator(frame, picked['selector_type'], picked['selector']).nth(0)
+                            size = target.evaluate("""element => ({
+                                width: element.scrollWidth, height: element.scrollHeight,
+                                clientWidth: element.clientWidth, clientHeight: element.clientHeight,
+                            })""")
+                            # 現在はデータが少なくても、実行時に内容が増える容器として保存できる。
+                            picked['display'] = (
+                                f'{picked["display"]} '
+                                f'({size["clientWidth"]}x{size["clientHeight"]} → '
+                                f'{size["width"]}x{size["height"]})'
+                            )
+                        return picked
         return self._submit(task)
 
     def execute_event(self, event: dict[str, Any], target_url: str='') -> None:
@@ -520,6 +548,10 @@ class DebugBrowserSession:
             self._submit(lambda: self._dispose(), timeout=10)
         except FutureTimeoutError as error:
             raise RuntimeError('browser.close_timeout') from error
+
+    def cancel_selection(self) -> None:
+        """ブラウザーを閉じず、待機中の要素選択だけを解除する。"""
+        self._cancel_requested.set()
 
     def shutdown(self) -> None:
         self._cancel_requested.set()

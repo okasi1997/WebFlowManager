@@ -88,13 +88,39 @@ class ExecutorActionTargetTests(unittest.TestCase):
         locator.fill.assert_called_once_with('text')
         locator.press.assert_called_once_with('Enter')
 
+    def test_screenshot_locator_searches_only_the_saved_main_frame(self) -> None:
+        """iframe パスが空なら、同じ selector を持つ iframe を検索対象に含めない。"""
+        page = Mock()
+        main_frame = Mock()
+        page.main_frame = main_frame
+        match = Mock()
+        match.is_visible.return_value = True
+        locator = Mock()
+        locator.count.return_value = 1
+        locator.nth.return_value = match
+        event = {
+            'selector_type': 'css', 'fallback_selector_type': 'xpath',
+            'iframe_path': '',
+        }
+
+        with (
+            patch('core.executor.active_page', return_value=page),
+            patch.object(self.executor, '_locator', return_value=locator) as build_locator,
+            patch.object(self.executor, '_event_frame') as event_frame,
+        ):
+            result = self.executor._screenshot_event_locator(
+                page, event, 'html', '//html', 1000,
+            )
+
+        self.assertIs(result, match)
+        build_locator.assert_called_once_with(main_frame, 'css', 'html')
+        event_frame.assert_not_called()
+
     def test_scroll_area_screenshot_restores_element_state(self) -> None:
         """分割撮影ではレイアウトを変更せず、最後にスクロール位置を戻す。"""
         locator = Mock()
-        selected = Mock()
         handle = Mock()
-        selected.evaluate_handle.return_value.as_element.return_value = handle
-        locator.element_handle.return_value = selected
+        locator.element_handle.return_value = handle
         locator.page.screenshot.return_value = b'png'
         metrics = {
             'clientWidth': 100, 'clientHeight': 80,
@@ -103,7 +129,7 @@ class ExecutorActionTargetTests(unittest.TestCase):
             'clientLeft': 0, 'clientTop': 0,
         }
         handle.bounding_box.return_value = {'x': 10, 'y': 15, 'width': 100, 'height': 80}
-        handle.evaluate.side_effect = [metrics, {'x': 0, 'y': 0}, None, None]
+        handle.evaluate.side_effect = [metrics, None, {'x': 0, 'y': 0}, None, None]
         path = Path(self.temporary_dir.name) / 'area.png'
         tile = Mock()
         tile.isNull.return_value = False
@@ -127,7 +153,8 @@ class ExecutorActionTargetTests(unittest.TestCase):
             clip={'x': 10, 'y': 15, 'width': 100, 'height': 80},
             animations='disabled', timeout=1500,
         )
-        self.assertEqual(handle.evaluate.call_args_list[-1].args[1], {'x': 40, 'y': 20})
+        restore_point = handle.evaluate.call_args_list[-1].args[1]
+        self.assertEqual((restore_point['x'], restore_point['y']), (40, 20))
         canvas.save.assert_called_once_with(str(path), 'PNG')
 
 

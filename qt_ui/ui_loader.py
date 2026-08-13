@@ -262,6 +262,10 @@ def load_ui_into(target: T, filename: str) -> T:
         # ダイアログのサイズ制約も .ui を正とし、各画面での重複指定を不要にする。
         target.setMinimumSize(form.minimumSize())
         target.setMaximumSize(form.maximumSize())
+        if isinstance(form, QDialog):
+            # .ui の QDialog は外側の Python ダイアログへ埋め込まれる。
+            # Esc で内側だけが reject されると空の外枠が残るため、外側にも伝播する。
+            form.rejected.connect(target.reject)
     form.setWindowFlags(Qt.WindowType.Widget)
     wrapper = QVBoxLayout(target)
     wrapper.setContentsMargins(0, 0, 0, 0)

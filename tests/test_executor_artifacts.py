@@ -1,9 +1,26 @@
 import unittest
+from datetime import datetime
 
 from core.executor import WorkflowExecutor
 
 
 class ExecutorArtifactNameTests(unittest.TestCase):
+    def test_unsaved_screenshot_event_uses_timestamp_filename(self) -> None:
+        """DB ID のない新規イベントも既定名で試行できる。"""
+        filename = WorkflowExecutor._screenshot_filename(
+            {'action': 'screenshot'}, '', datetime(2026, 8, 13, 19, 5, 15, 123456),
+        )
+
+        self.assertEqual(filename, 'screenshot_20260813_190515_123456.png')
+
+    def test_saved_or_named_screenshot_keeps_existing_filename_rules(self) -> None:
+        self.assertEqual(
+            WorkflowExecutor._screenshot_filename({'id': 12}, ''), 'screenshot_12.png',
+        )
+        self.assertEqual(
+            WorkflowExecutor._screenshot_filename({}, 'manual.png'), 'manual.png',
+        )
+
     def test_parallel_log_prefix_keeps_short_execution_context(self) -> None:
         step = {
             'phase': 'pcl', 'session': 2, 'group': 7,

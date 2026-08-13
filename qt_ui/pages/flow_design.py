@@ -146,9 +146,15 @@ class EventEditorDialog(QDialog):
         # データベースやデバッグ機能への参照は、通常の Python 参照として別に保持する。
         super().__init__(None, Qt.WindowType.Window)
         self._service_host = parent
+        self._closing = False
         self.setWindowTitle('イベントグループ編集' if group else ('イベント編集' if event else 'イベント追加'))
         event = event or {}
         self.event_id = int(event.get('id', 0) or 0)
+        try:
+            scroll_data = json.loads(str(event.get('scroll_json', ''))) if event.get('scroll_json') else {}
+            self.scroll_data = scroll_data if isinstance(scroll_data, dict) else {}
+        except json.JSONDecodeError:
+            self.scroll_data = {}
         # 新規イベントでも「直前まで実行」できるよう、追加予定位置を保持する。
         self.insert_at = insert_at
         self._load_designer_form(event, group)
@@ -525,6 +531,10 @@ class EventEditorDialog(QDialog):
         timer.setInterval(100)
 
         def poll() -> None:
+            # 閉じた編集画面へ非同期結果を反映したり、再表示したりしない。
+            if self._closing:
+                timer.stop()
+                return
             if log_queue is not None:
                 lines: list[str] = []
                 while True:
@@ -556,6 +566,8 @@ class EventEditorDialog(QDialog):
 
     def _restore_editor_focus(self) -> None:
         """ブラウザー選択の成否にかかわらず、編集画面を前面へ戻す。"""
+        if self._closing or not self.isVisible():
+            return
         self.showNormal()
         self.raise_()
         self.activateWindow()
@@ -586,11 +598,17 @@ class EventEditorDialog(QDialog):
             if attached:
                 user32.AttachThreadInput(current_thread, foreground_thread, False)
 
+    def closeEvent(self, event) -> None:
+        """画面を閉じる際に、この画面が開始した選択待機を残さない。"""
+        self._closing = True
+        self._service_host.debug_browser.cancel_selection()
+        super().closeEvent(event)
+
     def pick_element(self) -> None:
         action = str(self.action.currentData())
         # ブラウザー側へフォーカスが移る前に、選択結果の反映先を確定する。
         pick_success_target = self.pick_button.property('pickDestination') == 'click_success'
-        def picked(result: dict[str, str]) -> str:
+        def picked(result: dict[str, Any]) -> str:
             if pick_success_target:
                 self.click_success_selector_type.setCurrentText(result['selector_type'])
                 self.click_success_target.setText(result['selector'])
@@ -603,13 +621,43 @@ class EventEditorDialog(QDialog):
             self.fallback_selector_type.setCurrentText(result.get('fallback_selector_type', 'none'))
             self.fallback_selector.setText(result.get('fallback_selector', ''))
             self.iframe_path.setText(_iframe_path_text(result.get('iframe_path', '')))
+            if action == 'screenshot':
+                self.scroll_data = dict(result.get('scroll', {}))
             suggested = result.get('suggested_action', '')
             if not self.action.currentData() and suggested and self.action.findData(suggested) >= 0:
                 self.action.setCurrentIndex(self.action.findData(suggested))
             return f'要素を選択しました: {result.get("display", result["selector"])}'
+        def select_target() -> dict[str, Any]:
+            if action == 'screenshot':
+                result = self._service_host.debug_browser.pick(
+                    self.target_url.text().strip(), action,
+                    selection_hint='スクリーンショット範囲の要素を選択してください',
+                )
+                try:
+                    scroll = self._service_host.debug_browser.pick(
+                        self.target_url.text().strip(), action,
+                        require_scroll=True,
+                    )
+                except RuntimeError as error:
+                    if str(error) != 'event.element_selection_cancelled':
+                        raise
+                    scroll = None
+                # 新規保存では余分な階層を作らず、スクロール要素情報を直接保持する。
+                result['scroll'] = dict(scroll) if scroll else {}
+                if scroll:
+                    result['display'] = (
+                        f'{result.get("display", result["selector"])}'
+                        f'{tr(" / スクロール: ")}{scroll["display"]}'
+                    )
+                return result
+            result = self._service_host.debug_browser.pick(
+                self.target_url.text().strip(), action,
+            )
+            return result
+
         self._run_debug(
             '画面で要素を選択してください',
-            lambda: self._service_host.debug_browser.pick(self.target_url.text().strip(), action),
+            select_target,
             picked,
         )
 
@@ -705,6 +753,7 @@ class EventEditorDialog(QDialog):
             'iframe_path': _iframe_path_text(self.iframe_path.text()),
             'value': value,
             'success_json': success_json,
+            'scroll_json': json.dumps(self.scroll_data, ensure_ascii=False) if action == 'screenshot' and self.scroll_data else '',
             'timeout_ms': self.timeout.value(),
             'enabled': int(self.enabled.isChecked()),
             # 「再読み込み」「指定 URL へ移動」は失敗後の復旧操作であり、

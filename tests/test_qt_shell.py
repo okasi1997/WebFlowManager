@@ -4,7 +4,7 @@ import os
 import tempfile
 import unittest
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import xml.etree.ElementTree as ET
 from pathlib import Path
 import json
@@ -822,6 +822,82 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(editor.action.currentData(), 'click')
         editor.close()
 
+    def test_screenshot_picker_accepts_visible_container_without_hit_test(self) -> None:
+        """子要素に覆われた撮影コンテナーも、一意かつ可視なら選択できる。"""
+        picker = ElementPicker()
+        match = Mock()
+        match.is_visible.return_value = True
+        info = {'tag': 'div', 'css': '#capture', 'xpath': '//*[@id="capture"]'}
+        with (
+            patch.object(picker, '_matches_in_context', return_value=[match]),
+            patch.object(picker, '_actionable_matches_in_context') as actionable,
+            patch.object(picker, '_iframe_path', return_value=''),
+        ):
+            result = picker._choose_unique_locator(Mock(), info, Mock(), 'screenshot')
+
+        self.assertEqual(result['selector'], '#capture')
+        actionable.assert_not_called()
+
+    def test_screenshot_picker_saves_explicit_scroll_target(self) -> None:
+        """スクリーンショット選択では撮影範囲とスクロール要素を別々に保存する。"""
+        editor = EventEditorDialog(self.window.pages['design'])
+        editor.action.setCurrentIndex(editor.action.findData('screenshot'))
+        editor._run_debug = lambda _message, operation, done: done(operation())
+        target = {
+            'selector_type': 'css', 'selector': '#capture',
+            'fallback_selector_type': 'none', 'fallback_selector': '',
+            'iframe_path': '["iframe"]', 'display': 'Capture',
+        }
+        scroll = {
+            'selector_type': 'css', 'selector': '.scroller',
+            'fallback_selector_type': 'none', 'fallback_selector': '',
+            'iframe_path': '["iframe"]', 'display': 'Scroller',
+        }
+        with patch.object(
+            editor._service_host.debug_browser, 'pick',
+            side_effect=[target, scroll],
+        ) as pick:
+            editor.pick_element()
+
+        self.assertEqual(pick.call_count, 2)
+        self.assertTrue(pick.call_args_list[1].kwargs['require_scroll'])
+        saved = json.loads(editor.result_data()['scroll_json'])
+        self.assertEqual(saved['selector'], '.scroller')
+        editor.close()
+
+    def test_screenshot_picker_allows_skipping_scroll_target(self) -> None:
+        """第二段階を Esc で省略した場合は撮影対象自身を使用する。"""
+        editor = EventEditorDialog(self.window.pages['design'])
+        editor.action.setCurrentIndex(editor.action.findData('screenshot'))
+        editor._run_debug = lambda _message, operation, done: done(operation())
+        target = {
+            'selector_type': 'css', 'selector': '#capture',
+            'fallback_selector_type': 'none', 'fallback_selector': '',
+            'iframe_path': '', 'display': 'Capture',
+        }
+        with patch.object(
+            editor._service_host.debug_browser, 'pick',
+            side_effect=[target, RuntimeError('event.element_selection_cancelled')],
+        ):
+            editor.pick_element()
+
+        self.assertEqual(editor.result_data()['scroll_json'], '')
+        self.assertEqual(editor.selector.text(), '#capture')
+        editor.close()
+
+    def test_closing_event_editor_cancels_pending_element_selection(self) -> None:
+        """閉じた編集画面の選択待機が、次回選択で画面を復活させない。"""
+        editor = EventEditorDialog(self.window.pages['design'])
+        editor.show()
+        with patch.object(editor._service_host.debug_browser, 'cancel_selection') as cancel:
+            editor.close()
+        cancel.assert_called_once_with()
+        self.assertTrue(editor._closing)
+
+        with patch.object(editor, 'showNormal') as show:
+            editor._restore_editor_focus()
+        show.assert_not_called()
+
     def test_try_event_on_execution_tab_highlights_success_element(self) -> None:
         editor = EventEditorDialog(self.window.pages['design'], {
             'name': 'click', 'action': 'click', 'selector_type': 'css',
@@ -1387,6 +1463,20 @@ class QtShellTests(unittest.TestCase):
         self.assertTrue(notice_dialog.confirm_button.isDefault())
         self.assertEqual(notice_dialog.confirm_button.text(), '確認')
         notice_dialog.close()
+
+    def test_escape_on_embedded_ui_dialog_closes_outer_dialog(self) -> None:
+        """内側の .ui だけを閉じて、空白の外側ダイアログを残さない。"""
+        dialog = ConfirmationDialog(self.window, '確認', '閉じますか？')
+        embedded = dialog.findChildren(QDialog)
+        self.assertEqual(len(embedded), 1)
+        dialog.show()
+        QApplication.processEvents()
+
+        QTest.keyClick(embedded[0], Qt.Key.Key_Escape)
+        QApplication.processEvents()
+
+        self.assertEqual(dialog.result(), QDialog.DialogCode.Rejected)
+        self.assertFalse(dialog.isVisible())
 
 
 if __name__ == '__main__':

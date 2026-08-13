@@ -13,22 +13,42 @@ _PICKER_SCRIPT = r"""
   window.__sfFlowPicked = null;
   document.getElementById('__sf-flow-picker-style')?.remove();
   document.getElementById('__sf-flow-banner')?.remove();
+  document.getElementById('__sf-flow-highlight')?.remove();
+  document.getElementById('__sf-flow-element-info')?.remove();
 
   const style = document.createElement('style');
   style.id = '__sf-flow-picker-style';
   style.textContent = `
-    .__sf-flow-hover { outline: 3px solid #e91e63 !important; cursor: crosshair !important; }
+    .__sf-flow-hover { cursor: crosshair !important; }
     #__sf-flow-banner { position: fixed; z-index: 2147483647; left: 16px; top: 16px;
       padding: 10px 14px; background: #172b4d; color: white; border-radius: 6px;
       font: 14px sans-serif; box-shadow: 0 2px 8px #555; pointer-events: none; }
+    #__sf-flow-highlight { position: fixed; z-index: 2147483646; box-sizing: border-box;
+      border: 4px solid #ff2d8d; box-shadow: inset 0 0 0 1px white;
+      pointer-events: none; }
+    #__sf-flow-element-info { position: fixed; z-index: 2147483647;
+      max-width: min(520px, calc(100vw - 32px)); padding: 10px 14px;
+      background: rgba(23, 43, 77, .96); color: white; border-radius: 6px;
+      font: 13px/1.5 sans-serif; box-shadow: 0 2px 8px #555; pointer-events: none;
+      white-space: pre-wrap; }
   `;
   document.head.appendChild(style);
   const banner = document.createElement('div');
   banner.id = '__sf-flow-banner';
   banner.textContent = __WAITING_TEXT__;
   document.body.appendChild(banner);
+  const highlight = document.createElement('div');
+  highlight.id = '__sf-flow-highlight';
+  highlight.hidden = true;
+  document.body.appendChild(highlight);
+  const elementInfo = document.createElement('div');
+  elementInfo.id = '__sf-flow-element-info';
+  elementInfo.hidden = true;
+  document.body.appendChild(elementInfo);
 
   let hovered = null;
+  let pointerX = 0;
+  let pointerY = 0;
   const actionableSelector = [
     'button', 'a[href]', 'input', 'select', 'textarea', 'summary',
     '[role="button"]', '[role="link"]', '[role="checkbox"]',
@@ -39,11 +59,50 @@ _PICKER_SCRIPT = r"""
   const eventElement = (event) => {
     const elements = event.composedPath().filter(item => item instanceof Element);
     return elements.find(element =>
-      element !== banner &&
+      ![banner, highlight, elementInfo].includes(element) &&
       element.matches(actionableSelector) &&
       !element.hasAttribute('disabled') &&
       element.getAttribute('aria-disabled') !== 'true'
-    ) || elements.find(element => element !== banner) || null;
+    ) || elements.find(element => ![banner, highlight, elementInfo].includes(element)) || null;
+  };
+
+  const updateFeedback = () => {
+    if (!hovered || !hovered.isConnected) return;
+    const rect = hovered.getBoundingClientRect();
+    const left = Math.max(0, rect.left);
+    const top = Math.max(0, rect.top);
+    const right = Math.min(window.innerWidth, rect.right);
+    const bottom = Math.min(window.innerHeight, rect.bottom);
+    highlight.hidden = right <= left || bottom <= top;
+    if (!highlight.hidden) {
+      Object.assign(highlight.style, {
+        left: `${left}px`, top: `${top}px`,
+        width: `${right - left}px`, height: `${bottom - top}px`
+      });
+    }
+    const viewWidth = hovered.clientWidth;
+    const viewHeight = hovered.clientHeight;
+    const fullWidth = hovered.scrollWidth;
+    const fullHeight = hovered.scrollHeight;
+    const horizontal = Math.max(0, fullWidth - viewWidth);
+    const vertical = Math.max(0, fullHeight - viewHeight);
+    const directions = [horizontal ? `↔ ${horizontal}px` : '', vertical ? `↕ ${vertical}px` : '']
+      .filter(Boolean).join('  ') || 'NO SCROLL';
+    const clipped = [
+      rect.left < 0 ? '←' : '', rect.right > window.innerWidth ? '→' : '',
+      rect.top < 0 ? '↑' : '', rect.bottom > window.innerHeight ? '↓' : ''
+    ].filter(Boolean).join('');
+    elementInfo.textContent = [
+      `<${hovered.localName}>${hovered.id ? `#${hovered.id}` : ''}`,
+      `VIEW ${viewWidth} × ${viewHeight}   CONTENT ${fullWidth} × ${fullHeight}`,
+      `${directions}${clipped ? `   OUTSIDE ${clipped}` : ''}`
+    ].join('\n');
+    // 情報パネルはポインターと反対側へ置き、選択対象を隠さない。
+    elementInfo.style.left = pointerX > window.innerWidth / 2 ? '16px' : 'auto';
+    elementInfo.style.right = pointerX > window.innerWidth / 2 ? 'auto' : '16px';
+    elementInfo.style.top = pointerY > window.innerHeight / 2 ? '16px' : 'auto';
+    elementInfo.style.bottom = pointerY > window.innerHeight / 2 ? 'auto' : '16px';
+    elementInfo.hidden = false;
   };
 
   const clean = () => {
@@ -52,7 +111,10 @@ _PICKER_SCRIPT = r"""
     document.removeEventListener('click', click, true);
     document.removeEventListener('keydown', key, true);
     document.removeEventListener('keydown', activate, true);
+    document.removeEventListener('scroll', updateFeedback, true);
     banner.remove();
+    highlight.remove();
+    elementInfo.remove();
     style.remove();
     window.__webFlowPickerCleanup = null;
   };
@@ -61,9 +123,12 @@ _PICKER_SCRIPT = r"""
   const over = (event) => {
     const element = eventElement(event);
     if (!element) return;
+    pointerX = event.clientX;
+    pointerY = event.clientY;
     if (hovered && hovered !== element) hovered.classList.remove('__sf-flow-hover');
     hovered = element;
     hovered.classList.add('__sf-flow-hover');
+    updateFeedback();
   };
   const esc = (value) => CSS.escape(String(value));
   const cssCandidate = (element, stable = false) => {
@@ -256,12 +321,7 @@ _PICKER_SCRIPT = r"""
     }
     return `/${parts.join('/')}`;
   };
-  const click = (event) => {
-    const element = eventElement(event);
-    if (!element) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
+  const elementResult = (element) => {
     const tag = element.tagName.toLowerCase();
     const implicitRoles = {
       button: 'button',
@@ -282,7 +342,7 @@ _PICKER_SCRIPT = r"""
     const text = (element.innerText || element.value || '')
       .trim().replace(/\s+/g, ' ').slice(0, 120);
     const name = aria || label || text || element.getAttribute('title') || '';
-    window.__sfFlowPicked = {
+    return {
       tag, role, name, label,
       input_type: (element.getAttribute('type') || '').toLowerCase(),
       content_editable: element.isContentEditable ? 'true' : 'false',
@@ -293,11 +353,24 @@ _PICKER_SCRIPT = r"""
       xpath: xpathCandidate(element),
       stable_xpath: xpathCandidate(element, false)
     };
+  };
+  const click = (event) => {
+    const element = eventElement(event);
+    if (!element) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    window.__sfFlowPicked = elementResult(element);
     clean();
   };
   const key = (event) => {
     if (event.key === 'Escape') {
       window.__sfFlowPicked = {cancelled: true};
+      clean();
+    } else if (event.key === 'Enter' && hovered) {
+      event.preventDefault();
+      event.stopPropagation();
+      window.__sfFlowPicked = elementResult(hovered);
       clean();
     }
   };
@@ -314,13 +387,16 @@ _PICKER_SCRIPT = r"""
     document.addEventListener('mouseover', over, true);
     document.addEventListener('click', click, true);
     document.addEventListener('keydown', key, true);
+    document.addEventListener('scroll', updateFeedback, true);
   };
   document.addEventListener('keydown', activate, true);
 }
 """
 
 
-def picker_script(run_id: str, waiting_text: str, active_text: str) -> str:
+def picker_script(
+    run_id: str, waiting_text: str, active_text: str,
+) -> str:
     """表示言語の案内文を安全に埋め込んだ選択スクリプトを返す。"""
     return (
         _PICKER_SCRIPT

@@ -98,6 +98,33 @@ class WaitMigrationTests(unittest.TestCase):
         self.assertEqual(event['action'], 'wait')
         self.assertEqual(event['value'], 'operable')
 
+    def test_success_condition_migration_does_not_depend_on_scroll_column(self) -> None:
+        """scroll_json が既存でも、success_json 追加時の旧データ移行を実行する。"""
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'test.db'
+            database = Database(path)
+            workflow_id = database.add_workflow('test')
+            event_id = database.add_event(workflow_id, {
+                'name': 'click', 'action': 'click', 'selector_type': 'css',
+                'selector': '#button',
+                'value': json.dumps({'condition': 'visible', 'target': '.done'}),
+                'timeout_ms': 1000, 'enabled': 1, 'continue_on_error': 0,
+            })
+            database.connection.execute('ALTER TABLE events DROP COLUMN success_json')
+            database.connection.commit()
+            database.close()
+
+            database = Database(path)
+            event = dict(database.connection.execute(
+                'SELECT value, success_json, scroll_json FROM events WHERE id=?',
+                (event_id,),
+            ).fetchone())
+            database.close()
+
+        self.assertEqual(event['value'], '')
+        self.assertEqual(json.loads(event['success_json'])['target'], '.done')
+        self.assertEqual(event['scroll_json'], '')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -904,6 +904,55 @@ class WorkflowExecutor:
         self._remember_input_frame(page, locator)
         return locator
 
+    def _screenshot_event_locator(
+        self, page: Any, event: dict[str, Any], selector: str,
+        fallback_selector: str, timeout: int,
+    ) -> Any:
+        """スクリーンショット用に、保存時と同じ frame 内の可視要素を取得する。"""
+        page = active_page(page)
+        # iframe パスが空の場合はメイン frame を意味する。
+        # 全 frame を横断すると html/body などが iframe ごとに重複してしまうため、
+        # 要素選択時と同じ探索範囲へ明示的に限定する。
+        frame = (
+            self._event_frame(page, event, timeout)
+            if str(event.get('iframe_path', '')).strip()
+            else page.main_frame
+        )
+        fallback_type = str(event.get('fallback_selector_type', 'none'))
+        candidates = [(event['selector_type'], selector)]
+        if fallback_type != 'none' and fallback_selector:
+            candidates.append((fallback_type, fallback_selector))
+
+        last_error: Exception | None = None
+        for index, (selector_type, selector_value) in enumerate(candidates):
+            try:
+                locator = self._locator(frame, selector_type, selector_value)
+                matches = [locator.nth(item) for item in range(locator.count())]
+                visible = [match for match in matches if match.is_visible()]
+                if len(matches) == 1 and len(visible) == 1:
+                    if index:
+                        self.logger(
+                            f'{self._active_event_prefix}{tr("selector.fallback_used_prefix")}'
+                            f'{selector_type}: "{selector_value}"'
+                        )
+                    return visible[0]
+                last_error = RuntimeError(
+                    f'{tr("selector.unique_required_prefix")}{len(matches)}'
+                    f'{tr("selector.visible_count_infix")}{len(visible)}'
+                    f'{tr("selector.actionable_count_infix")}0'
+                    f'{tr("common.item_count_suffix")}'
+                )
+            except Exception as error:
+                last_error = error
+
+        if len(candidates) > 1 and last_error is not None:
+            raise RuntimeError(
+                f'{tr("error.fallback_selector_failed_prefix")}{tr(str(last_error))}'
+            ) from last_error
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(tr('selector.unique_required_prefix'))
+
     @staticmethod
     def _click_target_snapshot(locator: Any) -> tuple[str, float, float, float, float]:
         snapshot = locator.evaluate("""element => {
@@ -1116,14 +1165,37 @@ class WorkflowExecutor:
                 variables[variable_name] = captured
             return captured
         elif action == 'screenshot':
-            filename = value or f"screenshot_{event['id']}.png"
+            filename = self._screenshot_filename(event, value)
             artifact_dir.mkdir(parents=True, exist_ok=True)
             screenshot_path = artifact_dir / filename
             if selector and event.get('selector_type') != 'none':
-                locator = self._fast_event_locator(
+                locator = self._screenshot_event_locator(
                     page, event, selector, fallback_selector, timeout,
                 )
-                self._screenshot_scroll_area(locator, screenshot_path, timeout)
+                scroll_locator = locator
+                try:
+                    scroll_data = json.loads(str(event.get('scroll_json', ''))) if event.get('scroll_json') else {}
+                except json.JSONDecodeError:
+                    scroll_data = {}
+                scroll_config = scroll_data.get('scroll', {}) if isinstance(scroll_data, dict) else {}
+                # 旧形式の scroll_json もそのまま読み込めるようにする。
+                if isinstance(scroll_data, dict) and scroll_data.get('selector'):
+                    scroll_config = scroll_data
+                if isinstance(scroll_config, dict) and scroll_config.get('selector'):
+                    scroll_event = {
+                        'selector_type': scroll_config.get('selector_type', 'css'),
+                        'fallback_selector_type': scroll_config.get('fallback_selector_type', 'none'),
+                        'fallback_selector': scroll_config.get('fallback_selector', ''),
+                        'iframe_path': scroll_config.get('iframe_path', ''),
+                    }
+                    scroll_locator = self._screenshot_event_locator(
+                        page, scroll_event, str(scroll_config['selector']),
+                        str(scroll_config.get('fallback_selector', '')), timeout,
+                    )
+                self._screenshot_scroll_area(
+                    scroll_locator, screenshot_path, timeout,
+                    capture_area=locator if scroll_locator is not locator else None,
+                )
             else:
                 # 対象未指定の既存イベントは、従来どおり主画面全体を保存する。
                 page.screenshot(path=str(screenshot_path), full_page=True)
@@ -1133,47 +1205,86 @@ class WorkflowExecutor:
             raise ValueError(f'Unsupported action: {action}')
 
     @staticmethod
-    def _screenshot_scroll_area(locator: Any, path: Path, timeout: int) -> None:
+    def _screenshot_filename(
+        event: dict[str, Any], value: str, now: datetime | None=None,
+    ) -> str:
+        """保存前のイベントにも衝突しにくい既定スクリーンショット名を返す。"""
+        if value:
+            return value
+        event_id = event.get('id')
+        if event_id is not None:
+            return f'screenshot_{event_id}.png'
+        # 新規イベントの試行時はまだ DB の ID がないため、マイクロ秒まで含める。
+        current = now or datetime.now()
+        return f'screenshot_{current:%Y%m%d_%H%M%S_%f}.png'
+
+    @staticmethod
+    def _screenshot_scroll_area(
+        locator: Any, path: Path, timeout: int,
+        capture_area: Any | None=None,
+    ) -> None:
         """レイアウトを変えず、実際のスクロール領域だけを分割撮影して結合する。"""
         locator.scroll_into_view_if_needed(timeout=timeout)
         selected = locator.element_handle(timeout=timeout)
         if selected is None:
             raise RuntimeError('Screenshot target was not found')
-        # 選択要素自体にスクロールがなければ、表示面積が最大の内部スクロール領域を使う。
-        # Salesforce のような外枠と実スクロール要素が分かれた画面にも対応する。
-        handle = selected.evaluate_handle("""element => {
-            const scrollable = node => {
-                const style = getComputedStyle(node);
-                const overflow = `${style.overflowX} ${style.overflowY}`;
-                return node.clientWidth > 1 && node.clientHeight > 1
-                    && (node.scrollWidth > node.clientWidth + 1
-                        || node.scrollHeight > node.clientHeight + 1)
-                    && /(auto|scroll|overlay)/.test(overflow);
+        # 新規イベントは選択時に確定したスクロール要素を直接渡す。
+        # 旧イベントでは従来どおり撮影対象自身を使用し、曖昧な祖先推測は行わない。
+        handle = selected
+        metrics = handle.evaluate("""element => {
+            const scrollBehavior = element.style.getPropertyValue('scroll-behavior');
+            const scrollBehaviorPriority = element.style.getPropertyPriority('scroll-behavior');
+            return {
+                clientWidth: element.clientWidth,
+                clientHeight: element.clientHeight,
+                scrollWidth: element.scrollWidth,
+                scrollHeight: element.scrollHeight,
+                scrollLeft: element.scrollLeft,
+                scrollTop: element.scrollTop,
+                clientLeft: element.clientLeft,
+                clientTop: element.clientTop,
+                scrollBehavior,
+                scrollBehaviorPriority,
             };
-            if (scrollable(element)) return element;
-            return Array.from(element.querySelectorAll('*'))
-                .filter(scrollable)
-                .filter(node => node.getClientRects().length > 0)
-                .sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0]
-                || element;
-        }""").as_element()
-        if handle is None:
-            handle = selected
-        metrics = handle.evaluate("""element => ({
-            clientWidth: element.clientWidth,
-            clientHeight: element.clientHeight,
-            scrollWidth: element.scrollWidth,
-            scrollHeight: element.scrollHeight,
-            scrollLeft: element.scrollLeft,
-            scrollTop: element.scrollTop,
-            clientLeft: element.clientLeft,
-            clientTop: element.clientTop,
-        })""")
+        }""")
         box = handle.bounding_box()
         if box is None or metrics['clientWidth'] < 1 or metrics['clientHeight'] < 1:
             raise RuntimeError('Screenshot target is not visible')
         width, height = int(metrics['scrollWidth']), int(metrics['scrollHeight'])
         view_width, view_height = int(metrics['clientWidth']), int(metrics['clientHeight'])
+        crop = (0, 0, width, height)
+        capture_handle = None
+        if capture_area is not None:
+            capture_handle = capture_area.element_handle(timeout=timeout)
+            if capture_handle is None:
+                raise RuntimeError('Screenshot boundary was not found')
+            area_box = capture_area.bounding_box()
+            if area_box is None:
+                raise RuntimeError('Screenshot boundary is not visible')
+            content_x = box['x'] + metrics['clientLeft']
+            content_y = box['y'] + metrics['clientTop']
+            left = round(
+                area_box['x']
+                - content_x + metrics['scrollLeft']
+            )
+            top = round(
+                area_box['y']
+                - content_y + metrics['scrollTop']
+            )
+            right = round(
+                area_box['x'] + area_box['width']
+                - content_x + metrics['scrollLeft']
+            )
+            bottom = round(
+                area_box['y'] + area_box['height']
+                - content_y + metrics['scrollTop']
+            )
+            left, right = sorted((left, right))
+            top, bottom = sorted((top, bottom))
+            crop = (
+                max(0, min(left, width - 1)), max(0, min(top, height - 1)),
+                max(1, min(right, width)), max(1, min(bottom, height)),
+            )
         # Qt と Chromium の画像上限を越えて不安定になる前に明示的に停止する。
         if width > 32767 or height > 32767 or width * height > 100_000_000:
             raise RuntimeError(f'Screenshot area is too large: {width}x{height}')
@@ -1186,6 +1297,35 @@ class WorkflowExecutor:
         canvas = None
         painter = None
         try:
+            # CSS の smooth scroll が座標確定前の撮影を引き起こさないようにする。
+            handle.evaluate(
+                "element => element.style.setProperty('scroll-behavior', 'auto', 'important')",
+            )
+            if capture_handle is not None:
+                capture_handle.evaluate("""boundary => {
+                    const hidden = [];
+                    for (const element of boundary.ownerDocument.querySelectorAll('*')) {
+                        if (element === boundary || boundary.contains(element) || element.contains(boundary)) {
+                            continue;
+                        }
+                        const position = getComputedStyle(element).position;
+                        if (position !== 'fixed' && position !== 'sticky') {
+                            continue;
+                        }
+                        const rect = element.getBoundingClientRect();
+                        if (rect.width <= 0 || rect.height <= 0) {
+                            continue;
+                        }
+                        hidden.push({
+                            element,
+                            value: element.style.getPropertyValue('visibility'),
+                            priority: element.style.getPropertyPriority('visibility'),
+                        });
+                        element.style.setProperty('visibility', 'hidden', 'important');
+                    }
+                    // finally で確実に元へ戻すため、対象要素側へ一時的に保持する。
+                    boundary.__wfmScreenshotHiddenOverlays = hidden;
+                }""")
             for y in positions(height, view_height):
                 for x in positions(width, view_width):
                     actual = handle.evaluate("""(element, point) => {
@@ -1226,10 +1366,41 @@ class WorkflowExecutor:
         finally:
             if painter is not None:
                 painter.end()
-            handle.evaluate("""(element, point) => {
-                element.scrollLeft = point.x;
-                element.scrollTop = point.y;
-            }""", {'x': original[0], 'y': original[1]})
+            try:
+                if capture_handle is not None:
+                    capture_handle.evaluate("""boundary => {
+                        for (const item of boundary.__wfmScreenshotHiddenOverlays || []) {
+                            if (item.value) {
+                                item.element.style.setProperty('visibility', item.value, item.priority);
+                            } else {
+                                item.element.style.removeProperty('visibility');
+                            }
+                        }
+                        delete boundary.__wfmScreenshotHiddenOverlays;
+                    }""")
+            finally:
+                # オーバーレイ復元に失敗しても、スクロール状態は必ず復元する。
+                handle.evaluate("""(element, point) => {
+                    element.scrollLeft = point.x;
+                    element.scrollTop = point.y;
+                    if (point.scrollBehavior) {
+                        element.style.setProperty(
+                            'scroll-behavior', point.scrollBehavior, point.scrollBehaviorPriority,
+                        );
+                    } else {
+                        element.style.removeProperty('scroll-behavior');
+                    }
+                }""", {
+                    'x': original[0], 'y': original[1],
+                    'scrollBehavior': metrics.get('scrollBehavior', ''),
+                    'scrollBehaviorPriority': metrics.get('scrollBehaviorPriority', ''),
+                })
+        if canvas is not None and crop != (0, 0, width, height):
+            left, top, right, bottom = crop
+            canvas = canvas.copy(
+                round(left * scale_x), round(top * scale_y),
+                round((right - left) * scale_x), round((bottom - top) * scale_y),
+            )
         if canvas is None or not canvas.save(str(path), 'PNG'):
             raise RuntimeError(f'Screenshot could not be saved: {path}')
 
