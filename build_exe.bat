@@ -29,32 +29,32 @@ goto :parse_args
 :args_done
 if "%CHECK_ONLY%"=="1" goto :check
 
-echo [1/6] Checking Python...
+echo [1/7] Checking Python...
 "%PYTHON%" --version
 if errorlevel 1 goto :error
 
 if "%INSTALL_DEPENDENCIES%"=="1" (
-  echo [2/6] Installing build dependencies...
+  echo [2/7] Installing build dependencies...
   "%PYTHON%" -m pip install --upgrade pyinstaller
   if errorlevel 1 goto :error
   "%PYTHON%" -m pip install -r requirements.txt
   if errorlevel 1 goto :error
 ) else (
-  echo [2/6] Checking installed build dependencies...
+  echo [2/7] Checking installed build dependencies...
   "%PYTHON%" -c "import PyInstaller, playwright, openpyxl, PySide6"
   if errorlevel 1 goto :missing_dependencies
 )
 
-echo [3/6] Cleaning old build output...
+echo [3/7] Cleaning old build output...
 if exist "build" rmdir /s /q "build"
 if exist "dist\%APP_NAME%" rmdir /s /q "dist\%APP_NAME%"
 if exist "%APP_NAME%.spec" del /q "%APP_NAME%.spec"
 
-echo [4/6] Building %APP_NAME%.exe...
+echo [4/7] Building %APP_NAME%.exe...
 "%PYTHON%" -m PyInstaller --noconfirm --clean --windowed --onedir --contents-directory "_internal" --name "%APP_NAME%" --icon "assets\app.ico" --add-data "locales;locales" --add-data "assets;assets" --add-data "qt_ui\theme.qss;qt_ui" --add-data "qt_ui\forms;qt_ui\forms" --add-data "qt_ui\icons;qt_ui\icons" --collect-all playwright "main.py"
 if errorlevel 1 goto :error
 
-echo [5/6] Preparing writable folders...
+echo [5/7] Preparing writable folders...
 if not exist "dist\%APP_NAME%\data" mkdir "dist\%APP_NAME%\data"
 if not exist "dist\%APP_NAME%\log" mkdir "dist\%APP_NAME%\log"
 if not exist "dist\%APP_NAME%\artifacts" mkdir "dist\%APP_NAME%\artifacts"
@@ -67,7 +67,7 @@ if "%INCLUDE_LOCAL_DATA%"=="1" (
   if exist "data\browser_states" xcopy "data\browser_states" "dist\%APP_NAME%\data\browser_states\" /e /i /y >nul
 )
 
-echo [6/6] Removing temporary build files...
+echo [6/7] Removing temporary build files...
 for /l %%R in (1,1,5) do (
   if exist "build" rmdir /s /q "%CD%\build"
   if exist "%APP_NAME%.spec" del /f /q "%CD%\%APP_NAME%.spec"
@@ -84,9 +84,14 @@ echo Close programs using these paths, then run the build again.
 exit /b 1
 
 :cleanup_done
+echo [7/7] Creating distribution archive...
+powershell.exe -NoProfile -Command "Compress-Archive -LiteralPath 'dist\%APP_NAME%' -DestinationPath 'dist\%APP_NAME%.zip' -Force"
+if errorlevel 1 goto :error
+
 echo.
 echo Build completed:
 echo   %CD%\dist\%APP_NAME%\%APP_NAME%.exe
+echo   %CD%\dist\%APP_NAME%.zip
 echo.
 if "%INCLUDE_LOCAL_DATA%"=="0" (
   echo Local database and login states were NOT included.
