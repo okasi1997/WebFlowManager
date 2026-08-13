@@ -1243,6 +1243,14 @@ class WorkflowExecutor:
                 scrollTop: element.scrollTop,
                 clientLeft: element.clientLeft,
                 clientTop: element.clientTop,
+                borderLeftWidth: parseFloat(getComputedStyle(element).borderLeftWidth) || 0,
+                borderTopWidth: parseFloat(getComputedStyle(element).borderTopWidth) || 0,
+                borderRightWidth: parseFloat(getComputedStyle(element).borderRightWidth) || 0,
+                borderBottomWidth: parseFloat(getComputedStyle(element).borderBottomWidth) || 0,
+                borderLeftColor: getComputedStyle(element).borderLeftColor,
+                borderTopColor: getComputedStyle(element).borderTopColor,
+                borderRightColor: getComputedStyle(element).borderRightColor,
+                borderBottomColor: getComputedStyle(element).borderBottomColor,
                 scrollBehavior,
                 scrollBehaviorPriority,
             };
@@ -1296,12 +1304,48 @@ class WorkflowExecutor:
         original = (metrics['scrollLeft'], metrics['scrollTop'])
         canvas = None
         painter = None
+        ancestor_frames: list[tuple[Any, dict[str, Any]]] = []
         try:
             # CSS の smooth scroll が座標確定前の撮影を引き起こさないようにする。
             handle.evaluate(
                 "element => element.style.setProperty('scroll-behavior', 'auto', 'important')",
             )
             if capture_handle is not None:
+                # iframe の外側にある Salesforce などの固定ヘッダーもタイルへ写り込む。
+                # 撮影対象 frame の祖先だけを処理し、iframe 内の選択範囲には触れない。
+                owner_frame = capture_handle.owner_frame()
+                parent_frame = owner_frame.parent_frame if owner_frame is not None else None
+                while parent_frame is not None:
+                    state = parent_frame.evaluate("""() => {
+                        const scrolling = document.scrollingElement || document.documentElement;
+                        const hidden = [];
+                        for (const element of document.querySelectorAll('*')) {
+                            const position = getComputedStyle(element).position;
+                            if (position !== 'fixed' && position !== 'sticky') continue;
+                            const rect = element.getBoundingClientRect();
+                            if (rect.width <= 0 || rect.height <= 0) continue;
+                            hidden.push({
+                                element,
+                                value: element.style.getPropertyValue('visibility'),
+                                priority: element.style.getPropertyPriority('visibility'),
+                            });
+                            element.style.setProperty('visibility', 'hidden', 'important');
+                        }
+                        window.__wfmScreenshotParentOverlays = hidden;
+                        return {
+                            x: scrolling.scrollLeft,
+                            y: scrolling.scrollTop,
+                            behavior: scrolling.style.getPropertyValue('scroll-behavior'),
+                            behaviorPriority: scrolling.style.getPropertyPriority('scroll-behavior'),
+                        };
+                    }""")
+                    # 後続処理で例外が発生しても復元対象から漏れないよう、先に記録する。
+                    ancestor_frames.append((parent_frame, state))
+                    parent_frame.evaluate("""() => {
+                        const scrolling = document.scrollingElement || document.documentElement;
+                        scrolling.style.setProperty('scroll-behavior', 'auto', 'important');
+                    }""")
+                    parent_frame = parent_frame.parent_frame
                 capture_handle.evaluate("""boundary => {
                     const hidden = [];
                     for (const element of boundary.ownerDocument.querySelectorAll('*')) {
@@ -1328,6 +1372,13 @@ class WorkflowExecutor:
                 }""")
             for y in positions(height, view_height):
                 for x in positions(width, view_width):
+                    for parent_frame, state in ancestor_frames:
+                        # ページ側スクリプトの影響を受けても、iframe の画面位置を固定する。
+                        parent_frame.evaluate("""state => {
+                            const scrolling = document.scrollingElement || document.documentElement;
+                            scrolling.scrollLeft = state.x;
+                            scrolling.scrollTop = state.y;
+                        }""", state)
                     actual = handle.evaluate("""(element, point) => {
                         element.scrollLeft = point.x;
                         element.scrollTop = point.y;
@@ -1379,28 +1430,92 @@ class WorkflowExecutor:
                         delete boundary.__wfmScreenshotHiddenOverlays;
                     }""")
             finally:
-                # オーバーレイ復元に失敗しても、スクロール状態は必ず復元する。
-                handle.evaluate("""(element, point) => {
-                    element.scrollLeft = point.x;
-                    element.scrollTop = point.y;
-                    if (point.scrollBehavior) {
-                        element.style.setProperty(
-                            'scroll-behavior', point.scrollBehavior, point.scrollBehaviorPriority,
-                        );
-                    } else {
-                        element.style.removeProperty('scroll-behavior');
-                    }
-                }""", {
-                    'x': original[0], 'y': original[1],
-                    'scrollBehavior': metrics.get('scrollBehavior', ''),
-                    'scrollBehaviorPriority': metrics.get('scrollBehaviorPriority', ''),
-                })
+                try:
+                    for parent_frame, state in reversed(ancestor_frames):
+                        parent_frame.evaluate("""state => {
+                            for (const item of window.__wfmScreenshotParentOverlays || []) {
+                                if (item.value) {
+                                    item.element.style.setProperty('visibility', item.value, item.priority);
+                                } else {
+                                    item.element.style.removeProperty('visibility');
+                                }
+                            }
+                            delete window.__wfmScreenshotParentOverlays;
+                            const scrolling = document.scrollingElement || document.documentElement;
+                            scrolling.scrollLeft = state.x;
+                            scrolling.scrollTop = state.y;
+                            if (state.behavior) {
+                                scrolling.style.setProperty(
+                                    'scroll-behavior', state.behavior, state.behaviorPriority,
+                                );
+                            } else {
+                                scrolling.style.removeProperty('scroll-behavior');
+                            }
+                        }""", state)
+                finally:
+                    # 親 frame の復元に失敗しても、撮影対象の状態は必ず復元する。
+                    handle.evaluate("""(element, point) => {
+                        element.scrollLeft = point.x;
+                        element.scrollTop = point.y;
+                        if (point.scrollBehavior) {
+                            element.style.setProperty(
+                                'scroll-behavior', point.scrollBehavior, point.scrollBehaviorPriority,
+                            );
+                        } else {
+                            element.style.removeProperty('scroll-behavior');
+                        }
+                    }""", {
+                        'x': original[0], 'y': original[1],
+                        'scrollBehavior': metrics.get('scrollBehavior', ''),
+                        'scrollBehaviorPriority': metrics.get('scrollBehaviorPriority', ''),
+                    })
         if canvas is not None and crop != (0, 0, width, height):
             left, top, right, bottom = crop
             canvas = canvas.copy(
                 round(left * scale_x), round(top * scale_y),
                 round((right - left) * scale_x), round((bottom - top) * scale_y),
             )
+        if canvas is not None and capture_area is None:
+            # 分割画像は内側だけを撮影し、最後に選択要素自身の外枠を一度だけ付ける。
+            border_left = round(float(metrics.get('borderLeftWidth', 0)) * scale_x)
+            border_top = round(float(metrics.get('borderTopWidth', 0)) * scale_y)
+            border_right = round(float(metrics.get('borderRightWidth', 0)) * scale_x)
+            border_bottom = round(float(metrics.get('borderBottomWidth', 0)) * scale_y)
+            if any((border_left, border_top, border_right, border_bottom)):
+                framed = QImage(
+                    canvas.width() + border_left + border_right,
+                    canvas.height() + border_top + border_bottom,
+                    QImage.Format.Format_ARGB32,
+                )
+                framed.fill(QColor('white'))
+                frame_painter = QPainter(framed)
+                frame_painter.drawImage(
+                    QRectF(border_left, border_top, canvas.width(), canvas.height()),
+                    canvas,
+                    QRectF(0, 0, canvas.width(), canvas.height()),
+                )
+                if border_top:
+                    frame_painter.fillRect(
+                        QRectF(0, 0, framed.width(), border_top),
+                        QColor(str(metrics.get('borderTopColor', 'transparent'))),
+                    )
+                if border_bottom:
+                    frame_painter.fillRect(
+                        QRectF(0, framed.height() - border_bottom, framed.width(), border_bottom),
+                        QColor(str(metrics.get('borderBottomColor', 'transparent'))),
+                    )
+                if border_left:
+                    frame_painter.fillRect(
+                        QRectF(0, border_top, border_left, canvas.height()),
+                        QColor(str(metrics.get('borderLeftColor', 'transparent'))),
+                    )
+                if border_right:
+                    frame_painter.fillRect(
+                        QRectF(framed.width() - border_right, border_top, border_right, canvas.height()),
+                        QColor(str(metrics.get('borderRightColor', 'transparent'))),
+                    )
+                frame_painter.end()
+                canvas = framed
         if canvas is None or not canvas.save(str(path), 'PNG'):
             raise RuntimeError(f'Screenshot could not be saved: {path}')
 
