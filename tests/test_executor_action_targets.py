@@ -89,19 +89,46 @@ class ExecutorActionTargetTests(unittest.TestCase):
         locator.press.assert_called_once_with('Enter')
 
     def test_scroll_area_screenshot_restores_element_state(self) -> None:
-        """全景撮影後は対象要素のスタイルとスクロール位置を必ず元へ戻す。"""
+        """分割撮影ではレイアウトを変更せず、最後にスクロール位置を戻す。"""
         locator = Mock()
-        state = {'style': 'width: 300px', 'scrollLeft': 40, 'scrollTop': 80}
-        locator.evaluate.side_effect = [state, None]
+        selected = Mock()
+        handle = Mock()
+        selected.evaluate_handle.return_value.as_element.return_value = handle
+        locator.element_handle.return_value = selected
+        locator.page.screenshot.return_value = b'png'
+        metrics = {
+            'clientWidth': 100, 'clientHeight': 80,
+            'scrollWidth': 100, 'scrollHeight': 80,
+            'scrollLeft': 40, 'scrollTop': 20,
+            'clientLeft': 0, 'clientTop': 0,
+        }
+        handle.bounding_box.return_value = {'x': 10, 'y': 15, 'width': 100, 'height': 80}
+        handle.evaluate.side_effect = [metrics, {'x': 0, 'y': 0}, None, None]
         path = Path(self.temporary_dir.name) / 'area.png'
+        tile = Mock()
+        tile.isNull.return_value = False
+        tile.width.return_value = 100
+        tile.height.return_value = 80
+        canvas = Mock()
+        canvas.width.return_value = 100
+        canvas.height.return_value = 80
+        canvas.save.return_value = True
 
-        self.executor._screenshot_scroll_area(locator, path, 1500)
+        with (
+            patch('core.executor.QImage') as image_class,
+            patch('core.executor.QPainter') as painter_class,
+        ):
+            image_class.fromData.return_value = tile
+            image_class.return_value = canvas
+            image_class.Format.Format_ARGB32 = 1
+            self.executor._screenshot_scroll_area(locator, path, 1500)
 
-        self.assertEqual(locator.evaluate.call_count, 2)
-        locator.screenshot.assert_called_once_with(
-            path=str(path), timeout=1500, animations='disabled',
+        locator.page.screenshot.assert_called_once_with(
+            clip={'x': 10, 'y': 15, 'width': 100, 'height': 80},
+            animations='disabled', timeout=1500,
         )
-        self.assertEqual(locator.evaluate.call_args_list[1].args[1], state)
+        self.assertEqual(handle.evaluate.call_args_list[-1].args[1], {'x': 40, 'y': 20})
+        canvas.save.assert_called_once_with(str(path), 'PNG')
 
 
 if __name__ == '__main__':

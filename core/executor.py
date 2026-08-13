@@ -9,6 +9,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
+from PySide6.QtCore import QRectF
+from PySide6.QtGui import QColor, QImage, QPainter
 from browser.page_runtime import active_page, browser_args, browser_context_options, close_browser_context, is_topmost, launch_persistent_chrome, open_pages, page_frames, restore_storage_state, settle_new_page
 from browser.locators import build_locator, locators_across_frames
 from browser.profile_runtime import persistent_profile_dir
@@ -1132,37 +1134,104 @@ class WorkflowExecutor:
 
     @staticmethod
     def _screenshot_scroll_area(locator: Any, path: Path, timeout: int) -> None:
-        """選択領域のスクロール範囲を一時展開し、背景を含めず一枚で保存する。"""
-        # 分割画像を合成せず DOM 側で対象だけを展開するため、固定背景の継ぎ目が発生せず、
-        # 画像の再エンコードも不要になる。元の style とスクロール位置は必ず復元する。
-        state = locator.evaluate("""element => {
-            const state = {
-                style: element.getAttribute('style'),
-                scrollLeft: element.scrollLeft,
-                scrollTop: element.scrollTop,
+        """レイアウトを変えず、実際のスクロール領域だけを分割撮影して結合する。"""
+        locator.scroll_into_view_if_needed(timeout=timeout)
+        selected = locator.element_handle(timeout=timeout)
+        if selected is None:
+            raise RuntimeError('Screenshot target was not found')
+        # 選択要素自体にスクロールがなければ、表示面積が最大の内部スクロール領域を使う。
+        # Salesforce のような外枠と実スクロール要素が分かれた画面にも対応する。
+        handle = selected.evaluate_handle("""element => {
+            const scrollable = node => {
+                const style = getComputedStyle(node);
+                const overflow = `${style.overflowX} ${style.overflowY}`;
+                return node.clientWidth > 1 && node.clientHeight > 1
+                    && (node.scrollWidth > node.clientWidth + 1
+                        || node.scrollHeight > node.clientHeight + 1)
+                    && /(auto|scroll|overlay)/.test(overflow);
             };
-            const rect = element.getBoundingClientRect();
-            const width = Math.max(Math.ceil(rect.width), element.scrollWidth);
-            const height = Math.max(Math.ceil(rect.height), element.scrollHeight);
-            element.style.setProperty('box-sizing', 'border-box', 'important');
-            element.style.setProperty('width', `${width}px`, 'important');
-            element.style.setProperty('height', `${height}px`, 'important');
-            element.style.setProperty('max-width', 'none', 'important');
-            element.style.setProperty('max-height', 'none', 'important');
-            element.style.setProperty('overflow', 'visible', 'important');
-            element.scrollLeft = 0;
-            element.scrollTop = 0;
-            return state;
-        }""")
+            if (scrollable(element)) return element;
+            return Array.from(element.querySelectorAll('*'))
+                .filter(scrollable)
+                .filter(node => node.getClientRects().length > 0)
+                .sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0]
+                || element;
+        }""").as_element()
+        if handle is None:
+            handle = selected
+        metrics = handle.evaluate("""element => ({
+            clientWidth: element.clientWidth,
+            clientHeight: element.clientHeight,
+            scrollWidth: element.scrollWidth,
+            scrollHeight: element.scrollHeight,
+            scrollLeft: element.scrollLeft,
+            scrollTop: element.scrollTop,
+            clientLeft: element.clientLeft,
+            clientTop: element.clientTop,
+        })""")
+        box = handle.bounding_box()
+        if box is None or metrics['clientWidth'] < 1 or metrics['clientHeight'] < 1:
+            raise RuntimeError('Screenshot target is not visible')
+        width, height = int(metrics['scrollWidth']), int(metrics['scrollHeight'])
+        view_width, view_height = int(metrics['clientWidth']), int(metrics['clientHeight'])
+        # Qt と Chromium の画像上限を越えて不安定になる前に明示的に停止する。
+        if width > 32767 or height > 32767 or width * height > 100_000_000:
+            raise RuntimeError(f'Screenshot area is too large: {width}x{height}')
+
+        def positions(total: int, viewport: int) -> list[int]:
+            last = max(0, total - viewport)
+            return list(dict.fromkeys([*range(0, last + 1, viewport), last]))
+
+        original = (metrics['scrollLeft'], metrics['scrollTop'])
+        canvas = None
+        painter = None
         try:
-            locator.screenshot(path=str(path), timeout=timeout, animations='disabled')
+            for y in positions(height, view_height):
+                for x in positions(width, view_width):
+                    actual = handle.evaluate("""(element, point) => {
+                        element.scrollLeft = point.x;
+                        element.scrollTop = point.y;
+                        return {x: element.scrollLeft, y: element.scrollTop};
+                    }""", {'x': x, 'y': y})
+                    # スクロール反映と遅延描画に一フレームだけ待機時間を与える。
+                    handle.evaluate("element => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+                    image = QImage.fromData(locator.page.screenshot(
+                        clip={
+                            'x': box['x'] + metrics['clientLeft'],
+                            'y': box['y'] + metrics['clientTop'],
+                            'width': view_width,
+                            'height': view_height,
+                        },
+                        animations='disabled', timeout=timeout,
+                    ), 'PNG')
+                    if image.isNull():
+                        raise RuntimeError('Screenshot tile could not be decoded')
+                    if canvas is None:
+                        scale_x = image.width() / view_width
+                        scale_y = image.height() / view_height
+                        canvas = QImage(
+                            round(width * scale_x), round(height * scale_y),
+                            QImage.Format.Format_ARGB32,
+                        )
+                        canvas.fill(QColor('white'))
+                        painter = QPainter(canvas)
+                    target_x = round(actual['x'] * scale_x)
+                    target_y = round(actual['y'] * scale_y)
+                    copy_width = min(image.width(), canvas.width() - target_x)
+                    copy_height = min(image.height(), canvas.height() - target_y)
+                    painter.drawImage(
+                        QRectF(target_x, target_y, copy_width, copy_height), image,
+                        QRectF(0, 0, copy_width, copy_height),
+                    )
         finally:
-            locator.evaluate("""(element, state) => {
-                if (state.style === null) element.removeAttribute('style');
-                else element.setAttribute('style', state.style);
-                element.scrollLeft = state.scrollLeft;
-                element.scrollTop = state.scrollTop;
-            }""", state)
+            if painter is not None:
+                painter.end()
+            handle.evaluate("""(element, point) => {
+                element.scrollLeft = point.x;
+                element.scrollTop = point.y;
+            }""", {'x': original[0], 'y': original[1]})
+        if canvas is None or not canvas.save(str(path), 'PNG'):
+            raise RuntimeError(f'Screenshot could not be saved: {path}')
 
     def _wait_until_hidden(
         self, page: Any, selector_type: str, selector: str,
