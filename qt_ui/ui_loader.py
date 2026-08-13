@@ -21,6 +21,17 @@ UI_DIR = Path(__file__).with_name('forms')
 ICON_DIR = Path(__file__).with_name('icons')
 
 
+def optically_align_form_labels(*forms: QFormLayout) -> None:
+    """入力文字のベースラインに合わせ、フォームラベルを視覚上わずかに下げる。"""
+    for form in forms:
+        for row in range(form.rowCount()):
+            item = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
+            label = item.widget() if item is not None else None
+            if isinstance(label, QLabel):
+                # 幾何学的な中央では文字が上寄りに見えるため、内容領域だけを 2px 補正する。
+                label.setContentsMargins(0, 2, 0, 0)
+
+
 def localize_widget_texts(root: QWidget) -> None:
     """Designer と Python で設定された固定表示文言をまとめて翻訳する。"""
     widgets = [root, *root.findChildren(QWidget)]

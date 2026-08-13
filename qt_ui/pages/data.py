@@ -18,9 +18,9 @@ from core.excel_io import read_records_excel, write_records_excel
 from i18n import tr
 from .structured import default_value, empty_record
 from ..table_view import (
-    HierarchicalReorderTreeWidget, capture_scroll_position,
+    HierarchicalReorderTreeWidget, bulk_view_update, capture_scroll_position,
     capture_tree_display_state, configure_table_view, order_with_inserted_after,
-    restore_scroll_position, restore_tree_display_state,
+    restore_scroll_position, restore_tree_display_state, set_tree_expanded,
 )
 from ..ui_loader import (
     confirm_deletion, confirm_pending_changes, load_ui_into, localize_dialog_buttons, require,
@@ -141,17 +141,19 @@ class DataPage(QWidget):
 
     def reload(self, select_id: int | None = None) -> None:
         scroll = capture_scroll_position(self.tree)
-        self.tree.blockSignals(True)
-        self.tree.clear()
         selected = None
+        items: list[QTreeWidgetItem] = []
         for record in self.db.list_data_records():
             item = QTreeWidgetItem([record['name'], record['summary']])
             item.setData(0, Qt.ItemDataRole.UserRole, record)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
-            self.tree.addTopLevelItem(item)
+            items.append(item)
             if record['id'] == select_id:
                 selected = item
-        self.tree.blockSignals(False)
+        # 行を画面外で作成し、モデル通知と再描画を一回にまとめる。
+        with bulk_view_update(self.tree):
+            self.tree.clear()
+            self.tree.addTopLevelItems(items)
         if selected is not None:
             self.tree.setCurrentItem(selected)
         elif self.tree.topLevelItemCount():
@@ -207,8 +209,8 @@ class DataPage(QWidget):
             self.values,
             lambda item: tuple(item.data(0, self.PATH_ROLE) or ()),
         )
-        self.values.clear()
         schema = self.db.get_data_schema()
+        roots: list[QTreeWidgetItem] = []
 
         def add(parent, node: dict[str, Any], value: Any, path: list[Any], label: str | None = None, list_index: int | None = None) -> None:
             kind = node['type']
@@ -218,7 +220,8 @@ class DataPage(QWidget):
             item.setData(0, self.SCHEMA_ROLE, node)
             item.setData(0, self.LIST_INDEX_ROLE, list_index)
             self._show_value_editability(item)
-            parent.addChild(item) if isinstance(parent, QTreeWidgetItem) else parent.addTopLevelItem(item)
+            # 子階層を画面外で完成させ、トップ階層だけを最後に一括追加する。
+            parent.addChild(item) if isinstance(parent, QTreeWidgetItem) else roots.append(item)
             if kind == 'object':
                 mapping = value if isinstance(value, dict) else {}
                 for child in node.get('children', []):
@@ -236,11 +239,14 @@ class DataPage(QWidget):
                         add(entry_item, child, mapping.get(child['name'], default_value(child)), path + [index, child['name']])
 
         for child in schema.get('children', []):
-            add(self.values, child, self.current_data.get(child['name'], default_value(child)), [child['name']])
-        restore_tree_display_state(
-            self.values, display_state,
-            lambda item: tuple(item.data(0, self.PATH_ROLE) or ()),
-        )
+            add(roots, child, self.current_data.get(child['name'], default_value(child)), [child['name']])
+        with bulk_view_update(self.values):
+            self.values.clear()
+            self.values.addTopLevelItems(roots)
+            restore_tree_display_state(
+                self.values, display_state,
+                lambda item: tuple(item.data(0, self.PATH_ROLE) or ()),
+            )
         self._sync_value_toggle_button()
 
     @staticmethod
@@ -294,9 +300,9 @@ class DataPage(QWidget):
         if not items:
             return
         if all(item.isExpanded() for item in items):
-            self.values.collapseAll()
+            set_tree_expanded(self.values, False)
         else:
-            self.values.expandAll()
+            set_tree_expanded(self.values, True)
         self._sync_value_toggle_button()
 
     def _resolve(self, path: list[Any]) -> tuple[Any, Any]:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import json
 import ctypes
+import queue
 import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
@@ -26,14 +27,15 @@ from i18n import tr
 from .auth import profile_path
 from ..ui_loader import (
     confirm_action, confirm_deletion, load_ui_into, localize_dialog_buttons, require, set_button_icon,
+    optically_align_form_labels,
     set_tree_toggle_icon, show_file_exported, show_file_imported,
     show_error, show_information, show_warning,
 )
 from ..table_view import (
-    HierarchicalReorderTreeWidget, capture_scroll_position,
+    HierarchicalReorderTreeWidget, bulk_view_update, capture_scroll_position,
     capture_tree_display_state, configure_row_move_tooltips, configure_table_view,
     order_with_inserted_after, restore_scroll_position, restore_tree_display_state,
-    set_column_layout, set_row_enabled_appearance, update_preserving_scroll,
+    set_column_layout, set_row_enabled_appearance, set_tree_expanded, update_preserving_scroll,
 )
 
 ACTION_LABELS = {
@@ -215,6 +217,12 @@ class EventEditorDialog(QDialog):
         self.continue_on_error.setChecked(bool(event.get('continue_on_error', 0)))
         self.guard_data = decode_guard(event.get('guard_json', event.get('guard', '')))
         self.left_tabs = require(self, QTabWidget, 'eventEditorTabs')
+        self._tab_layouts_prepared = False
+        optically_align_form_labels(
+            require(self, QFormLayout, 'eventFormBasic'),
+            require(self, QFormLayout, 'locatorForm'),
+            require(self, QFormLayout, 'executionForm'),
+        )
         # QTabBar の expanding は Designer から保存できないため、実行時に補完する。
         self.left_tabs.tabBar().setExpanding(False)
         self.selector_host = require(self, QWidget, 'selectorHost')
@@ -263,7 +271,10 @@ class EventEditorDialog(QDialog):
         self.click_success_selector_type.setCurrentText(str(click_success.get('selector_type', 'css')))
         self.click_success_target = require(self, QLineEdit, 'clickSuccessTargetEdit')
         self.click_success_target.setText(str(click_success.get('target', '')))
-        self.click_success_iframe_path = str(click_success.get('iframe_path', ''))
+        self.click_success_iframe_path = require(self, QLineEdit, 'clickSuccessIframeEdit')
+        self.click_success_iframe_path.setText(
+            _iframe_path_text(click_success.get('iframe_path', ''))
+        )
 
         self.guard_summary = require(self, QLineEdit, 'guardSummaryEdit')
         self.selector_reference_button = require(self, QPushButton, 'selectorReferenceButton')
@@ -312,6 +323,29 @@ class EventEditorDialog(QDialog):
         self._update_action_fields()
         self._update_picker_destination()
         self.iframe_path.setText(_iframe_path_text(self.iframe_path.text()))
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self._tab_layouts_prepared:
+            return
+        self._tab_layouts_prepared = True
+        current = self.left_tabs.currentIndex()
+        signals_blocked = self.left_tabs.blockSignals(True)
+        updates_enabled = self.updatesEnabled()
+        self.setUpdatesEnabled(False)
+        try:
+            # 初回切り替え時の再配置を防ぐため、最終ウィンドウ寸法で全タブを先に配置する。
+            for index in range(self.left_tabs.count()):
+                self.left_tabs.setCurrentIndex(index)
+                page = self.left_tabs.widget(index)
+                if page.layout() is not None:
+                    page.layout().activate()
+            self.left_tabs.setCurrentIndex(current)
+        finally:
+            self.left_tabs.blockSignals(signals_blocked)
+            self.setUpdatesEnabled(updates_enabled)
+            if updates_enabled:
+                self.update()
 
     def _accept_if_valid(self) -> None:
         if not self.name.text().strip():
@@ -437,6 +471,10 @@ class EventEditorDialog(QDialog):
             execution_form, self.click_success_target,
             click_success_visible and click_success_condition != 'none',
         )
+        show_row(
+            execution_form, self.click_success_iframe_path,
+            click_success_visible and click_success_condition in {'visible', 'hidden', 'operable'},
+        )
         self._update_picker_destination()
 
     def _update_picker_destination(self, _index: int=-1) -> None:
@@ -470,7 +508,10 @@ class EventEditorDialog(QDialog):
             self.value.clear()
             self._update_action_fields()
 
-    def _run_debug(self, working_text: str, operation, success_text) -> None:
+    def _run_debug(
+        self, working_text: str, operation, success_text,
+        log_queue: queue.Queue[str] | None=None,
+    ) -> None:
         buttons = [
             require(self, QPushButton, name) for name in
             ('pickButton', 'closeDebugButton', 'tryEventButton', 'executeUntilButton')
@@ -483,6 +524,15 @@ class EventEditorDialog(QDialog):
         timer.setInterval(100)
 
         def poll() -> None:
+            if log_queue is not None:
+                lines: list[str] = []
+                while True:
+                    try:
+                        lines.append(log_queue.get_nowait())
+                    except queue.Empty:
+                        break
+                if lines:
+                    self.debug_result.appendPlainText('\n'.join(lines))
             if not future.done():
                 return
             timer.stop()
@@ -543,7 +593,9 @@ class EventEditorDialog(QDialog):
             if pick_success_target:
                 self.click_success_selector_type.setCurrentText(result['selector_type'])
                 self.click_success_target.setText(result['selector'])
-                self.click_success_iframe_path = _iframe_path_text(result.get('iframe_path', ''))
+                self.click_success_iframe_path.setText(
+                    _iframe_path_text(result.get('iframe_path', ''))
+                )
                 return f'成功確認要素を選択しました: {result.get("display", result["selector"])}'
             self.selector_type.setCurrentText(result['selector_type'])
             self.selector.setText(result['selector'])
@@ -577,7 +629,7 @@ class EventEditorDialog(QDialog):
                 'selector_type': self.click_success_selector_type.currentText(),
                 'selector': self.click_success_target.text().strip(),
                 'fallback_selector_type': 'none', 'fallback_selector': '',
-                'iframe_path': self.click_success_iframe_path,
+                'iframe_path': self.click_success_iframe_path.text().strip(),
                 'timeout_ms': self.timeout.value(),
             }
             self._run_debug(
@@ -605,12 +657,15 @@ class EventEditorDialog(QDialog):
             if not ok:
                 return
             variables[name] = value
+        execution_logs: queue.Queue[str] = queue.Queue()
         self._run_debug(
             '対象イベントの直前まで実行しています',
             lambda: self._service_host.debug_browser.execute_until(
                 jobs, self.event_id or None, variables, self.target_url.text().strip(),
+                logger=execution_logs.put,
             ),
             '対象イベントの直前まで実行しました',
+            log_queue=execution_logs,
         )
 
     def result_data(self) -> dict[str, Any]:
@@ -628,7 +683,8 @@ class EventEditorDialog(QDialog):
                 'condition': success_condition,
                 'selector_type': self.click_success_selector_type.currentText(),
                 'target': self.click_success_target.text().strip(),
-            } | ({'iframe_path': self.click_success_iframe_path} if self.click_success_iframe_path else {}),
+            } | ({'iframe_path': self.click_success_iframe_path.text().strip()}
+                 if self.click_success_iframe_path.text().strip() else {}),
             ensure_ascii=False,
         )
         return {
@@ -863,9 +919,9 @@ class DataPathPickerDialog(QDialog):
     def _toggle_all(self) -> None:
         """一つのボタンで全項目の展開と折りたたみを反転する。"""
         if any(item.isExpanded() for item in self._container_items()):
-            self.tree.collapseAll()
+            set_tree_expanded(self.tree, False)
         else:
-            self.tree.expandAll()
+            set_tree_expanded(self.tree, True)
         self._sync_toggle_all_button()
 
     def _choose(self) -> None:
@@ -1257,11 +1313,12 @@ class FlowDesignPage(QWidget):
             self.event_tree,
             lambda item: item.data(0, Qt.ItemDataRole.UserRole),
         )
-        self.event_tree.clear()
         if self.current_workflow_id is None:
+            self.event_tree.clear()
             return
         rows = [dict(row) for row in self.db.list_events(self.current_workflow_id)]
         parent_stack: list[QTreeWidgetItem] = []
+        roots: list[QTreeWidgetItem] = []
         selected: QTreeWidgetItem | None = None
         for row in rows:
             action = str(row['action'])
@@ -1284,18 +1341,22 @@ class FlowDesignPage(QWidget):
             if parent_stack:
                 parent_stack[-1].addChild(item)
             else:
-                self.event_tree.addTopLevelItem(item)
+                roots.append(item)
             if action.endswith('_start'):
                 parent_stack.append(item)
                 item.setExpanded(True)
             if row['id'] == select_id:
                 selected = item
-        if selected is not None:
-            self.event_tree.setCurrentItem(selected)
-        restore_tree_display_state(
-            self.event_tree, display_state,
-            lambda item: item.data(0, Qt.ItemDataRole.UserRole),
-        )
+        # 全階層を画面外で組み立て、追加・展開状態復元・選択を一括更新する。
+        with bulk_view_update(self.event_tree):
+            self.event_tree.clear()
+            self.event_tree.addTopLevelItems(roots)
+            if selected is not None:
+                self.event_tree.setCurrentItem(selected)
+            restore_tree_display_state(
+                self.event_tree, display_state,
+                lambda item: item.data(0, Qt.ItemDataRole.UserRole),
+            )
         self._update_group_toggle_button()
 
     def _group_items(self) -> list[QTreeWidgetItem]:
@@ -1325,9 +1386,9 @@ class FlowDesignPage(QWidget):
         if not groups:
             return
         if all(item.isExpanded() for item in groups):
-            self.event_tree.collapseAll()
+            set_tree_expanded(self.event_tree, False)
         else:
-            self.event_tree.expandAll()
+            set_tree_expanded(self.event_tree, True)
         self._update_group_toggle_button()
 
     def _queue_event_tree_reorder(self, *_args) -> None:
@@ -1396,7 +1457,15 @@ class FlowDesignPage(QWidget):
                 debug_record['data'] if debug_record and marker_position is not None
                 and workflow['position'] >= marker_position else None
             )
-            jobs.append({'events': events, 'guard': decode_guard(workflow['guard_json']), 'data': data})
+            jobs.append({
+                'id': workflow['id'], 'position': workflow['position'], 'name': workflow['name'],
+                'phase': 'pcl' if data is not None else 'once',
+                'session': 1,
+                'group': str(debug_record.get('execution_group', '1')) if data is not None else '1',
+                'pcl_index': 1,
+                'pcl_total': len(records) or 1,
+                'events': events, 'guard': decode_guard(workflow['guard_json']), 'data': data,
+            })
             if workflow['id'] == self.current_workflow_id:
                 break
         return jobs
@@ -1664,10 +1733,3 @@ class FlowDesignPage(QWidget):
     def move_event(self, direction: int) -> None:
         if self.current_workflow_id is not None:
             self.event_tree.moveCurrent(direction)
-
-    def toggle_groups(self) -> None:
-        roots = [self.event_tree.topLevelItem(index) for index in range(self.event_tree.topLevelItemCount())]
-        groups = [item for item in roots if item.childCount()]
-        expand = any(not item.isExpanded() for item in groups)
-        for item in groups:
-            item.setExpanded(expand)

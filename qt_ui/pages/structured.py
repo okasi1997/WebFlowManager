@@ -15,6 +15,7 @@ from core.database import Database
 from i18n import tr
 from ..table_view import (
     HierarchicalReorderTreeWidget, configure_row_move_tooltips, configure_table_view,
+    set_tree_expanded,
 )
 from ..ui_loader import (
     confirm_deletion, confirm_pending_changes, load_ui_into, localize_dialog_buttons, require,
@@ -301,9 +302,9 @@ class SchemaPage(QWidget):
         """展開と折りたたみを一つのボタンで切り替える。"""
         items = self._expandable_items()
         if items and all(not item.isExpanded() for item in items):
-            self.tree.expandAll()
+            set_tree_expanded(self.tree, True)
         else:
-            self.tree.collapseAll()
+            set_tree_expanded(self.tree, False)
         self._sync_toggle_all_button()
 
     def _queue_schema_reorder(self, *_args) -> None:

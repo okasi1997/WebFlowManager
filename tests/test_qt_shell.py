@@ -12,7 +12,7 @@ from unittest.mock import patch
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from PySide6.QtWidgets import (
-    QApplication, QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFrame, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox,
+    QApplication, QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox,
     QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QStyle, QTableWidget,
     QTabWidget, QVBoxLayout, QWidget,
 )
@@ -244,6 +244,22 @@ class QtShellTests(unittest.TestCase):
         self.assertIsNotNone(current)
         self.assertEqual(current.text(1), '使用中')
         self.assertEqual(page.selected.text(), current.text(0))
+
+    def test_auth_cards_keep_layout_ratio_when_none_is_selected(self) -> None:
+        page = self.window.pages['auth']
+        self.window.resize(1600, 900)
+        self.window.show_page('auth')
+        self.window.show()
+        self.app.processEvents()
+        profile_card = page.findChild(QFrame, 'profileCard')
+        browser_card = page.findChild(QFrame, 'browserCard')
+        initial_widths = profile_card.width(), browser_card.width()
+
+        page.select_profile('none')
+        self.app.processEvents()
+
+        self.assertEqual((profile_card.width(), browser_card.width()), initial_widths)
+        self.assertGreater(profile_card.width(), 250)
 
     def test_flow_tables_share_row_and_column_interaction_rules(self) -> None:
         page = self.window.pages['design']
@@ -549,10 +565,47 @@ class QtShellTests(unittest.TestCase):
         self.assertFalse(event_title.isVisibleTo(editor))
         editor.close()
 
+    def test_event_form_labels_use_common_optical_vertical_alignment(self) -> None:
+        editor = EventEditorDialog(self.window.pages['design'], {
+            'name': 'click', 'action': 'click', 'selector_type': 'css',
+            'selector': '#target', 'fallback_selector_type': 'none',
+            'fallback_selector': '', 'value': '',
+        })
+        editor.show()
+        self.app.processEvents()
+        for form_name in ('eventFormBasic', 'locatorForm', 'executionForm'):
+            form = editor.findChild(QFormLayout, form_name)
+            for row in range(form.rowCount()):
+                item = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
+                label = item.widget() if item is not None else None
+                if isinstance(label, QLabel):
+                    self.assertEqual(label.contentsMargins().top(), 2)
+        editor.close()
+
+    def test_event_editor_prepares_both_tab_layouts_before_first_switch(self) -> None:
+        editor = EventEditorDialog(self.window.pages['design'], {
+            'name': 'click', 'action': 'click', 'selector_type': 'css',
+            'selector': '#target', 'value': '',
+        })
+        changes: list[int] = []
+        editor.left_tabs.currentChanged.connect(changes.append)
+        original = editor.left_tabs.currentIndex()
+
+        editor.show()
+        self.app.processEvents()
+
+        self.assertTrue(editor._tab_layouts_prepared)
+        self.assertEqual(editor.left_tabs.currentIndex(), original)
+        self.assertEqual(changes, [])
+        for index in range(editor.left_tabs.count()):
+            page = editor.left_tabs.widget(index)
+            self.assertEqual(page.size(), editor.left_tabs.currentWidget().size())
+        editor.close()
+
     def test_click_event_round_trips_its_success_condition(self) -> None:
         config = {
             'condition': 'operable', 'selector_type': 'css',
-            'target': '.save-complete',
+            'target': '.save-complete', 'iframe_path': '["iframe.result"]',
         }
         editor = EventEditorDialog(self.window.pages['design'], {
             'name': 'click', 'action': 'click', 'selector_type': 'css',
@@ -561,6 +614,7 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(editor.click_success_condition.currentData(), 'operable')
         self.assertEqual(editor.click_success_selector_type.currentText(), 'css')
         self.assertEqual(editor.click_success_target.text(), '.save-complete')
+        self.assertEqual(editor.click_success_iframe_path.text(), '["iframe.result"]')
         result = editor.result_data()
         self.assertEqual(result['value'], '')
         self.assertEqual(json.loads(result['success_json']), config)
@@ -568,6 +622,34 @@ class QtShellTests(unittest.TestCase):
             editor.click_success_condition.findData('none')
         )
         self.assertEqual(editor.result_data()['success_json'], '')
+        editor.close()
+
+    def test_success_iframe_input_follows_element_condition_and_stays_aligned(self) -> None:
+        editor = EventEditorDialog(self.window.pages['design'], {
+            'name': 'click', 'action': 'click', 'selector_type': 'css',
+            'selector': '#save', 'value': '',
+        })
+        editor.left_tabs.setCurrentIndex(1)
+        self.app.processEvents()
+
+        self.assertEqual(editor.click_success_condition.currentData(), 'none')
+        self.assertEqual(editor.click_success_iframe_path.text(), '')
+        self.assertFalse(editor.click_success_iframe_path.isVisibleTo(editor))
+        self.assertFalse(
+            editor.findChild(QLabel, 'clickSuccessIframeLabel').isVisibleTo(editor)
+        )
+        editor.click_success_condition.setCurrentIndex(
+            editor.click_success_condition.findData('visible')
+        )
+        self.app.processEvents()
+        self.assertTrue(editor.click_success_iframe_path.isVisibleTo(editor))
+        self.assertTrue(
+            editor.findChild(QLabel, 'clickSuccessIframeLabel').isVisibleTo(editor)
+        )
+        self.assertEqual(
+            editor.click_success_iframe_path.geometry().width(),
+            editor.click_success_target.geometry().width(),
+        )
         editor.close()
 
     def test_page_picker_can_fill_click_success_target_from_execution_tab(self) -> None:
@@ -592,8 +674,10 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(editor.selector.text(), '#submit')
         self.assertEqual(editor.click_success_selector_type.currentText(), 'role')
         self.assertEqual(editor.click_success_target.text(), 'status|Complete')
+        self.assertEqual(editor.click_success_iframe_path.text(), 'css=iframe.result')
+        editor.click_success_iframe_path.setText('["iframe.manual"]')
         self.assertEqual(
-            json.loads(editor.result_data()['success_json'])['iframe_path'], 'css=iframe.result',
+            json.loads(editor.result_data()['success_json'])['iframe_path'], '["iframe.manual"]',
         )
         editor.close()
 

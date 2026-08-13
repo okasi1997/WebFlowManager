@@ -8,6 +8,16 @@ from core.settings import SUPPORTED_ACTIONS, SUPPORTED_SELECTOR_TYPES
 
 
 class WaitMigrationTests(unittest.TestCase):
+    def test_new_database_persists_visible_browser_as_first_run_default(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            database = Database(Path(folder) / 'test.db')
+            stored = database.connection.execute(
+                "SELECT value FROM app_meta WHERE key='browser_visible'"
+            ).fetchone()['value']
+            database.close()
+
+        self.assertEqual(stored, '1')
+
     def test_new_database_starts_with_an_empty_data_schema(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             database = Database(Path(folder) / 'test.db')

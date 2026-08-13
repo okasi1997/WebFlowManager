@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from contextlib import contextmanager
 from typing import Any, TypeVar
 
 from PySide6.QtCore import QEvent, QObject, QPointF, Qt, Signal
@@ -14,6 +15,34 @@ from i18n import tr
 
 TREE_LEVEL_INDENT = 14
 RowKey = TypeVar('RowKey')
+
+
+@contextmanager
+def bulk_view_update(*views: QAbstractItemView):
+    """大量更新中のシグナルと再描画を止め、完了時に一度だけ再描画する。"""
+    states = [
+        (view, view.blockSignals(True), view.updatesEnabled())
+        for view in views
+    ]
+    try:
+        for view, _signals_blocked, _updates_enabled in states:
+            view.setUpdatesEnabled(False)
+        yield
+    finally:
+        for view, signals_blocked, updates_enabled in states:
+            view.blockSignals(signals_blocked)
+            view.setUpdatesEnabled(updates_enabled)
+            if updates_enabled:
+                view.viewport().update()
+
+
+def set_tree_expanded(tree: QTreeWidget, expanded: bool) -> None:
+    """全展開・全折りたたみを中間通知と中間描画なしで一括実行する。"""
+    with bulk_view_update(tree):
+        if expanded:
+            tree.expandAll()
+        else:
+            tree.collapseAll()
 
 
 def set_row_enabled_appearance(item: QTreeWidgetItem, enabled: bool) -> None:

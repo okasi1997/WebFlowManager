@@ -454,7 +454,11 @@ class DebugBrowserSession:
             }""")
         self._submit(task)
 
-    def execute_until(self, jobs: list[dict[str, Any]], target_event_id: int | None, variables: dict[str, str], target_url: str='') -> None:
+    def execute_until(
+        self, jobs: list[dict[str, Any]], target_event_id: int | None,
+        variables: dict[str, str], target_url: str='',
+        logger: Callable[[str], None] | None=None,
+    ) -> None:
         def task() -> None:
             from core.conditions import evaluate_guard
             from core.executor import WorkflowExecutor
@@ -462,7 +466,10 @@ class DebugBrowserSession:
             page = active_page(page)
             page.goto(target_url or self.start_url, wait_until='domcontentloaded')
             artifact_dir = self.project_dir / 'artifacts' / datetime.now().strftime('%Y%m%d_%H%M%S')
-            executor = WorkflowExecutor(self.project_dir, lambda message: self._log_sink(message, 'WorkflowExecutor'))
+            executor = WorkflowExecutor(
+                self.project_dir,
+                logger or (lambda message: self._log_sink(message, 'WorkflowExecutor')),
+            )
 
             def pause_at_target(event: dict[str, Any]) -> None:
                 if int(event.get('id', -1)) == target_event_id:
@@ -472,7 +479,23 @@ class DebugBrowserSession:
                 for index, job in enumerate(jobs, 1):
                     root_data = job.get('data')
                     if evaluate_guard(job.get('guard'), lambda path: executor._resolve_guard_data(root_data, path, {})):
-                        executor._execute_workflow_on_page(page, job['events'], variables, artifact_dir, root_data, f'debug_{index}', on_event_start=pause_at_target)
+                        log_step = {
+                            'phase': job.get('phase', 'once'),
+                            'session': job.get('session', 1),
+                            'group': job.get('group', '1'),
+                            'pcl_index': job.get('pcl_index', index),
+                            'pcl_total': job.get('pcl_total', len(jobs)),
+                            'position': job.get('position', index),
+                        }
+                        executor.logger(
+                            f'{executor._step_log_context(log_step)} ▶ '
+                            f'F{job.get("position", index)} {job.get("name", "")}'.rstrip()
+                        )
+                        executor._execute_workflow_on_page(
+                            page, job['events'], variables, artifact_dir, root_data,
+                            f'debug_{index}', log_prefix=executor._step_log_prefix(log_step),
+                            on_event_start=pause_at_target,
+                        )
             except _DebugPause:
                 page = active_page(page)
                 bring_page_to_front(page)

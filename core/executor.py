@@ -916,6 +916,8 @@ class WorkflowExecutor:
         previous: tuple[str, float, float, float, float] | None = None
         while time.monotonic() < deadline:
             try:
+                remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
+                locator.scroll_into_view_if_needed(timeout=remaining_ms)
                 ready = locator.is_visible() and locator.is_enabled() and is_topmost(locator)
                 current = self._click_target_snapshot(locator) if ready else None
             except Exception as error:
@@ -1037,9 +1039,11 @@ class WorkflowExecutor:
             settle_new_page(page, previous_pages, timeout)
             self._wait_for_event_success(page, event, variables, timeout)
         elif action == 'fill':
-            self._fast_event_locator(
+            locator = self._fast_event_locator(
                 page, event, selector, fallback_selector, timeout,
-            ).fill(value)
+            )
+            self._wait_for_stable_action_target(locator, timeout)
+            locator.fill(value)
         elif action == 'select':
             locator = self._event_locator(
                 page, event, selector, fallback_selector, timeout,
@@ -1081,6 +1085,7 @@ class WorkflowExecutor:
                     page, event, selector, fallback_selector, timeout,
                 )
             )
+            self._wait_for_stable_action_target(locator, timeout)
             locator.press(value)
             self._wait_for_event_success(page, event, variables, timeout)
         elif action == 'upload_file':

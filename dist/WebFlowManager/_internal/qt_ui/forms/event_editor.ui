@@ -263,7 +263,7 @@
                 </item>
                </layout>
               </item>
-              <item row="2" column="0">
+               <item row="2" column="0">
                <widget class="QLabel" name="valueLabel">
                 <property name="minimumSize">
                  <size>
@@ -1244,11 +1244,27 @@
                 </property>
                </widget>
               </item>
-              <item row="9" column="1">
-               <widget class="QLineEdit" name="clickSuccessTargetEdit"/>
-              </item>
-              <item row="10" column="1">
-               <widget class="QCheckBox" name="continueCheck">
+               <item row="9" column="1">
+                <widget class="QLineEdit" name="clickSuccessTargetEdit"/>
+               </item>
+               <item row="10" column="0">
+                <widget class="QLabel" name="clickSuccessIframeLabel">
+                 <property name="minimumSize">
+                  <size><width>108</width><height>0</height></size>
+                 </property>
+                 <property name="maximumSize">
+                  <size><width>108</width><height>16777215</height></size>
+                 </property>
+                 <property name="text">
+                  <string>iframe パス</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="10" column="1">
+                <widget class="QLineEdit" name="clickSuccessIframeEdit"/>
+               </item>
+               <item row="11" column="1">
+                <widget class="QCheckBox" name="continueCheck">
                 <property name="visible">
                  <bool>false</bool>
                 </property>

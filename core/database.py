@@ -82,6 +82,11 @@ class Database:
             self.connection.execute("ALTER TABLE global_data_records ADD COLUMN execution_group TEXT NOT NULL DEFAULT '1'")
         if 'summary' not in global_record_columns:
             self.connection.execute("ALTER TABLE global_data_records ADD COLUMN summary TEXT NOT NULL DEFAULT ''")
+        # Persist the documented first-run default instead of relying on a missing
+        # metadata row being interpreted as true by each caller.
+        self.connection.execute(
+            "INSERT OR IGNORE INTO app_meta(key, value) VALUES ('browser_visible', '1')"
+        )
         self._initialize_workflow_positions()
         self._migrate_global_data()
         self._migrate_combined_event_groups()

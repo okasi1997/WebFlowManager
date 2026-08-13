@@ -17,6 +17,15 @@ from .main_window import MainWindow
 from .ui_loader import apply_application_font
 
 
+def application_icon_path(resource_dir: Path) -> Path | None:
+    """Return the native Windows icon when packaged, with PNG as a fallback."""
+    for name in ('app.ico', 'app-icon.png'):
+        candidate = resource_dir / 'assets' / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 class _ComboBoxWheelBlocker(QObject):
     def eventFilter(self, watched, event) -> bool:
         if isinstance(watched, (QComboBox, QAbstractSpinBox)) and event.type() == QEvent.Type.Wheel:
@@ -159,8 +168,8 @@ class QtFlowManagerApplication:
         self.qt = QApplication.instance() or QApplication(sys.argv)
         self.qt.setApplicationName('WebFlowManager')
         # アプリケーションアイコンを先に設定し、全ダイアログへ継承させる。
-        icon_path = self.resource_dir / 'assets' / 'app-icon.png'
-        if icon_path.is_file():
+        icon_path = application_icon_path(self.resource_dir)
+        if icon_path is not None:
             self.qt.setWindowIcon(QIcon(str(icon_path)))
         family, size = self.db.get_ui_font()
         apply_application_font(family, size)

@@ -360,8 +360,14 @@ class ExecutionPage(QWidget):
             futures = {
                 group_pool.submit(
                     WorkflowExecutor(self.project_dir, self.append_log).run_batch,
-                    steps(group, group_records), {}, step_start, step_success, step_failure, event_start,
-                    self.db.get_browser_visible(), f'group_{group}', state_path,
+                    steps(group, group_records), {},
+                    on_step_start=step_start,
+                    on_step_success=step_success,
+                    on_step_failure=step_failure,
+                    on_event_start=event_start,
+                    browser_visible=self.db.get_browser_visible(),
+                    session_name=f'group_{group}',
+                    storage_state_path=state_path,
                 ): group
                 for group, group_records in groups.items()
             }
