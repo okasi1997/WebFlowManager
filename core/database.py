@@ -23,6 +23,24 @@ class Database:
         # CREATE TABLE だけでは既存 DB に列が追加されない。
         # 下段の PRAGMA 検査で、過去バージョンを段階的に更新する。
         self.connection.executescript("\n            CREATE TABLE IF NOT EXISTS workflows (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                name TEXT NOT NULL UNIQUE,\n                description TEXT NOT NULL DEFAULT '',\n                position INTEGER NOT NULL DEFAULT 0,\n                enabled INTEGER NOT NULL DEFAULT 1,\n                pcl_loop_start INTEGER NOT NULL DEFAULT 0,\n                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n            );\n            CREATE TABLE IF NOT EXISTS events (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                workflow_id INTEGER NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,\n                position INTEGER NOT NULL,\n                name TEXT NOT NULL,\n                action TEXT NOT NULL,\n                selector_type TEXT NOT NULL DEFAULT 'none',\n                selector TEXT NOT NULL DEFAULT '',\n                fallback_selector_type TEXT NOT NULL DEFAULT 'none',\n                fallback_selector TEXT NOT NULL DEFAULT '',\n                value TEXT NOT NULL DEFAULT '',\n                timeout_ms INTEGER NOT NULL DEFAULT 10000,\n                enabled INTEGER NOT NULL DEFAULT 1,\n                continue_on_error INTEGER NOT NULL DEFAULT 0,\n                refresh_on_retry INTEGER NOT NULL DEFAULT 0,\n                data_path TEXT NOT NULL DEFAULT '',\n                UNIQUE(workflow_id, position)\n            );\n            CREATE TABLE IF NOT EXISTS runs (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                workflow_id INTEGER NOT NULL,\n                started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n                finished_at TEXT,\n                status TEXT NOT NULL,\n                message TEXT NOT NULL DEFAULT ''\n            );\n            CREATE TABLE IF NOT EXISTS input_rows (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                workflow_id INTEGER NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,\n                position INTEGER NOT NULL,\n                name TEXT NOT NULL,\n                UNIQUE(workflow_id, position)\n            );\n            CREATE TABLE IF NOT EXISTS input_cells (\n                row_id INTEGER NOT NULL REFERENCES input_rows(id) ON DELETE CASCADE,\n                variable_name TEXT NOT NULL,\n                value TEXT NOT NULL DEFAULT '',\n                PRIMARY KEY(row_id, variable_name)\n            );\n            CREATE TABLE IF NOT EXISTS data_schemas (\n                workflow_id INTEGER PRIMARY KEY REFERENCES workflows(id) ON DELETE CASCADE,\n                schema_json TEXT NOT NULL\n            );\n            CREATE TABLE IF NOT EXISTS data_records (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                workflow_id INTEGER NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,\n                position INTEGER NOT NULL,\n                name TEXT NOT NULL,\n                data_json TEXT NOT NULL,\n                UNIQUE(workflow_id, position)\n            );\n            CREATE TABLE IF NOT EXISTS global_data_schema (\n                id INTEGER PRIMARY KEY CHECK(id = 1),\n                schema_json TEXT NOT NULL\n            );\n            CREATE TABLE IF NOT EXISTS global_data_records (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                position INTEGER NOT NULL UNIQUE,\n                name TEXT NOT NULL,\n                enabled INTEGER NOT NULL DEFAULT 1,\n                execution_group TEXT NOT NULL DEFAULT '1',\n                execution_status TEXT NOT NULL DEFAULT 'not_run',\n                data_json TEXT NOT NULL\n            );\n            CREATE TABLE IF NOT EXISTS app_meta (\n                key TEXT PRIMARY KEY,\n                value TEXT NOT NULL\n            );\n            ")
+        self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS workflow_outline (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL CHECK(kind IN ('flow', 'group')),
+                workflow_id INTEGER UNIQUE,
+                parent_id INTEGER,
+                position INTEGER NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                guard_json TEXT NOT NULL DEFAULT ''
+            )
+        """)
+        outline_columns = {
+            row['name'] for row in self.connection.execute('PRAGMA table_info(workflow_outline)')
+        }
+        if 'guard_json' not in outline_columns:
+            self.connection.execute(
+                "ALTER TABLE workflow_outline ADD COLUMN guard_json TEXT NOT NULL DEFAULT ''"
+            )
         columns = {row['name'] for row in self.connection.execute('PRAGMA table_info(workflows)').fetchall()}
         if 'position' not in columns:
             self.connection.execute('ALTER TABLE workflows ADD COLUMN position INTEGER NOT NULL DEFAULT 0')
@@ -90,6 +108,7 @@ class Database:
             "INSERT OR IGNORE INTO app_meta(key, value) VALUES ('browser_visible', '1')"
         )
         self._initialize_workflow_positions()
+        self._initialize_workflow_outline()
         self._migrate_global_data()
         self._migrate_combined_event_groups()
         self.connection.commit()
@@ -203,12 +222,138 @@ class Database:
             for index, row in enumerate(rows, 1):
                 self.connection.execute('UPDATE workflows SET position=? WHERE id=?', (index, row['id']))
 
+    def _initialize_workflow_outline(self) -> None:
+        """既存 Flow を保持したまま、管理用ツリーへ未登録行だけを追加する。"""
+        registered = {
+            int(row['workflow_id']) for row in self.connection.execute(
+                "SELECT workflow_id FROM workflow_outline WHERE kind='flow' AND workflow_id IS NOT NULL"
+            )
+        }
+        next_position = int(self.connection.execute(
+            'SELECT COALESCE(MAX(position), 0) + 1 FROM workflow_outline WHERE parent_id IS NULL'
+        ).fetchone()[0])
+        for workflow in self.list_workflows():
+            if int(workflow['id']) in registered:
+                continue
+            self.connection.execute(
+                "INSERT INTO workflow_outline(kind, workflow_id, parent_id, position) VALUES ('flow', ?, NULL, ?)",
+                (workflow['id'], next_position),
+            )
+            next_position += 1
+
+    def list_workflow_outline(self) -> list[sqlite3.Row]:
+        return self.connection.execute(
+            'SELECT * FROM workflow_outline ORDER BY parent_id, position, id'
+        ).fetchall()
+
+    def add_workflow_group(self, name: str, guard: dict[str, Any] | None=None) -> int:
+        position = self.connection.execute(
+            'SELECT COALESCE(MAX(position), 0) + 1 FROM workflow_outline WHERE parent_id IS NULL'
+        ).fetchone()[0]
+        cursor = self.connection.execute(
+            "INSERT INTO workflow_outline(kind, parent_id, position, name, guard_json) "
+            "VALUES ('group', NULL, ?, ?, ?)",
+            (position, name.strip(), json.dumps(decode_guard(guard), ensure_ascii=False)),
+        )
+        self.connection.commit()
+        return int(cursor.lastrowid)
+
+    def update_workflow_group(
+        self, group_id: int, name: str, guard: dict[str, Any] | None=None,
+    ) -> None:
+        self.connection.execute(
+            "UPDATE workflow_outline SET name=?, guard_json=? WHERE id=? AND kind='group'",
+            (name.strip(), json.dumps(decode_guard(guard), ensure_ascii=False), group_id),
+        )
+        self.connection.commit()
+
+    def get_workflow_guards(self, workflow_id: int) -> list[dict[str, Any]]:
+        """外側のグループから Flow 自身まで、適用する条件を順番に返す。"""
+        node = self.connection.execute(
+            "SELECT parent_id FROM workflow_outline WHERE kind='flow' AND workflow_id=?",
+            (workflow_id,),
+        ).fetchone()
+        group_guards: list[dict[str, Any]] = []
+        parent_id = node['parent_id'] if node is not None else None
+        while parent_id is not None:
+            group = self.connection.execute(
+                "SELECT parent_id, guard_json FROM workflow_outline WHERE id=? AND kind='group'",
+                (parent_id,),
+            ).fetchone()
+            if group is None:
+                break
+            group_guards.append(decode_guard(group['guard_json']))
+            parent_id = group['parent_id']
+        group_guards.reverse()
+        workflow = self.connection.execute(
+            'SELECT guard_json FROM workflows WHERE id=?', (workflow_id,)
+        ).fetchone()
+        if workflow is not None:
+            group_guards.append(decode_guard(workflow['guard_json']))
+        return group_guards
+
+    def reorder_workflow_outline(self, nodes: list[tuple[int, int | None, int]]) -> None:
+        """管理ツリーと実行用 Flow 順序を同時に保存する。"""
+        existing = {int(row['id']) for row in self.list_workflow_outline()}
+        if {node_id for node_id, _parent_id, _position in nodes} != existing:
+            raise ValueError('flow.order_mismatch')
+        with self.connection:
+            for node_id, parent_id, position in nodes:
+                self.connection.execute(
+                    'UPDATE workflow_outline SET parent_id=?, position=? WHERE id=?',
+                    (parent_id, position, node_id),
+                )
+            flow_ids = [
+                int(row['workflow_id']) for node_id, _parent_id, _position in nodes
+                for row in self.connection.execute(
+                    "SELECT workflow_id FROM workflow_outline WHERE id=? AND kind='flow'", (node_id,)
+                ).fetchall()
+            ]
+            for position, workflow_id in enumerate(flow_ids, 1):
+                self.connection.execute('UPDATE workflows SET position=? WHERE id=?', (position, workflow_id))
+
+    def delete_workflow_group(self, group_id: int) -> None:
+        """グループ配下の Flow と子グループをまとめて削除する。"""
+        rows = [dict(row) for row in self.list_workflow_outline()]
+        by_id = {int(row['id']): row for row in rows}
+        children: dict[int | None, list[dict[str, Any]]] = {}
+        for row in rows:
+            children.setdefault(row['parent_id'], []).append(row)
+        node_ids: list[int] = []
+        workflow_ids: list[int] = []
+
+        def collect(node_id: int) -> None:
+            node = by_id.get(node_id)
+            if node is None:
+                return
+            node_ids.append(node_id)
+            if node['kind'] == 'flow' and node['workflow_id'] is not None:
+                workflow_ids.append(int(node['workflow_id']))
+            for child in children.get(node_id, []):
+                collect(int(child['id']))
+
+        collect(group_id)
+        for workflow_id in workflow_ids:
+            self.delete_workflow(workflow_id)
+        with self.connection:
+            self.connection.executemany(
+                'DELETE FROM workflow_outline WHERE id=?', ((node_id,) for node_id in reversed(node_ids))
+            )
+            self._normalize_workflow_positions()
+
     def list_workflows(self) -> list[sqlite3.Row]:
         return self.connection.execute('SELECT * FROM workflows ORDER BY position, id').fetchall()
 
     def add_workflow(self, name: str, description: str='') -> int:
         position = self.connection.execute('SELECT COALESCE(MAX(position), 0) + 1 FROM workflows').fetchone()[0]
         cursor = self.connection.execute('INSERT INTO workflows(name, description, position) VALUES (?, ?, ?)', (name.strip(), description.strip(), position))
+        outline_position = self.connection.execute(
+            'SELECT COALESCE(MAX(position), 0) + 1 FROM workflow_outline WHERE parent_id IS NULL'
+        ).fetchone()[0]
+        self.connection.execute(
+            "INSERT INTO workflow_outline(kind, workflow_id, parent_id, position) VALUES ('flow', ?, NULL, ?)",
+            (cursor.lastrowid, outline_position),
+        )
         self.connection.commit()
         return int(cursor.lastrowid)
 
@@ -241,6 +386,7 @@ class Database:
             self.connection.execute('DELETE FROM data_schemas WHERE workflow_id=?', (workflow_id,))
             self.connection.execute('DELETE FROM events WHERE workflow_id=?', (workflow_id,))
             self.connection.execute('DELETE FROM workflows WHERE id=?', (workflow_id,))
+            self.connection.execute('DELETE FROM workflow_outline WHERE workflow_id=?', (workflow_id,))
             self._normalize_workflow_positions()
 
     def reorder_workflows(self, workflow_ids: list[int]) -> None:
@@ -379,7 +525,24 @@ class Database:
                 event.pop('refresh_on_retry', None)
                 event['guard'] = decode_guard(event.pop('guard_json', ''))
             workflows.append({'name': workflow['name'], 'description': workflow['description'], 'position': workflow['position'], 'enabled': int(workflow['enabled']), 'pcl_loop_start': int(workflow['pcl_loop_start']), 'guard': decode_guard(workflow['guard_json']), 'events': self._events_to_group_items(events)})
-        payload = {'version': 2, 'type': 'web-flow-collection', 'browser_visible': self.get_browser_visible(), 'workflows': workflows}
+        workflow_names = {int(row['id']): str(row['name']) for row in self.list_workflows()}
+        outline_rows = [dict(row) for row in self.list_workflow_outline()]
+        outline = [
+            {
+                'key': f'node:{row["id"]}', 'kind': row['kind'],
+                'workflow': workflow_names.get(int(row['workflow_id'])) if row['workflow_id'] is not None else None,
+                'name': row['name'],
+                'guard': decode_guard(row.get('guard_json', '')),
+                'parent': f'node:{row["parent_id"]}' if row['parent_id'] is not None else None,
+                'position': int(row['position']),
+            }
+            for row in outline_rows
+        ]
+        payload = {
+            'version': 2, 'type': 'web-flow-collection',
+            'browser_visible': self.get_browser_visible(),
+            'workflows': workflows, 'workflow_outline': outline,
+        }
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
 
     def import_workflow_collection(self, path: Path, allowed_actions: tuple[str, ...], allowed_selector_types: tuple[str, ...]) -> int:
@@ -392,6 +555,7 @@ class Database:
         if not isinstance(payload, dict) or payload.get('version') not in {1, 2}:
             raise ValueError('flow.json_version_unsupported')
         workflows = payload.get('workflows')
+        outline_payload = payload.get('workflow_outline')
         if payload.get('type') not in {'web-flow-collection', 'salesforce-flow-collection'} or not isinstance(workflows, list):
             raise ValueError('flow.json_type_invalid')
         browser_visible = payload.get('browser_visible', True)
@@ -466,14 +630,51 @@ class Database:
         with self.connection:
             self.connection.execute('DELETE FROM runs')
             self.connection.execute('DELETE FROM events')
+            self.connection.execute('DELETE FROM workflow_outline')
             self.connection.execute('DELETE FROM workflows')
             self.connection.execute("INSERT INTO app_meta(key, value) VALUES ('browser_visible', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", ('1' if browser_visible else '0',))
+            imported_workflow_ids: dict[str, int] = {}
             for workflow_position, workflow in enumerate(normalized, 1):
                 cursor = self.connection.execute('INSERT INTO workflows\n                       (name, description, position, enabled, pcl_loop_start, guard_json)\n                       VALUES (?, ?, ?, ?, ?, ?)', (workflow['name'], workflow['description'], workflow_position, workflow['enabled'], workflow['pcl_loop_start'], json.dumps(workflow['guard'], ensure_ascii=False)))
                 workflow_id = int(cursor.lastrowid)
+                imported_workflow_ids[str(workflow['name'])] = workflow_id
                 for event_position, event in enumerate(workflow['events'], 1):
                     event_cursor = self.connection.execute('INSERT INTO events\n                           (workflow_id, position, name, action, selector_type, selector,\n                            fallback_selector_type, fallback_selector, iframe_path, value,\n                            timeout_ms, enabled, continue_on_error, refresh_on_retry, data_path, guard_json)\n                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (workflow_id, event_position, event['name'], event['action'], event['selector_type'], event['selector'], event['fallback_selector_type'], event['fallback_selector'], event['iframe_path'], event['value'], event['timeout_ms'], event['enabled'], event['continue_on_error'], 0, event['data_path'], json.dumps(event['guard'], ensure_ascii=False)))
                     self.connection.execute('UPDATE events SET failure_action=?, failure_target=?, retry_count=?, retry_interval_ms=?, success_json=?, scroll_json=? WHERE id=?', (event['failure_action'], event['failure_target'], event['retry_count'], event['retry_interval_ms'], event['success_json'], event['scroll_json'], event_cursor.lastrowid))
+            # 新形式の JSON では管理用グループも復元する。旧形式は従来どおり平坦表示にする。
+            if isinstance(outline_payload, list):
+                pending = [item for item in outline_payload if isinstance(item, dict)]
+                restored: dict[str, int] = {}
+                while pending:
+                    progressed = False
+                    for item in pending[:]:
+                        key = str(item.get('key', ''))
+                        parent_key = item.get('parent')
+                        if not key or (parent_key is not None and str(parent_key) not in restored):
+                            continue
+                        kind = str(item.get('kind', ''))
+                        workflow_id = imported_workflow_ids.get(str(item.get('workflow', '')))
+                        if kind not in {'flow', 'group'} or (kind == 'flow' and workflow_id is None):
+                            pending.remove(item)
+                            progressed = True
+                            continue
+                        cursor = self.connection.execute(
+                            'INSERT INTO workflow_outline(kind, workflow_id, parent_id, position, name, guard_json) '
+                            'VALUES (?, ?, ?, ?, ?, ?)',
+                            (
+                                kind, workflow_id,
+                                restored.get(str(parent_key)) if parent_key is not None else None,
+                                max(1, int(item.get('position', 1))),
+                                str(item.get('name', '')) if kind == 'group' else '',
+                                json.dumps(decode_guard(item.get('guard')), ensure_ascii=False),
+                            ),
+                        )
+                        restored[key] = int(cursor.lastrowid)
+                        pending.remove(item)
+                        progressed = True
+                    if not progressed:
+                        break
+        self._initialize_workflow_outline()
         self._migrate_combined_event_groups()
         self.connection.commit()
 
@@ -705,8 +906,25 @@ class Database:
         self.connection.commit()
 
     def set_data_record_enabled(self, record_id: int, enabled: bool) -> None:
-        self.connection.execute('UPDATE global_data_records SET enabled=?, execution_status=? WHERE id=?', (int(enabled), 'not_run' if enabled else 'skipped', record_id))
+        # 今回の実行対象と前回の実行結果は独立して管理し、切替時に結果を失わない。
+        self.connection.execute('UPDATE global_data_records SET enabled=? WHERE id=?', (int(enabled), record_id))
         self.connection.commit()
+
+    def set_data_records_enabled(self, record_ids: list[int], enabled: bool | None) -> None:
+        """複数データの今回実行を一度のトランザクションで更新する。"""
+        if not record_ids:
+            return
+        with self._lock, self.connection:
+            if enabled is None:
+                self.connection.executemany(
+                    'UPDATE global_data_records SET enabled=1-enabled WHERE id=?',
+                    ((record_id,) for record_id in record_ids),
+                )
+            else:
+                self.connection.executemany(
+                    'UPDATE global_data_records SET enabled=? WHERE id=?',
+                    ((int(enabled), record_id) for record_id in record_ids),
+                )
 
     def set_data_record_group(self, record_id: int, group: str) -> None:
         group = group.strip()
@@ -715,8 +933,58 @@ class Database:
         self.connection.execute('UPDATE global_data_records SET execution_group=? WHERE id=?', (group, record_id))
         self.connection.commit()
 
+    def set_data_records_group(self, record_ids: list[int], group: str) -> None:
+        """選択データへ同じ実行グループをまとめて設定する。"""
+        group = group.strip()
+        if not group:
+            raise ValueError('execution.group_empty')
+        if not record_ids:
+            return
+        with self._lock, self.connection:
+            self.connection.executemany(
+                'UPDATE global_data_records SET execution_group=? WHERE id=?',
+                ((group, record_id) for record_id in record_ids),
+            )
+
+    def reorder_group_data_records(self, group: str, ordered_ids: list[int]) -> None:
+        """他グループの相対位置を変えず、指定グループ内だけを並べ替える。"""
+        records = self.list_data_records()
+        group_ids = [int(record['id']) for record in records if str(record['execution_group']) == group]
+        if len(ordered_ids) != len(group_ids) or set(ordered_ids) != set(group_ids):
+            raise ValueError('flow.order_mismatch')
+        ordered = iter(ordered_ids)
+        all_ids = [
+            next(ordered) if str(record['execution_group']) == group else int(record['id'])
+            for record in records
+        ]
+        self.reorder_data_records(all_ids)
+
+    def reorder_enabled_group_data_records(self, group: str, ordered_ids: list[int]) -> None:
+        """スキップ行の位置を保ったまま、実行対象行だけを並べ替える。"""
+        records = self.list_data_records()
+        group_records = [
+            record for record in records if str(record['execution_group']) == group
+        ]
+        enabled_ids = [int(record['id']) for record in group_records if record['enabled']]
+        if len(ordered_ids) != len(enabled_ids) or set(ordered_ids) != set(enabled_ids):
+            raise ValueError('flow.order_mismatch')
+        enabled_order = iter(ordered_ids)
+        merged_ids = [
+            next(enabled_order) if record['enabled'] else int(record['id'])
+            for record in group_records
+        ]
+        self.reorder_group_data_records(group, merged_ids)
+
+    def clear_data_record_statuses(self) -> None:
+        """今回実行の設定を保ち、全データの前回結果だけをまとめて消去する。"""
+        with self._lock, self.connection:
+            self.connection.execute(
+                "UPDATE global_data_records SET execution_status="
+                "CASE WHEN enabled=1 THEN 'not_run' ELSE 'skipped' END"
+            )
+
     def set_data_record_status(self, record_id: int, status: str) -> None:
-        if status not in {'not_run', 'waiting', 'running', 'success', 'failed', 'skipped'}:
+        if status not in {'not_run', 'waiting', 'running', 'error_waiting', 'stopping', 'stopped', 'success', 'failed', 'skipped'}:
             raise ValueError(f'Invalid data execution status: {status}')
         with self._lock:
             # 並列グループから同時に完了通知が届くため、更新と commit を一体で保護する。
@@ -730,7 +998,17 @@ class Database:
             self.connection.executemany('INSERT INTO global_data_records(position, name, summary, enabled, execution_group, execution_status, data_json) VALUES (?, ?, ?, ?, ?, ?, ?)', ((position, record['name'], str(record.get('summary', '')).strip(), int(bool(record.get('enabled', True))), str(record.get('execution_group', '1')), 'not_run' if record.get('enabled', True) else 'skipped', json.dumps(record['data'], ensure_ascii=False)) for position, record in enumerate(records, 1)))
 
     def prepare_data_record_statuses(self) -> None:
-        self.connection.execute("UPDATE global_data_records SET execution_status=CASE WHEN enabled=1 THEN 'waiting' ELSE 'skipped' END")
+        # 実行対象だけを待機中へ進め、スキップ対象の前回結果はそのまま保持する。
+        self.connection.execute("UPDATE global_data_records SET execution_status='waiting' WHERE enabled=1")
+        self.connection.commit()
+
+    def recover_interrupted_data_record_statuses(self) -> None:
+        """前回終了時に残った実行途中状態を、再実行可能な中止結果へ戻す。"""
+        self.connection.execute(
+            "UPDATE global_data_records SET execution_status="
+            "CASE WHEN execution_status='error_waiting' THEN 'failed' ELSE 'stopped' END "
+            "WHERE execution_status IN ('waiting', 'running', 'error_waiting', 'stopping')"
+        )
         self.connection.commit()
 
     def delete_data_record(self, _workflow_id: int, record_id: int) -> None:

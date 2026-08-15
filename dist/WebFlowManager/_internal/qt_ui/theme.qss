@@ -160,6 +160,12 @@ QPushButton[primary="true"] {
 }
 QPushButton[primary="true"]:hover { background-color: #0e76c2; border-color: #0967aa; }
 QPushButton[primary="true"]:pressed { background-color: #0869ae; }
+/* プライマリーボタンの指定が共通無効色を上書きしないよう、無効状態を後段で明示する。 */
+QPushButton[primary="true"]:disabled {
+    color: #f5f7f8;
+    background-color: #aeb9c2;
+    border-color: #a2aeb7;
+}
 QPushButton[executionTab="true"] {
     min-height: 30px;
     padding: 0 13px;

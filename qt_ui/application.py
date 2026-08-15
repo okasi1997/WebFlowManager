@@ -4,7 +4,7 @@ import sys
 import ctypes
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtCore import QEvent, QObject, QTimer, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractSpinBox, QApplication, QComboBox, QDialog, QDialogButtonBox, QInputDialog,
@@ -195,4 +195,11 @@ class QtFlowManagerApplication:
 
     def run(self) -> int:
         self.window.show()
+        # 初回描画を優先し、負荷が集中しないよう管理画面を段階的に準備する。
+        QTimer.singleShot(200, self._preload_management_pages)
         return self.qt.exec()
+
+    def _preload_management_pages(self) -> None:
+        """Data 管理の準備後、さらに間隔を空けてフロー設計を準備する。"""
+        self.window.preload_page('data')
+        QTimer.singleShot(400, lambda: self.window.preload_page('design'))

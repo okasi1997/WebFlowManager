@@ -12,7 +12,7 @@ from typing import Any, Callable
 from browser.page_runtime import active_page, bring_page_to_front, close_browser_context, launch_persistent_chrome, page_frames, restore_storage_state
 from browser.locators import actionable_matches, actionable_matches_across_frames, build_locator, matches_across_frames, visible_matches
 from browser.picker_scripts import picker_script
-from browser.profile_runtime import persistent_profile_dir
+from browser.profile_runtime import acquire_profile_lease, persistent_profile_dir, profile_lock_error
 from i18n import tr
 
 class ElementPicker:
@@ -82,7 +82,7 @@ class ElementPicker:
             if len(matches) != 1:
                 continue
             if action == 'screenshot':
-                # 撮影範囲やスクロール要素は子要素に覆われる大きなコンテナーも対象になる。
+                # キャプチャー範囲やスクロール要素は子要素に覆われる大きなコンテナーも対象になる。
                 # クリック操作用の hit-test は行わず、一意かつ可視であれば採用する。
                 visible = [match for match in matches if match.is_visible()]
                 usable = len(visible) == 1
@@ -282,8 +282,18 @@ class DebugBrowserSession:
         self.action_stable_ms_getter = action_stable_ms_getter or (lambda: 250)
         self._tasks: queue.Queue[tuple[Callable[[], Any] | None, Future[Any]]] = queue.Queue()
         self._cancel_requested = threading.Event()
-        self._thread = threading.Thread(target=self._worker, name='locator-debug-browser', daemon=True)
-        self._thread.start()
+        self._thread: threading.Thread | None = None
+        self._thread_lock = threading.Lock()
+
+    def _ensure_worker(self) -> None:
+        """初回のブラウザー操作まで Playwright の初期化を遅延する。"""
+        with self._thread_lock:
+            if self._thread is not None:
+                return
+            self._thread = threading.Thread(
+                target=self._worker, name='locator-debug-browser', daemon=True,
+            )
+            self._thread.start()
 
     def _worker(self) -> None:
         try:
@@ -297,30 +307,42 @@ class DebugBrowserSession:
                     return
                 future.set_exception(RuntimeError('error.playwright_not_installed'))
         playwright = sync_playwright().start()
-        context = page = None
+        context = page = profile_lease = None
         temporary_profile: tempfile.TemporaryDirectory[str] | None = None
 
         def dispose() -> None:
-            nonlocal context, page, temporary_profile
+            nonlocal context, page, temporary_profile, profile_lease
             try:
                 close_browser_context(context)
             finally:
                 context = page = None
+                if profile_lease is not None:
+                    profile_lease.release()
+                    profile_lease = None
                 if temporary_profile is not None:
                     temporary_profile.cleanup()
                     temporary_profile = None
 
+        def reusable_page():
+            """手動で閉じられたテスト画面を破棄し、プロファイル占有も同時に解放する。"""
+            nonlocal page
+            if context is None or page is None:
+                return None
+            try:
+                page = active_page(page)
+                if not page.is_closed():
+                    return page
+            except Exception:
+                pass
+            # ウィンドウの X で閉じた場合も「テスト画面を閉じる」と同じ後処理を行う。
+            dispose()
+            return None
+
         def ensure_page(target_url: str='') -> tuple[Any, Any]:
-            nonlocal context, page, temporary_profile
-            if context is not None and page is not None:
-                try:
-                    page = active_page(page)
-                    if not page.is_closed():
-                        return context, page
-                except Exception:
-                    # アプリ外で Chrome が閉じられた可能性があるため、
-                    # 再起動前に無効な Playwright の参照を破棄する。
-                    dispose()
+            nonlocal context, page, temporary_profile, profile_lease
+            current_page = reusable_page()
+            if current_page is not None:
+                return context, current_page
             state_path = self.storage_state_getter()
             last_error: Exception | None = None
             for attempt in range(2):
@@ -329,6 +351,7 @@ class DebugBrowserSession:
                     if user_data_dir is None:
                         temporary_profile = tempfile.TemporaryDirectory(prefix='webflow_chrome_')
                         user_data_dir = Path(temporary_profile.name)
+                    profile_lease = acquire_profile_lease(user_data_dir)
                     context = launch_persistent_chrome(playwright, user_data_dir, visible=True)
                     restore_storage_state(context, state_path)
                     pages = context.pages
@@ -339,6 +362,9 @@ class DebugBrowserSession:
                     last_error = error
                     # 起動途中の context を残すと次回呼出しで再利用されるため必ず破棄する。
                     dispose()
+                    converted = profile_lock_error(error)
+                    if converted is not None:
+                        raise converted from error
                     if attempt == 0:
                         continue
             assert last_error is not None
@@ -353,10 +379,15 @@ class DebugBrowserSession:
                 # ブラウザーを手動操作している間も新規タブの Target を再開できるよう、
                 # 同期 API を定期的に呼び出して Playwright のイベントを処理する。
                 try:
-                    if page is not None and not page.is_closed():
-                        page.wait_for_timeout(50)
+                    current_page = reusable_page()
+                    if current_page is not None:
+                        current_page.wait_for_timeout(50)
                 except Exception:
-                    pass
+                    # close 通知中に API が失敗した場合も、lease を残さない。
+                    try:
+                        dispose()
+                    except Exception:
+                        pass
                 continue
             if task is None:
                 try:
@@ -372,6 +403,7 @@ class DebugBrowserSession:
                 future.set_exception(error)
 
     def _submit(self, task: Callable[[], Any], timeout: float | None=None) -> Any:
+        self._ensure_worker()
         future: Future[Any] = Future()
         self._tasks.put((task, future))
         return future.result(timeout=timeout)
@@ -504,6 +536,15 @@ class DebugBrowserSession:
                 self.action_stable_ms_getter(),
             )
 
+            # 複数の業務フローで同じ PCL を使用しても、テスト対象は一度だけ表示する。
+            pcl_job = next((job for job in jobs if job.get('data') is not None), None)
+            if pcl_job is not None:
+                executor.logger(
+                    f'{tr("event.debug_pcl_prefix")}'
+                    f'{pcl_job.get("pcl_name", "")} '
+                    f'({pcl_job.get("pcl_index", 1)} / {pcl_job.get("pcl_total", 1)})'
+                )
+
             def pause_at_target(event: dict[str, Any]) -> None:
                 if int(event.get('id', -1)) == target_event_id:
                     raise _DebugPause
@@ -543,6 +584,8 @@ class DebugBrowserSession:
 
     def close_browser(self) -> None:
         self._cancel_requested.set()
+        if self._thread is None:
+            return
         # ワーカー初期化前に _dispose を参照すると競合するため実行時に解決する。
         try:
             self._submit(lambda: self._dispose(), timeout=10)
@@ -555,6 +598,8 @@ class DebugBrowserSession:
 
     def shutdown(self) -> None:
         self._cancel_requested.set()
+        if self._thread is None:
+            return
         future: Future[Any] = Future()
         self._tasks.put((None, future))
         try:

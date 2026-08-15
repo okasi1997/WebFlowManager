@@ -14,11 +14,11 @@ from PySide6.QtWidgets import (
 from core.database import Database
 from i18n import tr
 from ..table_view import (
-    HierarchicalReorderTreeWidget, configure_row_move_tooltips, configure_table_view,
-    set_tree_expanded,
+    HierarchicalReorderTreeWidget, bind_structured_copy_paste, configure_row_move_tooltips,
+    configure_table_view, set_tree_expanded, unique_copy_name,
 )
 from ..ui_loader import (
-    confirm_deletion, confirm_pending_changes, load_ui_into, localize_dialog_buttons, require,
+    confirm_deletion, confirm_import_overwrite, confirm_pending_changes, load_ui_into, localize_dialog_buttons, require,
     set_tree_toggle_icon, show_file_exported, show_file_imported, show_information, show_warning,
 )
 
@@ -123,6 +123,9 @@ class SchemaPage(QWidget):
         self._reorder_selected_key: int | None = None
         self.tree.orderChanged.connect(self._queue_schema_reorder)
         self.tree.itemDoubleClicked.connect(lambda *_: self.edit_field())
+        bind_structured_copy_paste(
+            self.tree, 'data-schema-field', self._copy_field_payload, self._paste_field_payload,
+        )
         actions = {
             'editFieldButton': self.edit_field, 'deleteFieldButton': self.delete_field,
             'moveFieldUpButton': lambda: self.move(-1), 'moveFieldDownButton': lambda: self.move(1),
@@ -367,6 +370,35 @@ class SchemaPage(QWidget):
         location = self._schema_location(self._item_index_path(item))
         return (location[0], location[1]) if location else None
 
+    def _copy_field_payload(self) -> dict[str, Any] | None:
+        """選択フィールドと配下構造をまとめてコピーする。"""
+        if self._schema_reorder_pending:
+            self._apply_schema_tree_order()
+        selected = self.selected()
+        return selected[0] if selected else None
+
+    def _paste_field_payload(self, source: dict[str, Any]) -> None:
+        """選択行と同じ階層の直後へ貼り付ける。"""
+        if self._schema_reorder_pending:
+            self._apply_schema_tree_order()
+        item = self.tree.currentItem() if self.tree.selectedItems() else None
+        index_path = self._item_index_path(item) if item is not None else None
+        location = self._schema_location(index_path)
+        if location is None or index_path is None:
+            siblings = self.schema.setdefault('children', [])
+            insert_at = len(siblings)
+            selected_path = (insert_at,)
+        else:
+            _selected_node, siblings, selected_index = location
+            insert_at = selected_index + 1
+            selected_path = (*index_path[:-1], insert_at)
+        node = copy.deepcopy(source)
+        node['name'] = unique_copy_name(
+            str(node['name']), (sibling['name'] for sibling in siblings),
+        )
+        siblings.insert(insert_at, node)
+        self.render(selected_path)
+
     def _ask_field(self, node: dict[str, Any] | None = None) -> dict[str, Any] | None:
         dialog = FieldDialog(self, node)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -473,6 +505,8 @@ class SchemaPage(QWidget):
     def import_json(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, tr('JSON 読込'), '', 'JSON (*.json)')
         if not path:
+            return
+        if not confirm_import_overwrite(self, bool(self.schema.get('children')), 'データ構造'):
             return
         try:
             schema = json.loads(Path(path).read_text(encoding='utf-8'))

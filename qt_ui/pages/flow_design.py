@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import copy
 import json
 import ctypes
 import queue
@@ -8,20 +9,19 @@ import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
-from PySide6.QtCore import QEvent, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QTimer, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QFrame, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QSpinBox, QSplitter,
-    QTabWidget, QTableWidget, QTableWidgetItem, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+    QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
     QWidget,
 )
 
 from core.conditions import OPERATORS, decode_guard, summarize_guard
 from core.daily_log import DailyLogWriter
 from core.database import Database
-from core.executor import find_variables
 from core.settings import SELECT_FIRST_VALUE, SUPPORTED_ACTIONS, SUPPORTED_SELECTOR_TYPES
 from browser.element_picker import DebugBrowserSession
 from i18n import tr
@@ -33,10 +33,11 @@ from ..ui_loader import (
     show_error, show_information, show_warning,
 )
 from ..table_view import (
-    HierarchicalReorderTreeWidget, bulk_view_update, capture_scroll_position,
+    HierarchicalReorderTreeWidget, bind_structured_copy_paste, bulk_view_update, capture_scroll_position,
     capture_tree_display_state, configure_row_move_tooltips, configure_table_view,
-    order_with_inserted_after, restore_scroll_position, restore_tree_display_state,
+    restore_scroll_position, restore_tree_display_state,
     set_column_layout, set_row_enabled_appearance, set_tree_expanded, update_preserving_scroll,
+    unique_copy_name,
 )
 
 ACTION_LABELS = {
@@ -98,41 +99,6 @@ def _aligned_form_host(
         trailing.setProperty('formHost', True)
     trailing.setFixedWidth(trailing_width)
     return _inline_host((field, 1), trailing)
-
-
-class ReorderTableWidget(QTableWidget):
-    """個別セルを移動せず、行全体の挿入位置だけを通知するテーブル。"""
-
-    rowReordered = Signal(int, int)
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._drag_source_row = -1
-
-    def startDrag(self, supported_actions) -> None:
-        self._drag_source_row = self.currentRow()
-        # Qt に元行を削除させず、並べ替えはデータベース再読込だけで反映する。
-        super().startDrag(Qt.DropAction.CopyAction)
-
-    def dropEvent(self, event) -> None:
-        source = self._drag_source_row
-        if source < 0 or source >= self.rowCount():
-            event.ignore()
-            return
-        index = self.indexAt(event.position().toPoint())
-        target = self.rowCount()
-        if index.isValid():
-            target = index.row()
-            if event.position().y() > self.visualRect(index).center().y():
-                target += 1
-        if target > source:
-            target -= 1
-        target = max(0, min(target, self.rowCount() - 1))
-        event.setDropAction(Qt.DropAction.CopyAction)
-        event.accept()
-        if target != source:
-            QTimer.singleShot(0, lambda source=source, target=target: self.rowReordered.emit(source, target))
-        self._drag_source_row = -1
 
 
 class EventEditorDialog(QDialog):
@@ -696,6 +662,8 @@ class EventEditorDialog(QDialog):
         )
 
     def execute_until_event(self) -> None:
+        # イベントの試行時だけ実行系モジュールを読み込む。
+        from core.executor import find_variables
         jobs = self._service_host.debug_jobs(
             self.event_id or None,
             current_event_limit=self.insert_at if not self.event_id else None,
@@ -1171,8 +1139,55 @@ class FlowEditorDialog(QDialog):
         }
 
 
+class WorkflowGroupDialog(QDialog):
+    """Flow 一覧の管理用グループ名だけを編集する軽量ダイアログ。"""
+
+    def __init__(
+        self, parent: QWidget, name: str='', guard: Any=None,
+        schema: dict[str, Any] | None=None,
+    ) -> None:
+        super().__init__(parent)
+        load_ui_into(self, 'workflow_group.ui')
+        self.schema = schema or {'type': 'object', 'children': []}
+        self.guard_value = decode_guard(guard)
+        self.name_edit = require(self, QLineEdit, 'nameEdit')
+        self.guard_summary = require(self, QLineEdit, 'guardSummaryEdit')
+        self.name_edit.setText(name)
+        require(self, QPushButton, 'editGuardButton').clicked.connect(self._edit_guard)
+        buttons = require(self, QDialogButtonBox, 'buttonBox')
+        localize_dialog_buttons(buttons)
+        buttons.accepted.connect(self._accept_if_valid)
+        buttons.rejected.connect(self.reject)
+        self._update_guard_summary()
+
+    def _edit_guard(self) -> None:
+        dialog = GuardConditionEditorDialog(self, self.guard_value, self.schema)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.guard_value = dialog.result_data()
+            self._update_guard_summary()
+
+    def _update_guard_summary(self) -> None:
+        self.guard_summary.setText(
+            _localized_guard_summary(self.guard_value) or tr('常に実行')
+        )
+
+    def _accept_if_valid(self) -> None:
+        if not self.name_edit.text().strip():
+            show_warning(self, 'グループ', 'グループ名を入力してください。')
+            return
+        self.accept()
+
+    def result_name(self) -> str:
+        return self.name_edit.text().strip()
+
+    def result_guard(self) -> dict[str, Any]:
+        return self.guard_value
+
+
 class FlowDesignPage(QWidget):
     EVENT_END_ID_ROLE = Qt.ItemDataRole.UserRole + 2
+    WORKFLOW_NODE_ROLE = Qt.ItemDataRole.UserRole
+    WORKFLOW_DATA_ROLE = Qt.ItemDataRole.UserRole + 1
 
     def __init__(self, project_dir: Path, db: Database) -> None:
         super().__init__()
@@ -1197,35 +1212,57 @@ class FlowDesignPage(QWidget):
         splitter.setStretchFactor(0, 38)
         splitter.setStretchFactor(1, 62)
         splitter.setSizes([380, 620])
-        designer_table = require(self, QTableWidget, 'workflowTable')
+        designer_table = require(self, QTreeWidget, 'workflowTable')
         table_layout = designer_table.parentWidget().layout()
-        self.workflow_table = ReorderTableWidget(designer_table.parentWidget())
+        self.workflow_table = HierarchicalReorderTreeWidget(designer_table.parentWidget())
         self.workflow_table.setObjectName('workflowTable')
         table_layout.replaceWidget(designer_table, self.workflow_table)
         designer_table.setObjectName('workflowTableDesignerPlaceholder')
         designer_table.setParent(None)
         designer_table.deleteLater()
         self.workflow_table.setColumnCount(5)
-        self.workflow_table.setHorizontalHeaderLabels([tr('common.order'), tr('flow.name'), tr('common.enabled'), tr('flow.data_start'), tr('condition.execution_condition')])
+        self.workflow_table.setHeaderLabels([tr('flow.name'), tr('common.order'), tr('common.enabled'), tr('condition.execution_condition'), tr('flow.data_start')])
         configure_table_view(self.workflow_table, reorder=True)
         # CopyAction を受け付け、Qt 標準の移動後削除による行欠落を防ぐ。
         self.workflow_table.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
-        self.workflow_table.verticalHeader().hide()
-        workflow_header = self.workflow_table.horizontalHeader()
+        workflow_header = self.workflow_table.header()
         workflow_header.setMinimumSectionSize(36)
-        # 表示順: 順番、業務フロー、有効、実行条件、データ開始。
+        # 業務フロー名を先頭、順番を第二列にして階層と順序を同時に読み取れるようにする。
         set_column_layout(
             self.workflow_table,
-            logical_order=(0, 1, 2, 4, 3),
-            widths=(54, 180, 58, 82, 120),
+            logical_order=(0, 1, 2, 3, 4),
+            widths=(190, 54, 58, 120, 82),
         )
         self.workflow_table.setDefaultDropAction(Qt.DropAction.CopyAction)
-        self.workflow_table.rowReordered.connect(self._reorder_workflow_rows)
+        self.workflow_table.setExpandsOnDoubleClick(False)
+        self.workflow_table.setContainerTest(
+            lambda item: str((item.data(0, self.WORKFLOW_DATA_ROLE) or {}).get('kind')) == 'group'
+        )
+        self._workflow_reorder_pending = False
+        self.workflow_table.orderChanged.connect(self._queue_workflow_tree_reorder)
         self.workflow_table.itemSelectionChanged.connect(self._workflow_selected)
         self.workflow_table.itemDoubleClicked.connect(self._workflow_double_clicked)
-        require(self, QPushButton, 'newWorkflowButton').clicked.connect(self.add_workflow)
+        self.workflow_table.viewport().installEventFilter(self)
+        bind_structured_copy_paste(
+            self.workflow_table, 'workflow', self._copy_workflow_payload,
+            self._paste_workflow_payload,
+        )
+        add_workflow = require(self, QPushButton, 'newWorkflowButton')
+        add_workflow_menu = QMenu(add_workflow)
+        add_workflow_menu.addAction('フロー追加', self.add_workflow)
+        add_workflow_menu.addAction('グループ追加', self.add_workflow_group)
+        add_workflow.setMenu(add_workflow_menu)
         require(self, QPushButton, 'editWorkflowButton').clicked.connect(self.edit_workflow)
         require(self, QPushButton, 'deleteWorkflowButton').clicked.connect(self.delete_workflow)
+        workflow_up = require(self, QPushButton, 'moveWorkflowUpButton')
+        workflow_down = require(self, QPushButton, 'moveWorkflowDownButton')
+        configure_row_move_tooltips(workflow_up, workflow_down, '業務フロー')
+        workflow_up.clicked.connect(lambda: self.workflow_table.moveCurrent(-1))
+        workflow_down.clicked.connect(lambda: self.workflow_table.moveCurrent(1))
+        self.workflow_group_toggle = require(self, QPushButton, 'workflowGroupToggleButton')
+        self.workflow_group_toggle.clicked.connect(self._toggle_workflow_groups)
+        self.workflow_table.itemExpanded.connect(self._update_workflow_group_toggle)
+        self.workflow_table.itemCollapsed.connect(self._update_workflow_group_toggle)
         json_button = require(self, QPushButton, 'workflowJsonButton')
         json_menu = QMenu(json_button)
         json_menu.addAction(tr('flow.import_all_json'), self.import_json)
@@ -1250,7 +1287,7 @@ class FlowDesignPage(QWidget):
         set_column_layout(
             self.event_tree,
             logical_order=(0, 5, 4, 3, 1, 2),
-            widths=(240, 110, 220, 120, 70, 60),
+            widths=(220, 110, 220, 120, 70, 60),
         )
         self.event_tree.setDefaultDropAction(Qt.DropAction.CopyAction)
         self.event_tree.setContainerTest(
@@ -1261,6 +1298,9 @@ class FlowDesignPage(QWidget):
         self.event_tree.setExpandsOnDoubleClick(False)
         self.event_tree.viewport().installEventFilter(self)
         self.event_tree.itemDoubleClicked.connect(self._event_double_clicked)
+        bind_structured_copy_paste(
+            self.event_tree, 'event', self._copy_event_payload, self._paste_event_payload,
+        )
         add = require(self, QPushButton, 'addEventButton')
         add_menu = QMenu(add)
         add_menu.addAction(tr('event.add'), self.add_event)
@@ -1279,82 +1319,194 @@ class FlowDesignPage(QWidget):
         self.event_tree.itemCollapsed.connect(self._update_group_toggle_button)
         self._update_group_toggle_button()
 
-    def reload(self, select_id: int | None=None) -> None:
-        workflow_scroll = capture_scroll_position(self.workflow_table)
-        rows = [dict(row) for row in self.db.list_workflows()]
+    def reload(
+        self, select_id: int | None=None, *, select_node_id: int | None=None,
+        select_first: bool=True,
+    ) -> None:
+        display_state = capture_tree_display_state(
+            self.workflow_table, lambda item: item.data(0, self.WORKFLOW_NODE_ROLE),
+        )
+        workflows = {int(row['id']): dict(row) for row in self.db.list_workflows()}
+        nodes = [dict(row) for row in self.db.list_workflow_outline()]
         current = select_id if select_id is not None else self.current_workflow_id
-        self.workflow_table.blockSignals(True)
-        self.workflow_table.setRowCount(len(rows))
-        selected_row = -1
-        for index, row in enumerate(rows):
-            values = [row['position'], row['name'], tr('common.yes') if row['enabled'] else tr('common.no'), '★' if row['pcl_loop_start'] else '', _localized_guard_summary(decode_guard(row['guard_json'])) or tr('常に実行')]
-            for column, value in enumerate(values):
-                item = QTableWidgetItem(str(value))
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                item.setData(Qt.ItemDataRole.UserRole, row['id'])
-                if not row['enabled']:
-                    item.setForeground(QColor('#929da6'))
-                self.workflow_table.setItem(index, column, item)
-            if row['id'] == current:
-                selected_row = index
-        self.workflow_table.blockSignals(False)
-        if selected_row >= 0:
-            self.workflow_table.selectRow(selected_row)
-        elif rows:
-            self.workflow_table.selectRow(0)
-        else:
-            self.current_workflow_id = None
-            self.event_title.setText(tr('flow.selection_required'))
-            self.event_tree.clear()
-        restore_scroll_position(self.workflow_table, workflow_scroll)
+        items: dict[int, QTreeWidgetItem] = {}
+        selected: QTreeWidgetItem | None = None
+        for node in nodes:
+            workflow = workflows.get(int(node['workflow_id'])) if node['workflow_id'] is not None else None
+            if node['kind'] == 'group':
+                data = {
+                    'kind': 'group', 'node_id': int(node['id']), 'name': str(node['name']),
+                    'guard_json': str(node.get('guard_json', '')),
+                }
+                values = [
+                    node['name'], '', '',
+                    _localized_guard_summary(decode_guard(node.get('guard_json', ''))) or tr('常に実行'),
+                    '',
+                ]
+            elif workflow is not None:
+                data = workflow | {'kind': 'flow', 'node_id': int(node['id'])}
+                values = [
+                    workflow['name'], workflow['position'],
+                    tr('common.yes') if workflow['enabled'] else tr('common.no'),
+                    _localized_guard_summary(decode_guard(workflow['guard_json'])) or tr('常に実行'),
+                    '★' if workflow['pcl_loop_start'] else '',
+                ]
+            else:
+                continue
+            item = QTreeWidgetItem([str(value) for value in values])
+            item.setData(0, self.WORKFLOW_NODE_ROLE, int(node['id']))
+            item.setData(0, self.WORKFLOW_DATA_ROLE, data)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
+            if workflow is not None:
+                set_row_enabled_appearance(item, bool(workflow['enabled']))
+            items[int(node['id'])] = item
+            if (
+                int(node['id']) == select_node_id
+                or (select_node_id is None and workflow is not None and int(workflow['id']) == current)
+            ):
+                selected = item
+        roots: list[QTreeWidgetItem] = []
+        for node in nodes:
+            item = items.get(int(node['id']))
+            if item is None:
+                continue
+            parent = items.get(int(node['parent_id'])) if node['parent_id'] is not None else None
+            if parent is not None:
+                parent.addChild(item)
+            else:
+                roots.append(item)
+        with bulk_view_update(self.workflow_table):
+            self.workflow_table.clear()
+            self.workflow_table.addTopLevelItems(roots)
+            restore_tree_display_state(
+                self.workflow_table, display_state,
+                lambda item: item.data(0, self.WORKFLOW_NODE_ROLE),
+            )
+            if selected is not None:
+                self.workflow_table.setCurrentItem(selected)
+            elif roots and select_first:
+                self.workflow_table.setCurrentItem(roots[0])
+            else:
+                self.workflow_table.setCurrentItem(None)
+                self.workflow_table.clearSelection()
+                self.current_workflow_id = None
+                self.event_title.setText(tr('flow.selection_required'))
+                self.event_tree.clear()
+        self._update_workflow_group_toggle()
 
     def _workflow_selected(self) -> None:
-        row = self.workflow_table.currentRow()
-        if row < 0 or self.workflow_table.item(row, 0) is None:
+        item = self.workflow_table.currentItem()
+        if item is None:
             return
-        self.current_workflow_id = int(self.workflow_table.item(row, 0).data(Qt.ItemDataRole.UserRole))
-        self.event_title.setText(self.workflow_table.item(row, 1).text())
+        data = item.data(0, self.WORKFLOW_DATA_ROLE) or {}
+        if data.get('kind') != 'flow':
+            self.current_workflow_id = None
+            self.event_title.setText(str(data.get('name', '')))
+            self.event_tree.clear()
+            return
+        self.current_workflow_id = int(data['id'])
+        self.event_title.setText(str(data['name']))
         self.load_events()
 
     def _reorder_workflow_rows(self, source: int, target: int) -> None:
-        rows = [dict(row) for row in self.db.list_workflows()]
-        if not 0 <= source < len(rows):
+        """旧画面 API からの呼出しも、ルート行の移動として互換維持する。"""
+        if not 0 <= source < self.workflow_table.topLevelItemCount():
             return
-        moved = rows.pop(source)
-        rows.insert(max(0, min(target, len(rows))), moved)
-        self.db.reorder_workflows([row['id'] for row in rows])
-        self.reload(moved['id'])
+        item = self.workflow_table.takeTopLevelItem(source)
+        self.workflow_table.insertTopLevelItem(
+            max(0, min(target, self.workflow_table.topLevelItemCount())), item,
+        )
+        self.workflow_table.setCurrentItem(item)
+        self._persist_workflow_tree_order()
 
-    def _workflow_double_clicked(self, item: QTableWidgetItem) -> None:
-        column = item.column()
+    def _workflow_double_clicked(self, item: QTreeWidgetItem, column: int) -> None:
+        data = item.data(0, self.WORKFLOW_DATA_ROLE) or {}
+        if data.get('kind') == 'group':
+            self.edit_workflow()
+            return
         if column == 2:
             self.toggle_workflow()
-        elif column == 3:
-            self.toggle_data_start()
         elif column == 4:
+            self.toggle_data_start()
+        elif column == 3:
             self.edit_guard_summary()
         else:
             self.edit_workflow()
 
+    def _workflow_tree_nodes(self) -> list[tuple[int, int | None, int]]:
+        nodes: list[tuple[int, int | None, int]] = []
+        def append_children(parent: QTreeWidgetItem | None, parent_id: int | None) -> None:
+            count = self.workflow_table.topLevelItemCount() if parent is None else parent.childCount()
+            for index in range(count):
+                item = self.workflow_table.topLevelItem(index) if parent is None else parent.child(index)
+                node_id = int(item.data(0, self.WORKFLOW_NODE_ROLE))
+                nodes.append((node_id, parent_id, index + 1))
+                append_children(item, node_id)
+        append_children(None, None)
+        return nodes
+
+    def _queue_workflow_tree_reorder(self, *_args) -> None:
+        if self._workflow_reorder_pending:
+            return
+        self._workflow_reorder_pending = True
+        QTimer.singleShot(0, self._persist_workflow_tree_order)
+
+    def _persist_workflow_tree_order(self) -> None:
+        self._workflow_reorder_pending = False
+        selected = self.workflow_table.currentItem()
+        selected_data = selected.data(0, self.WORKFLOW_DATA_ROLE) if selected is not None else {}
+        self.db.reorder_workflow_outline(self._workflow_tree_nodes())
+        self.reload(selected_data.get('id') if selected_data.get('kind') == 'flow' else None)
+
+    def _workflow_groups(self) -> list[QTreeWidgetItem]:
+        groups: list[QTreeWidgetItem] = []
+        def collect(item: QTreeWidgetItem) -> None:
+            if (item.data(0, self.WORKFLOW_DATA_ROLE) or {}).get('kind') == 'group':
+                groups.append(item)
+            for index in range(item.childCount()):
+                collect(item.child(index))
+        for index in range(self.workflow_table.topLevelItemCount()):
+            collect(self.workflow_table.topLevelItem(index))
+        return groups
+
+    def _update_workflow_group_toggle(self, *_args) -> None:
+        groups = self._workflow_groups()
+        all_expanded = bool(groups) and all(item.isExpanded() for item in groups)
+        self.workflow_group_toggle.setEnabled(bool(groups))
+        set_tree_toggle_icon(self.workflow_group_toggle, not all_expanded)
+
+    def _toggle_workflow_groups(self) -> None:
+        groups = self._workflow_groups()
+        if not groups:
+            return
+        set_tree_expanded(self.workflow_table, not all(item.isExpanded() for item in groups))
+        self._update_workflow_group_toggle()
+
     def eventFilter(self, watched, event) -> bool:
         """展開アイコンのダブルクリックを編集操作として扱わない。"""
-        if (
-            hasattr(self, 'event_tree')
-            and watched is self.event_tree.viewport()
-            and event.type() == QEvent.Type.MouseButtonDblClick
-        ):
+        trees = [
+            tree for tree in (
+                getattr(self, 'workflow_table', None), getattr(self, 'event_tree', None),
+            ) if tree is not None
+        ]
+        tree = next((candidate for candidate in trees if watched is candidate.viewport()), None)
+        if tree is not None and event.type() == QEvent.Type.MouseButtonDblClick:
             position = event.position().toPoint()
-            index = self.event_tree.indexAt(position)
-            item = self.event_tree.itemAt(position)
-            if index.isValid() and index.column() == 0 and item is not None and item.childCount():
+            index = tree.indexAt(position)
+            item = tree.itemAt(position)
+            is_group = bool(item and (
+                item.childCount() or
+                (item.data(0, self.WORKFLOW_DATA_ROLE) or {}).get('kind') == 'group'
+            ))
+            if index.isValid() and index.column() == 0 and is_group:
                 depth = 0
                 parent = item.parent()
                 while parent is not None:
                     depth += 1
                     parent = parent.parent()
                 branch_right = (
-                    self.event_tree.header().sectionViewportPosition(0)
-                    + self.event_tree.indentation() * (depth + 1)
+                    tree.header().sectionViewportPosition(0)
+                    + tree.indentation() * (depth + 1)
                 )
                 if position.x() <= branch_right:
                     return True
@@ -1482,15 +1634,121 @@ class FlowDesignPage(QWidget):
         self.load_events(selected_id)
 
     def _selected_workflow(self) -> dict[str, Any] | None:
-        row = self.workflow_table.currentRow()
-        if row < 0:
+        item = self.workflow_table.currentItem()
+        if item is None:
             return None
-        workflow_id = self.workflow_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
-        return next((dict(item) for item in self.db.list_workflows() if item['id'] == workflow_id), None)
+        data = item.data(0, self.WORKFLOW_DATA_ROLE) or {}
+        return dict(data) if data.get('kind') == 'flow' else None
 
     def _selected_event(self) -> dict[str, Any] | None:
         item = self.event_tree.currentItem()
         return dict(item.data(0, Qt.ItemDataRole.UserRole + 1)) if item is not None else None
+
+    def _copy_workflow_payload(self) -> dict[str, Any] | None:
+        """選択した業務フローと配下イベントを一式でコピーする。"""
+        selected = self.workflow_table.currentItem()
+        if selected is None:
+            return None
+        def serialize(item: QTreeWidgetItem) -> dict[str, Any]:
+            data = dict(item.data(0, self.WORKFLOW_DATA_ROLE) or {})
+            if data.get('kind') == 'group':
+                return {
+                    'group': str(data.get('name', '')),
+                    'guard': decode_guard(data.get('guard_json', '')),
+                    'children': [serialize(item.child(index)) for index in range(item.childCount())],
+                }
+            return {
+                'workflow': data,
+                'events': [dict(row) for row in self.db.list_events(int(data['id']))],
+            }
+        return serialize(selected)
+
+    def _paste_workflow_payload(self, payload: dict[str, Any]) -> None:
+        if 'group' in payload:
+            selected_item = self.workflow_table.currentItem()
+            selected_node_id = (
+                int(selected_item.data(0, self.WORKFLOW_NODE_ROLE)) if selected_item is not None else None
+            )
+            def paste_group(
+                source: dict[str, Any], anchor_node_id: int | None, *, sibling: bool=False,
+            ) -> int:
+                group_id = self.db.add_workflow_group(
+                    str(source.get('group', 'グループ')), decode_guard(source.get('guard')),
+                )
+                self._place_new_workflow_node(
+                    group_id, anchor_node_id, group_as_parent=not sibling,
+                )
+                for child in source.get('children', []):
+                    if 'group' in child:
+                        paste_group(child, group_id)
+                        continue
+                    workflow = dict(child['workflow'])
+                    name = unique_copy_name(
+                        str(workflow['name']), (row['name'] for row in self.db.list_workflows()),
+                    )
+                    workflow_id = self.db.add_workflow(name, str(workflow.get('description', '')))
+                    self.db.set_workflow_enabled(workflow_id, bool(workflow.get('enabled', True)))
+                    self.db.set_workflow_guard(workflow_id, decode_guard(workflow.get('guard_json', '')))
+                    for event in child.get('events', []):
+                        self.db.add_event(workflow_id, copy.deepcopy(event))
+                    node = next(
+                        row for row in self.db.list_workflow_outline() if row['workflow_id'] == workflow_id
+                    )
+                    self._place_new_workflow_node(int(node['id']), group_id)
+                return group_id
+            pasted_group_id = paste_group(payload, selected_node_id, sibling=True)
+            self.reload(select_node_id=pasted_group_id)
+            return
+        source = dict(payload['workflow'])
+        selected_item = self.workflow_table.currentItem()
+        selected_node_id = (
+            int(selected_item.data(0, self.WORKFLOW_NODE_ROLE)) if selected_item is not None else None
+        )
+        name = unique_copy_name(
+            str(source['name']), (row['name'] for row in self.db.list_workflows()),
+        )
+        workflow_id = self.db.add_workflow(name, str(source.get('description', '')))
+        self.db.set_workflow_enabled(workflow_id, bool(source.get('enabled', True)))
+        self.db.set_workflow_guard(workflow_id, decode_guard(source.get('guard_json', '')))
+        # データ開始位置は一意のため、元フロー側を維持して複製側には移動しない。
+        for event in payload.get('events', []):
+            self.db.add_event(workflow_id, copy.deepcopy(event))
+        node = next(
+            row for row in self.db.list_workflow_outline() if row['workflow_id'] == workflow_id
+        )
+        self._place_new_workflow_node(
+            int(node['id']), selected_node_id, group_as_parent=False,
+        )
+        self.reload(workflow_id)
+
+    def _copy_event_payload(self) -> list[dict[str, Any]] | None:
+        """選択イベントを、グループの場合は終了境界までまとめてコピーする。"""
+        selected = self.event_tree.currentItem()
+        if selected is None or self.current_workflow_id is None:
+            return None
+        event_ids: list[int] = []
+
+        def append_item(item: QTreeWidgetItem) -> None:
+            event_ids.append(int(item.data(0, Qt.ItemDataRole.UserRole)))
+            for child_index in range(item.childCount()):
+                append_item(item.child(child_index))
+            end_id = item.data(0, self.EVENT_END_ID_ROLE)
+            if end_id is not None:
+                event_ids.append(int(end_id))
+
+        append_item(selected)
+        rows = {int(row['id']): dict(row) for row in self.db.list_events(self.current_workflow_id)}
+        return [rows[event_id] for event_id in event_ids if event_id in rows]
+
+    def _paste_event_payload(self, events: list[dict[str, Any]]) -> None:
+        if self.current_workflow_id is None or not events:
+            return
+        insert_at = self._event_insertion_index(group_as_parent=False)
+        event_ids = [
+            self.db.add_event(self.current_workflow_id, copy.deepcopy(event))
+            for event in events
+        ]
+        self._place_new_events(event_ids, insert_at)
 
     def debug_jobs(
         self, target_event_id: int | None,
@@ -1525,7 +1783,10 @@ class FlowDesignPage(QWidget):
                 'group': str(debug_record.get('execution_group', '1')) if data is not None else '1',
                 'pcl_index': 1,
                 'pcl_total': len(records) or 1,
-                'events': events, 'guard': decode_guard(workflow['guard_json']), 'data': data,
+                # イベント編集の実行ログで、使用したテストデータを明示する。
+                'pcl_name': str(debug_record.get('name', '')) if data is not None else '',
+                'events': events, 'guard': decode_guard(workflow['guard_json']),
+                'guards': self.db.get_workflow_guards(int(workflow['id'])), 'data': data,
             })
             if workflow['id'] == self.current_workflow_id:
                 break
@@ -1536,7 +1797,10 @@ class FlowDesignPage(QWidget):
         self.debug_pool.shutdown(wait=False, cancel_futures=True)
 
     def add_workflow(self) -> None:
-        selected = self._selected_workflow() if self.workflow_table.selectedItems() else None
+        selected_item = self.workflow_table.currentItem() if self.workflow_table.selectedItems() else None
+        selected_node_id = (
+            int(selected_item.data(0, self.WORKFLOW_NODE_ROLE)) if selected_item is not None else None
+        )
         dialog = FlowEditorDialog(self, schema=self.db.get_data_schema())
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -1549,18 +1813,91 @@ class FlowDesignPage(QWidget):
         self.db.set_workflow_guard(workflow_id, data['guard'])
         if data['data_start']:
             self.db.set_pcl_loop_start(workflow_id)
-        self._place_new_workflow(workflow_id, selected['id'] if selected else None)
+        node = next(
+            row for row in self.db.list_workflow_outline()
+            if row['workflow_id'] == workflow_id
+        )
+        self._place_new_workflow_node(int(node['id']), selected_node_id)
         self.reload(workflow_id)
 
-    def _place_new_workflow(self, workflow_id: int, selected_id: int | None) -> None:
-        """新規 Flow を選択行の直後、未選択時は末尾へ配置する。"""
-        workflow_ids = order_with_inserted_after(
-            (row['id'] for row in self.db.list_workflows()),
-            [workflow_id], selected_id,
+    def _place_new_workflow_node(
+        self, node_id: int, selected_node_id: int | None, *, group_as_parent: bool=True,
+    ) -> None:
+        """通常追加は Group 内、貼付けは選択 Group と同階層へ配置できる。"""
+        rows = [dict(row) for row in self.db.list_workflow_outline()]
+        by_id = {int(row['id']): row for row in rows}
+        selected = by_id.get(selected_node_id) if selected_node_id is not None else None
+        parent_id = (
+            int(selected['id']) if selected and selected['kind'] == 'group' and group_as_parent
+            else selected['parent_id'] if selected else None
         )
-        self.db.reorder_workflows(workflow_ids)
+        siblings = sorted(
+            (row for row in rows if row['parent_id'] == parent_id and int(row['id']) != node_id),
+            key=lambda row: (int(row['position']), int(row['id'])),
+        )
+        insert_at = len(siblings)
+        if selected and (selected['kind'] != 'group' or not group_as_parent):
+            insert_at = next(
+                (index + 1 for index, row in enumerate(siblings) if int(row['id']) == int(selected['id'])),
+                len(siblings),
+            )
+        siblings.insert(insert_at, by_id[node_id])
+        children: dict[int | None, list[dict[str, Any]]] = {}
+        for row in rows:
+            if int(row['id']) == node_id:
+                continue
+            children.setdefault(row['parent_id'], []).append(row)
+        for child_rows in children.values():
+            child_rows.sort(key=lambda value: (int(value['position']), int(value['id'])))
+        children[parent_id] = siblings
+        ordered: list[tuple[int, int | None, int]] = []
+        def append(parent: int | None) -> None:
+            for position, row in enumerate(children.get(parent, []), 1):
+                current_id = int(row['id'])
+                ordered.append((current_id, parent, position))
+                append(current_id)
+        append(None)
+        self.db.reorder_workflow_outline(ordered)
+
+    def _place_new_workflow(self, workflow_id: int, selected_id: int | None) -> None:
+        """従来の Flow ID 指定を管理ツリーのノード ID へ変換する互換窓口。"""
+        rows = [dict(row) for row in self.db.list_workflow_outline()]
+        node_id = next(int(row['id']) for row in rows if row['workflow_id'] == workflow_id)
+        selected_node_id = next(
+            (int(row['id']) for row in rows if row['workflow_id'] == selected_id), None,
+        )
+        self._place_new_workflow_node(node_id, selected_node_id)
+
+    def add_workflow_group(self) -> None:
+        selected = self.workflow_table.currentItem()
+        selected_node_id = (
+            int(selected.data(0, self.WORKFLOW_NODE_ROLE)) if selected is not None else None
+        )
+        dialog = WorkflowGroupDialog(self, schema=self.db.get_data_schema())
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        group_id = self.db.add_workflow_group(dialog.result_name(), dialog.result_guard())
+        self._place_new_workflow_node(group_id, selected_node_id)
+        self.reload()
+        for item in self.workflow_table.findItems(dialog.result_name(), Qt.MatchFlag.MatchExactly, 0):
+            if (item.data(0, self.WORKFLOW_DATA_ROLE) or {}).get('kind') == 'group':
+                self.workflow_table.setCurrentItem(item)
+                break
 
     def edit_workflow(self) -> None:
+        selected_item = self.workflow_table.currentItem()
+        selected_data = selected_item.data(0, self.WORKFLOW_DATA_ROLE) if selected_item is not None else {}
+        if selected_data.get('kind') == 'group':
+            dialog = WorkflowGroupDialog(
+                self, str(selected_data.get('name', '')),
+                selected_data.get('guard_json', ''), self.db.get_data_schema(),
+            )
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.db.update_workflow_group(
+                    int(selected_data['node_id']), dialog.result_name(), dialog.result_guard(),
+                )
+                self.reload()
+            return
         row = self._selected_workflow()
         if row is None:
             return
@@ -1581,12 +1918,20 @@ class FlowDesignPage(QWidget):
         self.reload(row['id'])
 
     def delete_workflow(self) -> None:
+        selected_item = self.workflow_table.currentItem()
+        selected_data = selected_item.data(0, self.WORKFLOW_DATA_ROLE) if selected_item is not None else {}
+        if selected_data.get('kind') == 'group':
+            if confirm_deletion(self, 'グループ内の業務フローも削除されます。よろしいですか？'):
+                self.db.delete_workflow_group(int(selected_data['node_id']))
+                self.current_workflow_id = None
+                self.reload(select_first=False)
+            return
         row = self._selected_workflow()
         if row is None or not confirm_deletion(self, tr('flow.delete_confirmation')):
             return
         self.db.delete_workflow(row['id'])
         self.current_workflow_id = None
-        self.reload()
+        self.reload(select_first=False)
 
     def toggle_workflow(self) -> None:
         row = self._selected_workflow()
@@ -1618,7 +1963,7 @@ class FlowDesignPage(QWidget):
         path, _filter = QFileDialog.getOpenFileName(self, tr('flow.import_all_json'), str(self.project_dir), 'JSON (*.json)')
         if not path:
             return
-        if not confirm_action(
+        if self.db.list_workflows() and not confirm_action(
             self, 'JSON 読込',
             '現在の業務フローを置き換えて JSON を読み込みますか？',
             confirm_text='読み込む',
@@ -1644,7 +1989,7 @@ class FlowDesignPage(QWidget):
             return
         show_file_exported(self, path)
 
-    def _event_insertion_index(self) -> int:
+    def _event_insertion_index(self, *, group_as_parent: bool=True) -> int:
         """選択行の種類から、新規イベントを挿入する平坦順序位置を取得する。"""
         ordered: list[int] = []
 
@@ -1663,8 +2008,8 @@ class FlowDesignPage(QWidget):
             return len(ordered)
         end_id = selected.data(0, self.EVENT_END_ID_ROLE)
         anchor_id = int(end_id if end_id is not None else selected.data(0, Qt.ItemDataRole.UserRole))
-        # 構造体は終了行の直前、それ以外は選択行の直後へ追加する。
-        return ordered.index(anchor_id) + (end_id is None)
+        # 通常追加は Group 内、貼付けは選択 Group の終了境界直後へ配置する。
+        return ordered.index(anchor_id) + (end_id is None or not group_as_parent)
 
     def _place_new_events(self, event_ids: list[int], insert_at: int) -> None:
         """追加したイベント一式を計算済み位置へまとめて配置する。"""

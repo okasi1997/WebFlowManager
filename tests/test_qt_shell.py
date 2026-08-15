@@ -28,11 +28,13 @@ from qt_ui.main_window import MainWindow
 from qt_ui.application import _ComboBoxWheelBlocker
 from qt_ui.pages.flow_design import (
     DataPathPickerDialog, EventEditorDialog, EventGroupEditorDialog, FlowEditorDialog,
-    GuardConditionEditorDialog, GuardRuleEditorDialog,
+    GuardConditionEditorDialog, GuardRuleEditorDialog, WorkflowGroupDialog,
 )
 from qt_ui.pages.structured import FieldDialog
 from qt_ui.pages.data import RecordMetadataDialog
-from qt_ui.pages.execution import STATUS_LABELS
+from qt_ui.pages.execution import (
+    ExecutionActionDelegate, ExecutionOrderDialog, STATUS_LABELS, natural_sort_key,
+)
 from qt_ui.ui_loader import ConfirmationDialog, DeletionConfirmDialog
 from qt_ui.table_view import TREE_LEVEL_INDENT, configure_table_view
 
@@ -69,8 +71,11 @@ class QtShellTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_navigation_has_six_qt_pages(self) -> None:
+        self.assertEqual(self.window.stack.count(), 1)
+        for page_name in self.window.pages:
+            self.window.show_page(page_name)
         self.assertEqual(self.window.stack.count(), 6)
-        self.assertEqual(self.window.size().width(), 1180)
+        self.assertEqual(self.window.size(), QSize(1480, 860))
         sidebar = self.window.findChild(QFrame, 'sidebar')
         self.assertEqual(sidebar.width(), 180)
         self.assertEqual(sidebar.minimumWidth(), sidebar.maximumWidth())
@@ -170,6 +175,79 @@ class QtShellTests(unittest.TestCase):
             design_page.import_json()
             notified.assert_called_once_with(design_page, str(workflow_path))
 
+    def test_imports_confirm_before_replacing_existing_content(self) -> None:
+        data_page = self.window.pages['data']
+        schema_page = self.window.pages['schema']
+        design_page = self.window.pages['design']
+        import_path = self.project_dir / 'import-source.json'
+        import_path.write_text('[]', encoding='utf-8')
+        record_id = self.db.add_data_record(0, 'existing', {'value': 'before'})
+
+        for method_name, reader_name in (
+            ('import_json', None),
+            ('import_excel', 'read_records_excel'),
+            ('import_excel_with_schema', 'read_records_excel_with_schema'),
+        ):
+            patches = [
+                patch('qt_ui.pages.data.QFileDialog.getOpenFileName', return_value=(str(import_path), '')),
+                patch('qt_ui.pages.data.confirm_import_overwrite', return_value=False),
+            ]
+            if reader_name is not None:
+                patches.append(patch(f'qt_ui.pages.data.{reader_name}'))
+            started = [item.start() for item in patches]
+            try:
+                getattr(data_page, method_name)()
+                if reader_name is not None:
+                    started[-1].assert_not_called()
+            finally:
+                for item in reversed(patches):
+                    item.stop()
+            self.assertEqual(self.db.list_data_records()[0]['id'], record_id)
+
+        schema_page.schema = {
+            'name': 'Data', 'type': 'object',
+            'children': [{'name': 'existing', 'type': 'text'}],
+        }
+        with (
+            patch('qt_ui.pages.structured.QFileDialog.getOpenFileName', return_value=(str(import_path), '')),
+            patch('qt_ui.pages.structured.confirm_import_overwrite', return_value=False),
+        ):
+            schema_page.import_json()
+        self.assertEqual(schema_page.schema['children'][0]['name'], 'existing')
+
+        workflow_id = self.db.add_workflow('existing flow')
+        with (
+            patch('qt_ui.pages.flow_design.QFileDialog.getOpenFileName', return_value=(str(import_path), '')),
+            patch('qt_ui.pages.flow_design.confirm_action', return_value=False),
+            patch.object(self.db, 'import_workflow_collection') as importer,
+        ):
+            design_page.import_json()
+            importer.assert_not_called()
+        self.assertEqual(self.db.list_workflows()[0]['id'], workflow_id)
+
+    def test_excel_import_with_schema_replaces_both_after_confirmation(self) -> None:
+        page = self.window.pages['data']
+        self.db.add_data_record(0, 'existing', {'old': 'value'})
+        schema = {
+            'name': 'Data', 'type': 'object',
+            'children': [{'name': 'amount', 'type': 'number'}],
+        }
+        records = [{
+            'name': 'PCL_001', 'summary': 'summary', 'enabled': True,
+            'execution_group': '1', 'data': {'amount': 12},
+        }]
+        path = self.project_dir / 'with-schema.xlsx'
+        with (
+            patch('qt_ui.pages.data.QFileDialog.getOpenFileName', return_value=(str(path), '')),
+            patch('qt_ui.pages.data.confirm_import_overwrite', return_value=True),
+            patch('qt_ui.pages.data.read_records_excel_with_schema', return_value=(schema, records)),
+            patch('qt_ui.pages.data.show_file_imported') as notified,
+        ):
+            page.import_excel_with_schema()
+        self.assertEqual(self.db.get_data_schema(), schema)
+        self.assertEqual(self.db.list_data_records()[0]['data'], {'amount': 12})
+        notified.assert_called_once_with(page, str(path))
+
     def test_all_dialogs_are_locked_without_locking_main_window(self) -> None:
         blocker = _ComboBoxWheelBlocker()
         dialog = QDialog(self.window)
@@ -178,16 +256,43 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(dialog.minimumSize(), dialog.maximumSize())
         self.assertEqual((dialog.width(), dialog.height()), (640, 420))
         self.assertNotEqual(self.window.minimumSize(), self.window.maximumSize())
-        self.assertEqual(self.window.size().height(), 720)
+        self.assertEqual(self.window.size().height(), 860)
         self.assertEqual(self.window.minimumSize(), self.window.size())
         self.window.show_page('settings')
         self.assertIs(self.window.stack.currentWidget(), self.window.pages['settings'])
 
+    def test_execution_page_is_selected_at_startup(self) -> None:
+        self.assertIs(
+            self.window.stack.currentWidget(), self.window.pages['execution'],
+        )
+        self.assertTrue(self.window.nav_buttons['execution'].property('navSelected'))
+        self.assertEqual(
+            set(self.window.pages._instances), {'execution'},
+        )
+
+        # 画面遷移なしで Data 管理だけを事前生成できる。
+        self.window.preload_page('data')
+        self.assertEqual(
+            set(self.window.pages._instances), {'execution', 'data'},
+        )
+        self.assertIs(
+            self.window.stack.currentWidget(), self.window.pages['execution'],
+        )
+
+        # 初回の画面切替時にだけ対象画面を生成する。
+        self.window.show_page('auth')
+        self.assertEqual(
+            set(self.window.pages._instances), {'execution', 'data', 'auth'},
+        )
+        self.assertIsNone(self.window.pages['auth'].session._thread)
+        self.window.show_page('design')
+        self.assertIsNone(self.window.pages['design'].debug_browser._thread)
+
     def test_flow_page_loads_database_rows(self) -> None:
         workflow_id = self.db.add_workflow('Qt flow')
         self.window.pages['design'].reload(workflow_id)
-        self.assertEqual(self.window.pages['design'].workflow_table.rowCount(), 1)
-        self.assertEqual(self.window.pages['design'].workflow_table.item(0, 1).text(), 'Qt flow')
+        self.assertEqual(self.window.pages['design'].workflow_table.topLevelItemCount(), 1)
+        self.assertEqual(self.window.pages['design'].workflow_table.topLevelItem(0).text(0), 'Qt flow')
 
     def test_all_designer_forms_are_present_and_valid(self) -> None:
         forms = Path(__file__).parents[1] / 'qt_ui' / 'forms'
@@ -196,7 +301,8 @@ class QtShellTests(unittest.TestCase):
             'guard_condition.ui', 'guard_rule.ui', 'data_path_picker.ui',
             'event_group.ui',
             'auth.ui', 'settings.ui', 'schema.ui', 'field_dialog.ui', 'data.ui',
-            'record_dialog.ui', 'execution.ui', 'confirmation.ui',
+            'record_dialog.ui', 'execution.ui', 'execution_order.ui', 'confirmation.ui',
+            'workflow_group.ui',
         }
         self.assertEqual({path.name for path in forms.glob('*.ui')}, expected)
         for path in forms.glob('*.ui'):
@@ -237,6 +343,45 @@ class QtShellTests(unittest.TestCase):
 
         record = next(row for row in self.db.list_data_records() if row['id'] == record_id)
         self.assertEqual(record['execution_status'], 'success')
+
+        self.db.set_data_record_enabled(record_id, False)
+        self.db.prepare_data_record_statuses()
+
+        skipped = next(row for row in self.db.list_data_records() if row['id'] == record_id)
+        self.assertFalse(skipped['enabled'])
+        self.assertEqual(skipped['execution_status'], 'success')
+
+    def test_execution_bulk_settings_and_group_order_use_single_saved_state(self) -> None:
+        """大量データ向けの一括設定とグループ内順序を DB に保持する。"""
+        ids = [
+            self.db.add_data_record(0, name, {})
+            for name in ('bulk_A1', 'bulk_B1', 'bulk_A2')
+        ]
+        self.db.set_data_records_group([ids[0], ids[2]], 'bulk_A')
+        self.db.set_data_records_group([ids[1]], 'bulk_B')
+        self.db.set_data_records_enabled([ids[0], ids[2]], False)
+        rows = {record['id']: record for record in self.db.list_data_records()}
+        self.assertFalse(rows[ids[0]]['enabled'])
+        self.assertTrue(rows[ids[1]]['enabled'])
+        self.assertFalse(rows[ids[2]]['enabled'])
+
+        self.db.set_data_records_enabled([ids[0], ids[2]], None)
+        self.db.reorder_group_data_records('bulk_A', [ids[2], ids[0]])
+        ordered = [
+            record['id'] for record in self.db.list_data_records()
+            if record['execution_group'] == 'bulk_A'
+        ]
+        self.assertEqual(ordered, [ids[2], ids[0]])
+        self.assertTrue(all(
+            record['enabled'] for record in self.db.list_data_records()
+            if record['id'] in {ids[0], ids[2]}
+        ))
+        self.db.set_data_record_status(ids[0], 'error_waiting')
+        self.db.recover_interrupted_data_record_statuses()
+        recovered = next(
+            record for record in self.db.list_data_records() if record['id'] == ids[0]
+        )
+        self.assertEqual(recovered['execution_status'], 'failed')
 
     def test_auth_page_keeps_active_profile_status_column(self) -> None:
         page = self.window.pages['auth']
@@ -305,26 +450,24 @@ class QtShellTests(unittest.TestCase):
         self.assertIsNotNone(page.findChild(QPushButton, 'editWorkflowButton'))
         self.assertIsNone(page.findChild(QPushButton, 'workflowMoreButton'))
         self.assertEqual(page.workflow_table.selectionBehavior(), QAbstractItemView.SelectionBehavior.SelectRows)
-        self.assertFalse(page.workflow_table.showGrid())
         self.assertEqual(page.workflow_table.dragDropMode(), QAbstractItemView.DragDropMode.DragDrop)
-        self.assertFalse(page.workflow_table.dragDropOverwriteMode())
         self.assertEqual(page.workflow_table.defaultDropAction(), Qt.DropAction.CopyAction)
         self.assertEqual(page.event_tree.dragDropMode(), QAbstractItemView.DragDropMode.DragDrop)
         self.assertEqual(page.event_tree.defaultDropAction(), Qt.DropAction.CopyAction)
         header = page.event_tree.header()
-        self.assertTrue(page.workflow_table.horizontalHeader().sectionsMovable())
+        self.assertTrue(page.workflow_table.header().sectionsMovable())
         self.assertTrue(header.sectionsMovable())
-        workflow_header = page.workflow_table.horizontalHeader()
+        workflow_header = page.workflow_table.header()
         self.assertEqual(
             [workflow_header.logicalIndex(visual) for visual in range(5)],
-            [0, 1, 2, 4, 3],
+            [0, 1, 2, 3, 4],
         )
         self.assertEqual(
             [header.logicalIndex(visual) for visual in range(6)],
             [0, 5, 4, 3, 1, 2],
         )
-        self.assertGreater(page.workflow_table.columnWidth(1), max(
-            page.workflow_table.columnWidth(column) for column in (0, 2, 3, 4)
+        self.assertGreater(page.workflow_table.columnWidth(0), max(
+            page.workflow_table.columnWidth(column) for column in (1, 2, 3, 4)
         ))
         self.assertGreater(page.event_tree.columnWidth(0), max(
             page.event_tree.columnWidth(column) for column in (1, 2, 3, 4, 5)
@@ -361,20 +504,21 @@ class QtShellTests(unittest.TestCase):
         page = self.window.pages['design']
         page.reload(first)
         enabled_before = bool(next(row for row in self.db.list_workflows() if row['id'] == first)['enabled'])
-        page._workflow_double_clicked(page.workflow_table.item(0, 2))
+        first_item = page.workflow_table.topLevelItem(0)
+        page._workflow_double_clicked(first_item, 2)
         self.assertNotEqual(bool(next(row for row in self.db.list_workflows() if row['id'] == first)['enabled']), enabled_before)
-        page._workflow_double_clicked(page.workflow_table.item(0, 3))
+        page._workflow_double_clicked(page.workflow_table.topLevelItem(0), 4)
         self.assertTrue(bool(next(row for row in self.db.list_workflows() if row['id'] == first)['pcl_loop_start']))
         calls: list[str] = []
         page.edit_guard_summary = lambda: calls.append('guard')
         page.edit_workflow = lambda: calls.append('edit')
-        page._workflow_double_clicked(page.workflow_table.item(0, 4))
-        page._workflow_double_clicked(page.workflow_table.item(0, 0))
+        page._workflow_double_clicked(page.workflow_table.topLevelItem(0), 3)
+        page._workflow_double_clicked(page.workflow_table.topLevelItem(0), 0)
         self.assertEqual(calls, ['guard', 'edit'])
         page._reorder_workflow_rows(0, 1)
         self.assertEqual([row['id'] for row in self.db.list_workflows()], [second, first])
-        self.assertEqual(page.workflow_table.item(0, 1).text(), 'second')
-        self.assertEqual(page.workflow_table.item(1, 1).text(), 'first')
+        self.assertEqual(page.workflow_table.topLevelItem(0).text(0), 'second')
+        self.assertEqual(page.workflow_table.topLevelItem(1).text(0), 'first')
 
     def test_event_double_click_dispatches_by_column_without_expanding_groups(self) -> None:
         page = self.window.pages['design']
@@ -388,6 +532,141 @@ class QtShellTests(unittest.TestCase):
         page._event_double_clicked(None, 2)
         self.assertEqual(calls, ['enabled', 'guard', 'edit', 'edit'])
         self.assertFalse(page.event_tree.expandsOnDoubleClick())
+
+    def test_workflow_copy_paste_inserts_after_selected_with_events(self) -> None:
+        page = self.window.pages['design']
+        workflow_id = self.db.add_workflow('source flow', 'description')
+        event = {
+            'name': 'click event', 'action': 'click', 'selector_type': 'css',
+            'selector': '#submit', 'value': '', 'timeout_ms': 10000,
+            'enabled': True, 'continue_on_error': False,
+            'guard': {'logic': 'all', 'rules': []},
+        }
+        self.db.add_event(workflow_id, event)
+        page.reload(workflow_id)
+        copy_shortcut, paste_shortcut = page.workflow_table._structured_copy_paste_shortcuts
+        copy_shortcut.activated.emit()
+        paste_shortcut.activated.emit()
+
+        workflows = [dict(row) for row in self.db.list_workflows()]
+        self.assertEqual([row['name'] for row in workflows], ['source flow', 'source flow - Copy'])
+        copied_events = [dict(row) for row in self.db.list_events(workflows[1]['id'])]
+        self.assertEqual([(row['name'], row['action']) for row in copied_events], [('click event', 'click')])
+
+    def test_workflow_groups_preserve_hierarchy_and_flat_execution_order(self) -> None:
+        page = self.window.pages['design']
+        first_id = self.db.add_workflow('group flow 1')
+        second_id = self.db.add_workflow('group flow 2')
+        group_id = self.db.add_workflow_group('Flow group')
+        nodes = [dict(row) for row in self.db.list_workflow_outline()]
+        first_node = next(int(row['id']) for row in nodes if row['workflow_id'] == first_id)
+        second_node = next(int(row['id']) for row in nodes if row['workflow_id'] == second_id)
+        other_nodes = [
+            (int(row['id']), row['parent_id'], int(row['position'])) for row in nodes
+            if int(row['id']) not in {first_node, second_node, group_id}
+        ]
+        self.db.reorder_workflow_outline(
+            other_nodes + [(group_id, None, len(other_nodes) + 1), (first_node, group_id, 1), (second_node, group_id, 2)]
+        )
+        group_guard = {
+            'logic': 'all', 'rules': [{'path': 'kind', 'operator': 'eq', 'value': 'A'}],
+        }
+        flow_guard = {
+            'logic': 'any', 'rules': [{'path': 'status', 'operator': 'eq', 'value': 'ready'}],
+        }
+        self.db.update_workflow_group(group_id, 'Flow group', group_guard)
+        self.db.set_workflow_guard(first_id, flow_guard)
+
+        page.reload(first_id)
+        group_item = page.workflow_table.topLevelItem(page.workflow_table.topLevelItemCount() - 1)
+        self.assertEqual(group_item.text(0), 'Flow group')
+        self.assertEqual(group_item.childCount(), 2)
+        self.assertIn('kind', group_item.text(3))
+        self.assertEqual(self.db.get_workflow_guards(first_id), [group_guard, flow_guard])
+        self.assertEqual(page.workflow_table.headerItem().text(1), '順番')
+        self.assertEqual(page.findChild(QPushButton, 'newWorkflowButton').text(), '追加')
+        self.assertEqual(
+            [action.text() for action in page.findChild(QPushButton, 'newWorkflowButton').menu().actions()],
+            ['フロー追加', 'グループ追加'],
+        )
+
+        page.workflow_table.setCurrentItem(group_item.child(1))
+        page.workflow_table.moveCurrent(-1)
+        self.app.processEvents()
+        ordered = [int(row['id']) for row in self.db.list_workflows()]
+        self.assertLess(ordered.index(second_id), ordered.index(first_id))
+
+        # Group 選択中の貼付けは、その Group の子ではなく同じ階層の直後へ置く。
+        group_item = next(
+            page.workflow_table.topLevelItem(index)
+            for index in range(page.workflow_table.topLevelItemCount())
+            if page.workflow_table.topLevelItem(index).text(0) == 'Flow group'
+        )
+        page.workflow_table.setCurrentItem(group_item)
+        copy_shortcut, paste_shortcut = page.workflow_table._structured_copy_paste_shortcuts
+        copy_shortcut.activated.emit()
+        paste_shortcut.activated.emit()
+        groups = [
+            page.workflow_table.topLevelItem(index)
+            for index in range(page.workflow_table.topLevelItemCount())
+            if page.workflow_table.topLevelItem(index).text(0) == 'Flow group'
+        ]
+        self.assertEqual(len(groups), 2)
+        self.assertIs(page.workflow_table.currentItem(), groups[1])
+        self.assertTrue(all(item.parent() is None for item in groups))
+        self.assertFalse(any(
+            (groups[0].child(index).data(0, page.WORKFLOW_DATA_ROLE) or {}).get('kind') == 'group'
+            for index in range(groups[0].childCount())
+        ))
+
+    def test_workflow_delete_leaves_tree_and_event_list_unselected(self) -> None:
+        page = self.window.pages['design']
+        workflow_id = self.db.add_workflow('delete selection')
+        self.db.add_event(workflow_id, {
+            'name': 'event', 'action': 'click', 'selector_type': 'none', 'selector': '',
+            'value': '', 'timeout_ms': 10000, 'enabled': True,
+            'continue_on_error': False, 'guard': {'logic': 'all', 'rules': []},
+        })
+        page.reload(workflow_id)
+        self.assertIsNotNone(page.workflow_table.currentItem())
+        with patch('qt_ui.pages.flow_design.confirm_deletion', return_value=True):
+            page.delete_workflow()
+        self.assertIsNone(page.workflow_table.currentItem())
+        self.assertEqual(page.workflow_table.selectedItems(), [])
+        self.assertIsNone(page.current_workflow_id)
+        self.assertEqual(page.event_tree.topLevelItemCount(), 0)
+
+    def test_event_group_copy_paste_keeps_boundaries_and_existing_insert_position(self) -> None:
+        page = self.window.pages['design']
+        workflow_id = self.db.add_workflow('event copy')
+        base = {
+            'selector_type': 'none', 'selector': '', 'value': '',
+            'timeout_ms': 10000, 'enabled': True, 'continue_on_error': False,
+            'guard': {'logic': 'all', 'rules': []},
+        }
+        self.db.add_event(workflow_id, base | {'name': 'group', 'action': 'group_start'})
+        self.db.add_event(workflow_id, base | {'name': 'child', 'action': 'click'})
+        self.db.add_event(workflow_id, base | {'name': 'group', 'action': 'group_end'})
+        self.db.add_event(workflow_id, base | {'name': 'after', 'action': 'click'})
+        page.current_workflow_id = workflow_id
+        page.load_events()
+        page.event_tree.setCurrentItem(page.event_tree.topLevelItem(0))
+        copy_shortcut, paste_shortcut = page.event_tree._structured_copy_paste_shortcuts
+        copy_shortcut.activated.emit()
+        paste_shortcut.activated.emit()
+
+        rows = [dict(row) for row in self.db.list_events(workflow_id)]
+        self.assertEqual(
+            [(row['name'], row['action']) for row in rows],
+            [
+                ('group', 'group_start'), ('child', 'click'), ('group', 'group_end'),
+                ('group', 'group_start'), ('child', 'click'), ('group', 'group_end'),
+                ('after', 'click'),
+            ],
+        )
+        self.assertEqual(page.event_tree.topLevelItemCount(), 3)
+        self.assertEqual(page.event_tree.topLevelItem(0).childCount(), 1)
+        self.assertEqual(page.event_tree.topLevelItem(1).childCount(), 1)
 
     def test_event_reload_preserves_collapse_and_scroll_state(self) -> None:
         page = self.window.pages['design']
@@ -412,6 +691,8 @@ class QtShellTests(unittest.TestCase):
         self.window.show_page('design')
         self.window.show()
         self.app.processEvents()
+        group = page.event_tree.topLevelItem(0)
+        group.setExpanded(False)
         scrollbar = page.event_tree.verticalScrollBar()
         scrollbar.setValue(min(80, scrollbar.maximum()))
         scroll_before = scrollbar.value()
@@ -427,6 +708,8 @@ class QtShellTests(unittest.TestCase):
         editor = FlowEditorDialog(self.window, {'name': '登録', 'guard': guard}, schema)
         self.assertEqual(editor.windowTitle(), '業務フロー編集')
         self.assertEqual(editor.minimumSize(), editor.maximumSize())
+        self.assertTrue(editor.findChild(QFrame, 'executionCard').property('card'))
+        self.assertTrue(editor.findChild(QLabel, 'executionTitle').property('cardTitle'))
         self.assertIsNone(editor.findChild(QLabel, 'titleLabel'))
         self.assertIsNone(editor.findChild(QLabel, 'hintLabel'))
         self.assertNotIn('{', editor.guard_summary.text())
@@ -447,6 +730,20 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(len({button.width() for button in footer_buttons}), 1)
         condition.close()
         editor.close()
+
+    def test_workflow_group_dialog_matches_flow_editor_card_layout(self) -> None:
+        dialog = WorkflowGroupDialog(self.window)
+        self.assertEqual(dialog.minimumSize(), dialog.maximumSize())
+        self.assertEqual((dialog.width(), dialog.height()), (600, 300))
+        self.assertTrue(dialog.findChild(QFrame, 'basicCard').property('card'))
+        self.assertTrue(dialog.findChild(QFrame, 'executionCard').property('card'))
+        self.assertTrue(dialog.findChild(QLabel, 'basicTitle').property('cardTitle'))
+        self.assertTrue(dialog.findChild(QLabel, 'executionTitle').property('cardTitle'))
+        self.assertEqual(
+            dialog.findChild(QLineEdit, 'nameEdit').placeholderText(),
+            '管理するフローのまとまりを入力します',
+        )
+        dialog.close()
 
     def test_event_editor_restores_structured_condition_and_data_picker(self) -> None:
         design_page = self.window.pages['design']
@@ -823,7 +1120,7 @@ class QtShellTests(unittest.TestCase):
         editor.close()
 
     def test_screenshot_picker_accepts_visible_container_without_hit_test(self) -> None:
-        """子要素に覆われた撮影コンテナーも、一意かつ可視なら選択できる。"""
+        """子要素に覆われたキャプチャーコンテナーも、一意かつ可視なら選択できる。"""
         picker = ElementPicker()
         match = Mock()
         match.is_visible.return_value = True
@@ -839,7 +1136,7 @@ class QtShellTests(unittest.TestCase):
         actionable.assert_not_called()
 
     def test_screenshot_picker_saves_explicit_scroll_target(self) -> None:
-        """スクリーンショット選択では撮影範囲とスクロール要素を別々に保存する。"""
+        """スクリーンショット選択ではキャプチャー範囲とスクロール要素を別々に保存する。"""
         editor = EventEditorDialog(self.window.pages['design'])
         editor.action.setCurrentIndex(editor.action.findData('screenshot'))
         editor._run_debug = lambda _message, operation, done: done(operation())
@@ -866,7 +1163,7 @@ class QtShellTests(unittest.TestCase):
         editor.close()
 
     def test_screenshot_picker_allows_skipping_scroll_target(self) -> None:
-        """第二段階を Esc で省略した場合は撮影対象自身を使用する。"""
+        """第二段階を Esc で省略した場合はキャプチャー対象自身を使用する。"""
         editor = EventEditorDialog(self.window.pages['design'])
         editor.action.setCurrentIndex(editor.action.findData('screenshot'))
         editor._run_debug = lambda _message, operation, done: done(operation())
@@ -1003,6 +1300,7 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(io_button.text(), 'データ入出力')
         self.assertEqual([action.text() for action in io_button.menu().actions() if not action.isSeparator()], [
             'JSON を出力', 'JSON を読み込む', 'Excel を出力', 'Excel を読み込む',
+            'Excel を読み込む（データ構造を含む）',
         ])
         self.assertFalse(data.findChild(QPushButton, 'importDataJsonButton').isVisibleTo(data))
         self.assertEqual(data.values.columnCount(), 4)
@@ -1034,8 +1332,8 @@ class QtShellTests(unittest.TestCase):
         data.render_values()
         self.assertFalse(data.values.topLevelItem(0).isExpanded())
         self.assertEqual(value_toggle.toolTip(), 'すべて展開')
+        self.window.show_page('schema')
         schema = self.window.pages['schema']
-        schema.reload()
         add = schema.findChild(QPushButton, 'addFieldButton')
         io = schema.findChild(QPushButton, 'exportSchemaButton')
         self.assertEqual(add.text(), '追加')
@@ -1202,39 +1500,123 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(dialog.windowTitle(), 'フィールド編集')
         dialog.close()
 
+    def test_schema_copy_paste_uses_selected_same_level(self) -> None:
+        page = self.window.pages['schema']
+        page.schema = {
+            'name': 'Data', 'type': 'object', 'children': [
+                {'name': 'container', 'type': 'object', 'children': [
+                    {'name': 'child', 'type': 'text'},
+                ]},
+                {'name': 'tail', 'type': 'text'},
+            ],
+        }
+        page.render()
+        page.tree.setCurrentItem(page.tree.topLevelItem(0))
+        copy_shortcut, paste_shortcut = page.tree._structured_copy_paste_shortcuts
+        copy_shortcut.activated.emit()
+        paste_shortcut.activated.emit()
+
+        children = page.schema['children']
+        self.assertEqual([node['name'] for node in children], [
+            'container', 'container - Copy', 'tail',
+        ])
+        self.assertEqual(children[1]['children'], [{'name': 'child', 'type': 'text'}])
+
+    def test_data_record_copy_paste_preserves_settings_and_inserts_after_selected(self) -> None:
+        page = self.window.pages['data']
+        first_id = self.db.add_data_record(0, 'PCL_001', {'value': 'first'}, 'summary')
+        second_id = self.db.add_data_record(0, 'PCL_002', {'value': 'second'})
+        self.db.set_data_record_group(first_id, '7')
+        self.db.set_data_record_enabled(first_id, False)
+        page.reload(first_id)
+        copy_shortcut, paste_shortcut = page.tree._structured_copy_paste_shortcuts
+        copy_shortcut.activated.emit()
+        paste_shortcut.activated.emit()
+
+        records = self.db.list_data_records()
+        self.assertEqual([record['id'] for record in records][::2], [first_id, second_id])
+        copied = records[1]
+        self.assertEqual(copied['name'], 'PCL_001 - Copy')
+        self.assertEqual(copied['summary'], 'summary')
+        self.assertEqual(copied['execution_group'], '7')
+        self.assertFalse(copied['enabled'])
+        self.assertEqual(copied['data'], {'value': 'first'})
+
     def test_execution_page_restores_status_log_and_record_controls(self) -> None:
         page = self.window.pages['execution']
         page.append_log(f'{tr("error.wait_condition_not_met_prefix")}visible')
         self.assertEqual(page._log_lines.pop(), f'{tr("error.wait_condition_not_met_prefix")}visible')
         self.assertEqual(page.stack.count(), 2)
-        self.assertEqual(page.records.columnCount(), 7)
+        self.assertEqual(page.records.columnCount(), 8)
         self.assertEqual(
-            [page.records.headerItem().text(column) for column in range(7)],
-            ['実行グループ', '今回実行', '実行データ', '概要', '業務フロー', '現在のイベント', '実行状況'],
+            [page.records.headerItem().text(column) for column in range(8)],
+            ['操作', 'グループ', '今回実行', '実行データ', '概要', '実行状況', '業務フロー', '現在のイベント'],
         )
         self.assertEqual(
-            [page.records.columnWidth(column) for column in range(7)],
-            [90, 90, 190, 210, 200, 215, 155],
+            [page.records.columnWidth(column) for column in range(8)],
+            [84, 68, 90, 190, 210, 155, 200, 215],
         )
+        page._sort_by_column(1, Qt.KeyboardModifier.NoModifier)
+        page._sort_by_column(5, Qt.KeyboardModifier.ShiftModifier)
+        self.assertEqual(page.records.headerItem().text(1), 'グループ')
+        self.assertEqual(page.records.headerItem().text(5), '実行状況')
+        self.assertEqual(page.records.header().sort_indicator(1), (1, Qt.SortOrder.AscendingOrder))
+        self.assertEqual(page.records.header().sort_indicator(5), (2, Qt.SortOrder.AscendingOrder))
+        page._sort_by_column(5, Qt.KeyboardModifier.ShiftModifier)
+        self.assertEqual(page.records.header().sort_indicator(5), (2, Qt.SortOrder.DescendingOrder))
+        page._sort_by_column(5, Qt.KeyboardModifier.ShiftModifier)
+        page._sort_by_column(1, Qt.KeyboardModifier.NoModifier)
+        page._sort_by_column(1, Qt.KeyboardModifier.NoModifier)
+        self.assertEqual(page._sort_criteria, [])
+        self.assertEqual(page.records.headerItem().text(0), '操作')
         self.assertEqual(page.records.toolTip(), '')
         self.assertEqual(page.records.header().minimumSectionSize(), 54)
+        enabled_records = [record for record in self.db.list_data_records() if record['enabled']]
+        completed = sum(
+            record['execution_status'] in {'stopped', 'success', 'failed'}
+            for record in enabled_records
+        )
+        self.assertEqual(page.progress.maximum(), max(1, len(enabled_records)))
+        self.assertEqual(page.progress_count.text(), f'{completed} / {len(enabled_records)}')
         self.assertTrue(page.findChild(QPushButton, 'clearResultsButton').property('danger'))
         self.assertEqual(STATUS_LABELS['not_run'], '未実行')
         self.assertEqual(STATUS_LABELS['running'], '実行中')
+        self.assertEqual(STATUS_LABELS['error_waiting'], 'エラー確認中')
+        self.assertEqual(STATUS_LABELS['stopped'], '中止')
         self.assertEqual(STATUS_LABELS['skipped'], 'スキップ')
         self.assertIsNotNone(page.findChild(QPushButton, 'toggleExecutionButton'))
         self.assertIsNotNone(page.findChild(QPushButton, 'setGroupButton'))
+        self.assertIsNotNone(page.findChild(QPushButton, 'setOrderButton'))
+        self.assertEqual(
+            page.records.selectionMode(), QAbstractItemView.SelectionMode.ExtendedSelection,
+        )
+        self.assertEqual(
+            [action.text() for action in page.toggle_button.menu().actions()],
+            ['実行に設定', 'スキップに設定', '選択を反転'],
+        )
+        self.assertIsInstance(page.records.itemDelegateForColumn(0), ExecutionActionDelegate)
+        self.assertTrue(all(
+            page.records.itemWidget(page.records.topLevelItem(index), 0) is None
+            for index in range(page.records.topLevelItemCount())
+        ))
+        order_dialog = ExecutionOrderDialog(self.window, self.db)
+        groups = [
+            order_dialog.group_combo.itemText(index)
+            for index in range(order_dialog.group_combo.count())
+        ]
+        self.assertEqual(groups, sorted(groups, key=natural_sort_key))
+        order_dialog.close()
         self.assertIsNotNone(page.findChild(QPushButton, 'clearResultsButton'))
         called = []
         original_set_group = page.set_group
         original_toggle_record = page.toggle_record
         page.set_group = lambda: called.append('group')
         page.toggle_record = lambda: called.append('toggle')
-        page._record_double_clicked(None, 6)
+        page._record_double_clicked(None, 7)
         self.assertEqual(called, [])
-        page._record_double_clicked(None, 0)
-        self.assertEqual(called, ['group'])
         page._record_double_clicked(None, 1)
+        self.assertEqual(called, ['group'])
+        page._record_double_clicked(None, 2)
         self.assertEqual(called, ['group', 'toggle'])
         page.set_group = original_set_group
         page.toggle_record = original_toggle_record
@@ -1242,6 +1624,94 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(page.stack.currentIndex(), 1)
         page.select_tab(0)
         self.assertEqual(page.stack.currentIndex(), 0)
+
+    def test_execution_order_defaults_to_selected_group(self) -> None:
+        page = self.window.pages['execution']
+        group_10_id = self.db.add_data_record(0, 'order group 10', {})
+        group_2_id = self.db.add_data_record(0, 'order group 2', {})
+        self.db.set_data_records_group([group_10_id], '10')
+        self.db.set_data_records_group([group_2_id], '2')
+        try:
+            page._table_signature = None
+            page.reload()
+
+            def select_records(*record_ids: int) -> None:
+                page.records.clearSelection()
+                selected = set(record_ids)
+                for index in range(page.records.topLevelItemCount()):
+                    item = page.records.topLevelItem(index)
+                    item.setSelected(
+                        int(item.data(0, Qt.ItemDataRole.UserRole)) in selected
+                    )
+
+            # 単一選択時は、その行のグループを初期表示する。
+            select_records(group_10_id)
+            with patch('qt_ui.pages.execution.ExecutionOrderDialog') as dialog_class:
+                dialog_class.return_value.exec.return_value = QDialog.DialogCode.Rejected
+                page.set_order()
+                dialog_class.assert_called_once_with(page, self.db, '10')
+
+            # 複数グループ選択時は、自然順で最小のグループを初期表示する。
+            select_records(group_10_id, group_2_id)
+            with patch('qt_ui.pages.execution.ExecutionOrderDialog') as dialog_class:
+                dialog_class.return_value.exec.return_value = QDialog.DialogCode.Rejected
+                page.set_order()
+                dialog_class.assert_called_once_with(page, self.db, '2')
+        finally:
+            self.db.delete_data_record(0, group_10_id)
+            self.db.delete_data_record(0, group_2_id)
+            page._table_signature = None
+            page.reload()
+
+    def test_execution_order_hides_skipped_rows_and_preserves_their_slots(self) -> None:
+        group = 'order-visible-only'
+        first_id = self.db.add_data_record(0, 'enabled first', {})
+        skipped_id = self.db.add_data_record(0, 'skipped middle', {})
+        last_id = self.db.add_data_record(0, 'enabled last', {})
+        record_ids = [first_id, skipped_id, last_id]
+        self.db.set_data_records_group(record_ids, group)
+        self.db.set_data_record_enabled(skipped_id, False)
+        dialog = None
+        try:
+            dialog = ExecutionOrderDialog(self.window, self.db, group)
+            visible_ids = [
+                int(dialog.tree.topLevelItem(index).data(0, Qt.ItemDataRole.UserRole))
+                for index in range(dialog.tree.topLevelItemCount())
+            ]
+            self.assertEqual(visible_ids, [first_id, last_id])
+
+            move_up = dialog.findChild(QPushButton, 'moveUpButton')
+            move_down = dialog.findChild(QPushButton, 'moveDownButton')
+            self.assertIsNotNone(move_up)
+            self.assertIsNotNone(move_down)
+            self.assertIn('実行データ', move_up.toolTip())
+
+            # 上下ボタンは選択を維持し、画面上の連番も直ちに更新する。
+            dialog.tree.setCurrentItem(dialog.tree.topLevelItem(1))
+            move_up.click()
+            self.assertEqual(
+                int(dialog.tree.currentItem().data(0, Qt.ItemDataRole.UserRole)), last_id,
+            )
+            self.assertTrue(dialog.tree.topLevelItem(0).text(0).startswith('(1/2) '))
+            self.assertTrue(dialog.tree.topLevelItem(1).text(0).startswith('(2/2) '))
+            move_down.click()
+            self.assertEqual(
+                int(dialog.tree.topLevelItem(1).data(0, Qt.ItemDataRole.UserRole)), last_id,
+            )
+            move_up.click()
+
+            # 実行対象だけを入れ替え、スキップ行の位置は維持する。
+            dialog._save()
+            ordered_group_ids = [
+                int(record['id']) for record in self.db.list_data_records()
+                if str(record['execution_group']) == group
+            ]
+            self.assertEqual(ordered_group_ids, [last_id, skipped_id, first_id])
+        finally:
+            if dialog is not None:
+                dialog.close()
+            for record_id in record_ids:
+                self.db.delete_data_record(0, record_id)
 
     def test_settings_page_uses_compact_balanced_cards(self) -> None:
         page = self.window.pages['settings']

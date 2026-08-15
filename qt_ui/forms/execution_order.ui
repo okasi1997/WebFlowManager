@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ExecutionOrderDialog</class>
+ <widget class="QDialog" name="ExecutionOrderDialog">
+  <property name="geometry">
+   <rect><x>0</x><y>0</y><width>560</width><height>520</height></rect>
+  </property>
+  <property name="windowTitle"><string>実行順序設定</string></property>
+  <layout class="QVBoxLayout" name="rootLayout">
+   <property name="leftMargin"><number>24</number></property>
+   <property name="topMargin"><number>22</number></property>
+   <property name="rightMargin"><number>24</number></property>
+   <property name="bottomMargin"><number>20</number></property>
+   <property name="spacing"><number>14</number></property>
+   <item>
+    <widget class="QLabel" name="descriptionLabel">
+     <property name="text"><string>グループを選び、ドラッグして実行順序を変更します。</string></property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="groupLayout">
+     <property name="spacing"><number>10</number></property>
+     <item><widget class="QLabel" name="groupLabel"><property name="text"><string>グループ</string></property></widget></item>
+     <item><widget class="QComboBox" name="groupCombo"/></item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QTreeWidget" name="orderTree">
+     <property name="expandsOnDoubleClick"><bool>false</bool></property>
+     <column><property name="text"><string>実行データ</string></property></column>
+     <column><property name="text"><string>概要</string></property></column>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="bottomButtonLayout">
+     <property name="spacing"><number>6</number></property>
+     <item>
+      <widget class="QPushButton" name="moveUpButton">
+       <property name="minimumWidth"><number>42</number></property>
+       <property name="maximumWidth"><number>42</number></property>
+       <property name="text"><string>↑</string></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="moveDownButton">
+       <property name="minimumWidth"><number>42</number></property>
+       <property name="maximumWidth"><number>42</number></property>
+       <property name="text"><string>↓</string></property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="moveButtonSpacer">
+       <property name="orientation"><enum>Qt::Horizontal</enum></property>
+       <property name="sizeHint"><size><width>20</width><height>40</height></size></property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QDialogButtonBox" name="buttonBox">
+       <property name="standardButtons"><set>QDialogButtonBox::Cancel|QDialogButtonBox::Save</set></property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

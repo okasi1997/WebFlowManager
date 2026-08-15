@@ -62,7 +62,7 @@
                 <bool>true</bool>
               </property>
               <property name="text">
-                <string>実行開始</string>
+                <string>一括実行</string>
               </property>
             </widget>
           </item>
@@ -198,16 +198,30 @@
             </spacer>
           </item>
           <item>
+            <widget class="QLabel" name="selectionCountLabel">
+              <property name="text">
+                <string>選択なし</string>
+              </property>
+            </widget>
+          </item>
+          <item>
             <widget class="QPushButton" name="toggleExecutionButton">
               <property name="text">
-                <string>実行／スキップ</string>
+                <string>今回実行</string>
               </property>
             </widget>
           </item>
           <item>
             <widget class="QPushButton" name="setGroupButton">
               <property name="text">
-                <string>実行グループ設定</string>
+                <string>グループ設定</string>
+              </property>
+            </widget>
+          </item>
+          <item>
+            <widget class="QPushButton" name="setOrderButton">
+              <property name="text">
+                <string>実行順序設定</string>
               </property>
             </widget>
           </item>

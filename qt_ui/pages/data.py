@@ -14,16 +14,17 @@ from PySide6.QtWidgets import (
 )
 
 from core.database import Database
-from core.excel_io import read_records_excel, write_records_excel
+from core.excel_io import read_records_excel, read_records_excel_with_schema, write_records_excel
 from i18n import tr
 from .structured import default_value, empty_record
 from ..table_view import (
-    HierarchicalReorderTreeWidget, bulk_view_update, capture_scroll_position,
+    HierarchicalReorderTreeWidget, bind_structured_copy_paste, bulk_view_update, capture_scroll_position,
     capture_tree_display_state, configure_table_view, order_with_inserted_after,
     restore_scroll_position, restore_tree_display_state, set_tree_expanded,
+    unique_copy_name,
 )
 from ..ui_loader import (
-    confirm_deletion, confirm_pending_changes, load_ui_into, localize_dialog_buttons, require,
+    confirm_deletion, confirm_import_overwrite, confirm_pending_changes, load_ui_into, localize_dialog_buttons, require,
     set_tree_toggle_icon, show_file_exported, show_file_imported, show_information, show_warning,
 )
 
@@ -92,6 +93,9 @@ class DataPage(QWidget):
             self.tree.setColumnWidth(column, width)
         self.tree.currentItemChanged.connect(lambda *_: self._select_record())
         self.tree.itemDoubleClicked.connect(self._record_double_clicked)
+        bind_structured_copy_paste(
+            self.tree, 'data-record', self._copy_record_payload, self._paste_record_payload,
+        )
         self.values = require(self, QTreeWidget, 'valueTree')
         configure_table_view(self.values)
         self.values.headerItem().setText(2, tr('値  ✎'))
@@ -134,6 +138,7 @@ class DataPage(QWidget):
         io_menu.addSeparator()
         io_menu.addAction('Excel を出力', self.export_excel)
         io_menu.addAction('Excel を読み込む', self.import_excel)
+        io_menu.addAction('Excel を読み込む（データ構造を含む）', self.import_excel_with_schema)
         io_button.setMenu(io_menu)
         require(self, QPushButton, 'importDataJsonButton').hide()
         require(self, QPushButton, 'excelButton').hide()
@@ -390,9 +395,26 @@ class DataPage(QWidget):
     def copy_record(self) -> None:
         record = self.selected()
         if record:
-            record_id = self.db.add_data_record(0, f'{record["name"]} - Copy', copy.deepcopy(record['data']), record['summary'])
-            self.db.set_data_record_group(record_id, record['execution_group'])
-            self._place_new_record(record_id, record['id'])
+            self._duplicate_record(record, record['id'])
+
+    def _copy_record_payload(self) -> dict[str, Any] | None:
+        """選択中の実行データを、実行結果を除いてコピーする。"""
+        return self.selected()
+
+    def _paste_record_payload(self, record: dict[str, Any]) -> None:
+        selected = self.selected() if self.tree.selectedItems() else None
+        self._duplicate_record(record, selected['id'] if selected else None)
+
+    def _duplicate_record(self, record: dict[str, Any], selected_id: int | None) -> None:
+        name = unique_copy_name(
+            str(record['name']), (row['name'] for row in self.db.list_data_records()),
+        )
+        record_id = self.db.add_data_record(
+            0, name, copy.deepcopy(record['data']), str(record.get('summary', '')),
+        )
+        self.db.set_data_record_group(record_id, str(record.get('execution_group', '1')))
+        self.db.set_data_record_enabled(record_id, bool(record.get('enabled', True)))
+        self._place_new_record(record_id, selected_id)
 
     def _place_new_record(self, record_id: int, selected_id: int | None) -> None:
         """新規・複製データを選択行の直後、未選択時は末尾へ配置する。"""
@@ -443,6 +465,8 @@ class DataPage(QWidget):
         path, _ = QFileDialog.getOpenFileName(self, tr('JSON 読込'), '', 'JSON (*.json)')
         if not path:
             return
+        if not confirm_import_overwrite(self, bool(self.db.list_data_records()), 'データ'):
+            return
         try:
             records = json.loads(Path(path).read_text(encoding='utf-8'))
             if not isinstance(records, list):
@@ -469,8 +493,31 @@ class DataPage(QWidget):
         path, _ = QFileDialog.getOpenFileName(self, tr('Excel を読み込む'), '', 'Excel (*.xlsx)')
         if not path:
             return
+        if not confirm_import_overwrite(self, bool(self.db.list_data_records()), 'データ'):
+            return
         try:
             self.db.replace_data_records(read_records_excel(path, self.db.get_data_schema()))
+            self.reload()
+        except Exception as error:
+            show_warning(self, 'Excel 読込', str(error))
+            return
+        show_file_imported(self, path)
+
+    def import_excel_with_schema(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, tr('Excel を読み込む（データ構造を含む）'), '', 'Excel (*.xlsx)',
+        )
+        if not path:
+            return
+        has_existing = bool(
+            self.db.list_data_records() or self.db.get_data_schema().get('children')
+        )
+        if not confirm_import_overwrite(self, has_existing, 'データとデータ構造'):
+            return
+        try:
+            schema, records = read_records_excel_with_schema(path)
+            self.db.save_data_schema(0, schema)
+            self.db.replace_data_records(records)
             self.reload()
         except Exception as error:
             show_warning(self, 'Excel 読込', str(error))

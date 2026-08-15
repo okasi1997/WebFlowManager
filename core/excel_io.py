@@ -140,6 +140,134 @@ def _descendant_scalar_paths(node: dict[str, Any], prefix: str) -> list[str]:
             result.append(path)
     return result
 
+def _data_excel_sheet(workbook: Any) -> Any:
+    """表示言語に依存せず、データ本体のシートを取得する。"""
+    data_names = {
+        tr_language('data_excel.data_sheet', language)
+        for language in SUPPORTED_LANGUAGES
+    }
+    data_name = next((name for name in workbook.sheetnames if name in data_names), None)
+    return workbook[data_name] if data_name is not None else workbook.worksheets[0]
+
+def _excel_header_layout(sheet: Any) -> tuple[int, list[str]]:
+    """結合された多段ヘッダーを、データ構造のパスへ展開する。"""
+    header_depth = 1
+    for merged in sheet.merged_cells.ranges:
+        if merged.min_col == merged.max_col == 1 and merged.min_row == 1:
+            header_depth = max(header_depth, merged.max_row)
+
+    def header_value(row: int, column: int) -> Any:
+        value = sheet.cell(row, column).value
+        if value is not None:
+            return value
+        for merged in sheet.merged_cells.ranges:
+            if merged.min_row <= row <= merged.max_row and merged.min_col <= column <= merged.max_col:
+                # 縦結合は末端項目、横結合は配下列へ引き継ぐ親項目として扱う。
+                if merged.min_row < row and merged.max_row > merged.min_row:
+                    return None
+                return sheet.cell(merged.min_row, merged.min_col).value
+        return None
+
+    columns: list[str] = []
+    for column in range(2, sheet.max_column + 1):
+        parts = [
+            str(value).strip()
+            for row in range(1, header_depth + 1)
+            if (value := header_value(row, column)) not in (None, '')
+        ]
+        columns.append('.'.join(parts))
+    return header_depth, columns
+
+def _infer_schema_from_workbook(workbook: Any) -> dict[str, Any]:
+    """Excel の多段ヘッダーと値から、データ構造を復元する。"""
+    sheet = _data_excel_sheet(workbook)
+    header_depth, columns = _excel_header_layout(sheet)
+    if not columns or any(not path_name for path_name in columns):
+        raise ValueError(tr('data_excel.header_mismatch'))
+    if len(columns) != len(set(columns)):
+        raise ValueError(tr('data_excel.duplicate_headers'))
+
+    root: dict[str, Any] = {'name': 'Data', 'type': 'object', 'children': []}
+    nodes_by_path: dict[str, dict[str, Any]] = {}
+    for path_name in columns:
+        parent = root
+        prefix = ''
+        parts = path_name.split('.')
+        for index, name in enumerate(parts):
+            prefix = f'{prefix}.{name}' if prefix else name
+            node = nodes_by_path.get(prefix)
+            if node is None:
+                node = {
+                    'name': name,
+                    'type': 'text' if index == len(parts) - 1 else 'object',
+                }
+                if index < len(parts) - 1:
+                    node['children'] = []
+                parent.setdefault('children', []).append(node)
+                nodes_by_path[prefix] = node
+            elif index < len(parts) - 1 and node['type'] not in ('object', 'list'):
+                raise ValueError(tr('data_excel.header_mismatch'))
+            parent = node
+
+    # Excel のセル型から基本型を決定する。混在する列は安全側で文字列として扱う。
+    for column_index, path_name in enumerate(columns, 2):
+        values = [
+            sheet.cell(row, column_index).value
+            for row in range(header_depth + 1, sheet.max_row + 1)
+            if sheet.cell(row, column_index).value not in (None, '')
+        ]
+        node = nodes_by_path[path_name]
+        if values and all(isinstance(value, bool) for value in values):
+            node['type'] = 'boolean'
+        elif values and all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in values
+        ):
+            node['type'] = 'number'
+
+    record_rows: list[list[int]] = []
+    current_rows: list[int] = []
+    for row in range(header_depth + 1, sheet.max_row + 1):
+        if sheet.cell(row, 1).value not in (None, ''):
+            if current_rows:
+                record_rows.append(current_rows)
+            current_rows = []
+        if current_rows or sheet.cell(row, 1).value not in (None, ''):
+            current_rows.append(row)
+    if current_rows:
+        record_rows.append(current_rows)
+
+    # 同一データ内で直下項目が複数行に現れる階層はリストとして復元する。
+    column_indexes = {path_name: index for index, path_name in enumerate(columns, 2)}
+    for path_name, node in nodes_by_path.items():
+        if node['type'] != 'object':
+            continue
+        direct_scalar_paths = [
+            child_path for child_path, child in nodes_by_path.items()
+            if child_path.rpartition('.')[0] == path_name
+            and child['type'] not in ('object', 'list')
+        ]
+        if any(
+            sum(
+                sheet.cell(row, column_indexes[child_path]).value not in (None, '')
+                for row in rows
+            ) > 1
+            for child_path in direct_scalar_paths
+            for rows in record_rows
+        ):
+            node['type'] = 'list'
+    validate_schema(root)
+    return root
+
+def read_records_excel_with_schema(
+        path: str | Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Excel からデータ構造を復元し、その構造でデータも読み込む。"""
+    from openpyxl import load_workbook
+    workbook = load_workbook(path, data_only=True)
+    schema = _infer_schema_from_workbook(workbook)
+    return schema, read_records_excel(path, schema, workbook=workbook)
+
 def write_records_excel(path: str | Path, schema: dict[str, Any], records: list[dict[str, Any]]) -> int:
     """PCL と実行設定を、再読込可能な Excel ブックへ保存する。"""
     from openpyxl import Workbook
@@ -215,12 +343,18 @@ def write_records_excel(path: str | Path, schema: dict[str, Any], records: list[
     workbook.save(path)
     return sheet.max_row - max_depth
 
-def read_records_excel(path: str | Path, schema: dict[str, Any]) -> list[dict[str, Any]]:
+def read_records_excel(
+        path: str | Path, schema: dict[str, Any], *, workbook: Any | None=None,
+) -> list[dict[str, Any]]:
     """write_records_excel が作成した階層ブックを PCL に復元する。"""
     from openpyxl import load_workbook
     schema = strip_schema_name_whitespace(schema)
-    workbook = load_workbook(path, data_only=True)
-    sheet = workbook.active
+    workbook = workbook or load_workbook(path, data_only=True)
+    data_names = {tr_language('data_excel.data_sheet', language) for language in SUPPORTED_LANGUAGES}
+    # Excel は最後に表示していたシートを active として保存するため、名前でデータシートを特定する。
+    # シート名を持たない旧形式だけは、従来どおり先頭シートへフォールバックする。
+    data_name = next((name for name in workbook.sheetnames if name in data_names), None)
+    sheet = workbook[data_name] if data_name is not None else workbook.worksheets[0]
     header_depth = 1
     for merged in sheet.merged_cells.ranges:
         # 先頭列の縦結合範囲が、階層ヘッダーの深さを表す。

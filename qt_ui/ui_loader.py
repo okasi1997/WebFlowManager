@@ -171,6 +171,20 @@ def confirm_action(
     ).exec() == QDialog.DialogCode.Accepted
 
 
+def confirm_import_overwrite(
+        parent: QWidget, has_existing: bool, target_name: str,
+) -> bool:
+    """既存内容を置き換える場合だけ、共通デザインで読込確認を表示する。"""
+    if not has_existing:
+        return True
+    return confirm_action(
+        parent, tr('読込確認'),
+        f'{tr("既存の")}{tr(target_name)}'
+        f'{tr("は読み込んだ内容で置き換えられます。続行しますか？")}',
+        confirm_text=tr('読み込む'),
+    )
+
+
 def confirm_deletion(parent: QWidget, message: str) -> bool:
     """共通の削除確認を表示し、削除が選択された場合だけ True を返す。"""
     return DeletionConfirmDialog(parent, message).exec() == QDialog.DialogCode.Accepted

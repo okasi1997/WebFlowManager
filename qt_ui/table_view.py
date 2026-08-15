@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable, Iterable
 from contextlib import contextmanager
 from typing import Any, TypeVar
 
 from PySide6.QtCore import QEvent, QObject, QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QHeaderView, QProxyStyle, QStyle,
     QPushButton, QStyledItemDelegate, QTableView, QTreeView, QTreeWidget, QTreeWidgetItem,
@@ -15,6 +16,43 @@ from i18n import tr
 
 TREE_LEVEL_INDENT = 14
 RowKey = TypeVar('RowKey')
+_structured_clipboard: tuple[str, Any] | None = None
+
+
+def bind_structured_copy_paste(
+        view: QAbstractItemView, kind: str, copy_payload: Callable[[], Any | None],
+        paste_payload: Callable[[Any], None]) -> None:
+    """表ごとの構造を保ったまま Ctrl+C / Ctrl+V を共通登録する。"""
+    def copy_selected() -> None:
+        global _structured_clipboard
+        payload = copy_payload()
+        if payload is not None:
+            _structured_clipboard = (kind, copy.deepcopy(payload))
+
+    def paste_after_selected() -> None:
+        if _structured_clipboard is None or _structured_clipboard[0] != kind:
+            return
+        paste_payload(copy.deepcopy(_structured_clipboard[1]))
+
+    shortcuts = [
+        QShortcut(QKeySequence.StandardKey.Copy, view, activated=copy_selected),
+        QShortcut(QKeySequence.StandardKey.Paste, view, activated=paste_after_selected),
+    ]
+    for shortcut in shortcuts:
+        shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+    # Python 側でも参照を保持し、Qt の所有権移管後に破棄されないようにする。
+    view._structured_copy_paste_shortcuts = shortcuts
+
+
+def unique_copy_name(name: str, existing_names: Iterable[str]) -> str:
+    """既存の複製表記を維持しながら、重複しない名前を返す。"""
+    existing = set(existing_names)
+    candidate = f'{name} - Copy'
+    suffix = 2
+    while candidate in existing:
+        candidate = f'{name} - Copy ({suffix})'
+        suffix += 1
+    return candidate
 
 
 @contextmanager

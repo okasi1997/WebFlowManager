@@ -13,7 +13,7 @@ from PySide6.QtCore import QRectF
 from PySide6.QtGui import QColor, QImage, QPainter
 from browser.page_runtime import active_page, browser_args, browser_context_options, close_browser_context, is_topmost, launch_persistent_chrome, open_pages, page_frames, restore_storage_state, settle_new_page
 from browser.locators import build_locator, locators_across_frames
-from browser.profile_runtime import persistent_profile_dir
+from browser.profile_runtime import acquire_profile_lease, persistent_profile_dir, profile_lock_error
 from core.conditions import decode_guard, evaluate_guard
 from core.settings import SELECT_FIRST_VALUE
 from i18n import tr
@@ -23,6 +23,13 @@ SALESFORCE_SPINNER_SELECTOR = '.slds-spinner, lightning-spinner'
 SPINNER_TRIGGER_ACTIONS = {'click', 'select', 'goto', 'upload_file'}
 DEFAULT_ACTION_STABLE_MS = 250
 CLICK_STABLE_POLL_MS = 50
+
+
+class ExecutionStopped(RuntimeError):
+    """イベント境界で利用者の停止要求を受け付けたことを表す。"""
+
+    def __init__(self) -> None:
+        super().__init__('execution.stopped')
 
 def find_variables(events: list[dict[str, Any]]) -> list[str]:
     """外部入力が必要な変数だけを抽出する。get_text の生成変数は除外する。"""
@@ -62,7 +69,7 @@ class WorkflowExecutor:
         self._session_log_prefix = '[S1] | '
         self.action_stable_ms = max(0, int(action_stable_ms))
 
-    def run_batch(self, steps: list[dict[str, Any]], variables: dict[str, str], on_step_start: Callable[[dict[str, Any]], Any] | None=None, on_step_success: Callable[[dict[str, Any], Any], None] | None=None, on_step_failure: Callable[[dict[str, Any], Any, Exception], None] | None=None, on_event_start: Callable[[dict[str, Any], dict[str, Any]], None] | None=None, browser_visible: bool=True, session_name: str='batch', storage_state_path: Path | None | bool=False) -> None:
+    def run_batch(self, steps: list[dict[str, Any]], variables: dict[str, str], on_step_start: Callable[[dict[str, Any]], Any] | None=None, on_step_success: Callable[[dict[str, Any], Any], None] | None=None, on_step_failure: Callable[[dict[str, Any], Any, Exception], None] | None=None, on_event_start: Callable[[dict[str, Any], dict[str, Any]], None] | None=None, stop_requested: Callable[[], bool] | None=None, browser_visible: bool=True, session_name: str='batch', storage_state_path: Path | None | bool=False) -> None:
         """計画済みの全ステップを、一つの browser/context/page で実行する。"""
         try:
             from playwright.sync_api import sync_playwright
@@ -90,10 +97,12 @@ class WorkflowExecutor:
             )
             temporary_profile = None
             context = None
+            profile_lease = None
             if profile_dir is None:
                 temporary_profile = tempfile.TemporaryDirectory(prefix='webflow_chrome_')
                 profile_dir = Path(temporary_profile.name)
             try:
+                profile_lease = acquire_profile_lease(profile_dir)
                 context = launch_persistent_chrome(
                     playwright,
                     profile_dir,
@@ -103,32 +112,62 @@ class WorkflowExecutor:
                 pages = context.pages
                 page = pages[-1] if pages else context.new_page()
                 for step_number, step in enumerate(steps, 1):
+                    if stop_requested and stop_requested():
+                        raise ExecutionStopped()
                     token = on_step_start(step) if on_step_start else None
                     try:
                         record = step.get('record')
                         root_data = record.get('data') if record else None
-                        workflow_guard = decode_guard(step.get('guard'))
-                        if evaluate_guard(workflow_guard, lambda path: self._resolve_guard_data(root_data, path, {})):
-                            self._execute_workflow_on_page(page, step['events'], variables, artifact_dir, root_data, f'step_{step_number}', 0, self._step_log_prefix(step), (lambda event, current=step: on_event_start(current, event)) if on_event_start else None)
+                        workflow_guards = step.get('guards') or [step.get('guard')]
+                        resolver = lambda path: self._resolve_guard_data(root_data, path, {})
+                        # 外側 Group、内側 Group、Flow 自身の条件をすべて満たした場合だけ実行する。
+                        if all(
+                            evaluate_guard(decode_guard(guard), resolver)
+                            for guard in workflow_guards
+                        ):
+                            def event_started(event, current=step):
+                                if stop_requested and stop_requested():
+                                    raise ExecutionStopped()
+                                if on_event_start:
+                                    on_event_start(current, event)
+                            self._execute_workflow_on_page(page, step['events'], variables, artifact_dir, root_data, f'step_{step_number}', 0, self._step_log_prefix(step), event_started)
                         else:
                             self.logger(
                                 f'{self._step_log_prefix(step)}{tr("condition.guard_skipped")}'
                             )
+                        if stop_requested and stop_requested():
+                            raise ExecutionStopped()
+                    except ExecutionStopped:
+                        raise
                     except Exception as error:
                         if on_step_failure:
                             on_step_failure(step, token, error)
                         raise
                     if on_step_success:
                         on_step_success(step, token)
+            except Exception as error:
+                converted = profile_lock_error(error)
+                if converted is not None:
+                    raise converted from error
+                raise
             finally:
                 active_error = sys.exc_info()[1]
                 cleanup_error: Exception | None = None
-                if active_error is not None and browser_visible and context is not None:
+                # 利用者による安全停止は正常な制御なので、エラー調査用のブラウザー待機を行わない。
+                if (
+                    active_error is not None
+                    and not isinstance(active_error, ExecutionStopped)
+                    and browser_visible
+                    and context is not None
+                ):
                     self.logger(
                         f'{self._session_log_prefix}'
                         f'{tr("execution.stopped_close_browser")}'
                     )
                     while True:
+                        # エラー確認中の終了操作でも、ブラウザーを閉じて後処理へ進める。
+                        if stop_requested and stop_requested():
+                            break
                         try:
                             pages = open_pages(context)
                             if not pages:
@@ -146,6 +185,8 @@ class WorkflowExecutor:
                     close_browser_context(context)
                 except Exception as error:
                     cleanup_error = cleanup_error or error
+                if profile_lease is not None:
+                    profile_lease.release()
                 try:
                     if temporary_profile is not None:
                         temporary_profile.cleanup()
@@ -1223,7 +1264,7 @@ class WorkflowExecutor:
         locator: Any, path: Path, timeout: int,
         capture_area: Any | None=None,
     ) -> None:
-        """元の位置を保存し、原点で測定してからスクロール撮影を行う。"""
+        """元の位置を保存し、原点で測定してからスクロールキャプチャーを行う。"""
         locator.scroll_into_view_if_needed(timeout=timeout)
         handle = locator.element_handle(timeout=timeout)
         if handle is None:
@@ -1247,7 +1288,7 @@ class WorkflowExecutor:
                 locator, handle, path, timeout, capture_area,
             )
         finally:
-            # 測定や撮影が失敗しても、PCL 実行前のスクロール位置と CSS を復元する。
+            # 測定やキャプチャーが失敗しても、PCL 実行前のスクロール位置と CSS を復元する。
             handle.evaluate("""(element, state) => {
                 element.scrollLeft = state.x;
                 element.scrollTop = state.y;
@@ -1265,9 +1306,9 @@ class WorkflowExecutor:
         locator: Any, handle: Any, path: Path, timeout: int,
         capture_area: Any | None=None,
     ) -> None:
-        """原点を基準に範囲を測定し、実際のスクロール領域を分割撮影する。"""
+        """原点を基準に範囲を測定し、実際のスクロール領域を分割キャプチャーする。"""
         # 新規イベントは選択時に確定したスクロール要素を直接渡す。
-        # 旧イベントでは従来どおり撮影対象自身を使用し、曖昧な祖先推測は行わない。
+        # 旧イベントでは従来どおりキャプチャー対象自身を使用し、曖昧な祖先推測は行わない。
         metrics = handle.evaluate("""element => {
             return {
                 clientWidth: element.clientWidth,
@@ -1355,7 +1396,7 @@ class WorkflowExecutor:
         try:
             if capture_handle is not None:
                 # iframe の外側にある Salesforce などの固定ヘッダーもタイルへ写り込む。
-                # 撮影対象 frame の祖先だけを処理し、iframe 内の選択範囲には触れない。
+                # キャプチャー対象 frame の祖先だけを処理し、iframe 内の選択範囲には触れない。
                 owner_frame = capture_handle.owner_frame()
                 parent_frame = owner_frame.parent_frame if owner_frame is not None else None
                 while parent_frame is not None:
@@ -1511,7 +1552,7 @@ class WorkflowExecutor:
                 shell_image, canvas, shell_box, shell_content_rect,
             )
         if canvas is not None and capture_area is None:
-            # 分割画像は内側だけを撮影し、最後に選択要素自身の外枠を一度だけ付ける。
+            # 分割画像は内側だけをキャプチャーし、最後に選択要素自身の外枠を一度だけ付ける。
             border_left = round(float(metrics.get('borderLeftWidth', 0)) * scale_x)
             border_top = round(float(metrics.get('borderTopWidth', 0)) * scale_y)
             border_right = round(float(metrics.get('borderRightWidth', 0)) * scale_x)

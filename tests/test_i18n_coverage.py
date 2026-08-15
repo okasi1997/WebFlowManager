@@ -34,15 +34,15 @@ class I18nCoverageTests(unittest.TestCase):
         common_keys = {key for key in ja if key.startswith('common.')}
         self.assertEqual(len(common_keys), 23)
         error_keys = {key for key in ja if key.startswith('error.')}
-        self.assertEqual(len(error_keys), 28)
+        self.assertEqual(len(error_keys), 29)
         event_keys = {key for key in ja if key.startswith('event.')}
-        self.assertEqual(len(event_keys), 47)
+        self.assertEqual(len(event_keys), 48)
         flow_keys = {key for key in ja if key.startswith('flow.')}
         self.assertEqual(len(flow_keys), 36)
         schema_keys = {key for key in ja if key.startswith('schema.')}
         self.assertEqual(len(schema_keys), 5)
         data_excel_keys = {key for key in ja if key.startswith('data_excel.')}
-        self.assertEqual(len(data_excel_keys), 8)
+        self.assertEqual(len(data_excel_keys), 9)
         login_keys = {key for key in ja if key.startswith('login.')}
         self.assertEqual(len(login_keys), 25)
         settings_keys = {key for key in ja if key.startswith('settings.')}
@@ -50,7 +50,7 @@ class I18nCoverageTests(unittest.TestCase):
         selector_keys = {key for key in ja if key.startswith('selector.')}
         self.assertEqual(len(selector_keys), 8)
         execution_keys = {key for key in ja if key.startswith('execution.')}
-        self.assertEqual(len(execution_keys), 26)
+        self.assertEqual(len(execution_keys), 27)
         condition_keys = {key for key in ja if key.startswith('condition.')}
         self.assertEqual(len(condition_keys), 2)
         browser_keys = {key for key in ja if key.startswith('browser.')}

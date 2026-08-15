@@ -101,6 +101,9 @@ if "%INCLUDE_LOCAL_DATA%"=="0" (
   echo Do not distribute it to untrusted people.
 )
 if "%INSTALL_DEPENDENCIES%"=="0" echo To install or update dependencies, run: build_exe.bat --setup
+echo.
+echo Press any key to close this window.
+pause >nul
 exit /b 0
 
 :check

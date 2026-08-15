@@ -2,10 +2,58 @@
 from __future__ import annotations
 
 import shutil
+import threading
 from pathlib import Path
+from typing import Final
 
 
 DEFAULT_STATE_FILE = 'browser_state.json'
+PROFILE_IN_USE_ERROR: Final = 'error.browser_profile_in_use'
+
+# 同一アプリ内で同じ Chrome プロファイルを同時に起動しないための占有表。
+# Chrome 起動を試してから失敗を待つよりも速く、不要なプロセス生成も避けられる。
+_profile_lease_lock = threading.Lock()
+_profile_leases: set[Path] = set()
+
+
+class ProfileLease:
+    """Chrome プロファイルの占有権を保持し、重複解放を安全に処理する。"""
+
+    def __init__(self, profile_dir: Path) -> None:
+        self.profile_dir = profile_dir.resolve()
+        self._released = False
+
+    def release(self) -> None:
+        """保持中の占有権を解放する。複数回呼び出しても副作用はない。"""
+        with _profile_lease_lock:
+            if self._released:
+                return
+            _profile_leases.discard(self.profile_dir)
+            self._released = True
+
+
+def acquire_profile_lease(profile_dir: Path) -> ProfileLease:
+    """指定プロファイルを占有し、使用中の場合は画面表示用エラーを返す。"""
+    resolved = profile_dir.resolve()
+    with _profile_lease_lock:
+        if resolved in _profile_leases:
+            raise RuntimeError(PROFILE_IN_USE_ERROR)
+        _profile_leases.add(resolved)
+    return ProfileLease(resolved)
+
+
+def profile_lock_error(error: Exception) -> RuntimeError | None:
+    """Chrome が返す代表的な外部プロファイル占有エラーを共通エラーへ変換する。"""
+    if str(error) == PROFILE_IN_USE_ERROR:
+        return RuntimeError(PROFILE_IN_USE_ERROR)
+    message = str(error).casefold()
+    indicators = (
+        'processsingleton',
+        'profile in use',
+        'user data directory is already in use',
+        'opening in existing browser session',
+    )
+    return RuntimeError(PROFILE_IN_USE_ERROR) if any(value in message for value in indicators) else None
 
 
 def profile_name_from_state(state_path: Path | None) -> str | None:

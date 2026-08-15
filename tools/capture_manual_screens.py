@@ -1,4 +1,4 @@
-"""現在の PySide6 画面を日本語操作手順書用に撮影する。"""
+"""現在の PySide6 画面を日本語操作手順書用にキャプチャーする。"""
 
 from __future__ import annotations
 
@@ -21,11 +21,11 @@ OUTPUT = ROOT / "操作手順書_ja" / "images"
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "--flow-only", action="store_true",
-    help="フロー設計画面だけを現在のサンプルデータで撮影する",
+    help="フロー設計画面だけを現在のサンプルデータでキャプチャーする",
 )
 parser.add_argument(
     "--data-only", action="store_true",
-    help="データ管理画面だけを現在のサンプルデータで撮影する",
+    help="データ管理画面だけを現在のサンプルデータでキャプチャーする",
 )
 options = parser.parse_args()
 if options.flow_only and options.data_only:

@@ -7,12 +7,40 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from core.excel_io import (
-    read_records_excel, remap_data_for_schema_names, schema_name_path_map,
+    read_records_excel, read_records_excel_with_schema, remap_data_for_schema_names, schema_name_path_map,
     strip_data_record_whitespace, strip_schema_name_whitespace, write_records_excel,
 )
 
 
 class ExcelStyleTests(unittest.TestCase):
+    def test_excel_headers_can_restore_schema_and_records(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object', 'children': [
+                {'name': 'profile', 'type': 'object', 'children': [
+                    {'name': 'name', 'type': 'text'},
+                    {'name': 'active', 'type': 'boolean'},
+                    {'name': 'count', 'type': 'number'},
+                ]},
+                {'name': 'items', 'type': 'list', 'children': [
+                    {'name': 'code', 'type': 'text'},
+                ]},
+            ],
+        }
+        records = [{
+            'name': 'PCL_001', 'summary': 'summary', 'enabled': True,
+            'execution_group': '2', 'data': {
+                'profile': {'name': 'Alice', 'active': True, 'count': 3},
+                'items': [{'code': 'A'}, {'code': 'B'}],
+            },
+        }]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'schema-import.xlsx'
+            write_records_excel(path, schema, records)
+            restored_schema, restored_records = read_records_excel_with_schema(path)
+
+        self.assertEqual(restored_schema, schema)
+        self.assertEqual(restored_records, records)
+
     def test_schema_names_and_existing_data_keys_are_trimmed_together(self) -> None:
         schema = {
             'name': '\u3000Data\n', 'type': 'object',
@@ -91,6 +119,27 @@ class ExcelStyleTests(unittest.TestCase):
         self.assertEqual(restored[0]['name'], 'PCL_001')
         self.assertEqual(restored[0]['summary'], '概要')
         self.assertEqual(restored[0]['data']['items'], [{'value': '値'}, {'value': '次'}])
+
+    def test_import_uses_named_data_sheet_when_settings_sheet_is_active(self) -> None:
+        """実行設定を表示したまま保存しても、データ一覧を正しく読み込む。"""
+        schema = {
+            'name': 'Data', 'type': 'object',
+            'children': [{'name': 'value', 'type': 'text'}],
+        }
+        records = [{
+            'name': 'PCL_001', 'summary': '概要', 'enabled': True,
+            'execution_group': '1', 'data': {'value': '値'},
+        }]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'active-settings.xlsx'
+            write_records_excel(path, schema, records)
+            workbook = load_workbook(path)
+            workbook.active = 1
+            workbook.save(path)
+
+            restored = read_records_excel(path, schema)
+
+        self.assertEqual(restored, records)
 
     def test_repeated_names_in_multilevel_header_round_trip(self) -> None:
         schema = {

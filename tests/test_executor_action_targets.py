@@ -119,7 +119,7 @@ class ExecutorActionTargetTests(unittest.TestCase):
         event_frame.assert_not_called()
 
     def test_scroll_area_screenshot_restores_element_state(self) -> None:
-        """分割撮影ではレイアウトを変更せず、最後にスクロール位置を戻す。"""
+        """分割キャプチャーではレイアウトを変更せず、最後にスクロール位置を戻す。"""
         locator = Mock()
         handle = Mock()
         locator.element_handle.return_value = handle
