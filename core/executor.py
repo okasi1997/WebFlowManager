@@ -15,6 +15,7 @@ from browser.page_runtime import active_page, browser_args, browser_context_opti
 from browser.locators import build_locator, locators_across_frames
 from browser.profile_runtime import acquire_profile_lease, persistent_profile_dir, profile_lock_error
 from core.conditions import decode_guard, evaluate_guard
+from core.data_templates import iter_template_instances
 from core.settings import SELECT_FIRST_VALUE
 from i18n import tr
 VARIABLE_PATTERN = re.compile('\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}')
@@ -586,9 +587,33 @@ class WorkflowExecutor:
                 f'{tr("execution.linked_data_prefix")}{path}'
                 f'{tr("execution.data_missing_suffix")}'
             )
+        parts = path.split('.')
+        if len(parts) >= 2 and parts[0] == '@template':
+            template_path = '.'.join(parts[:2])
+            current: Any = [
+                item.get('data', {}) for _path, item in iter_template_instances(root_data)
+                if parts[1] in {
+                    str(item.get('template_id', '')),
+                    str(item.get('template_name', '')).strip(),
+                }
+            ]
+            if template_path in loop_context:
+                current = loop_context[template_path]
+            elif len(parts) > 2:
+                raise ValueError(
+                    f'{tr("execution.field_prefix")}{template_path}'
+                    f'{tr("execution.list_requires_loop_suffix")}'
+                )
+            prefix = parts[:2]
+            for part in parts[2:]:
+                prefix.append(part)
+                if not isinstance(current, dict) or part not in current:
+                    raise ValueError(f'{tr("execution.field_missing_prefix")}{".".join(prefix)}')
+                current = current[part]
+            return current
         current: Any = root_data
         prefix: list[str] = []
-        for part in path.split('.'):
+        for part in parts:
             prefix.append(part)
             current_path = '.'.join(prefix)
             if not isinstance(current, dict) or part not in current:
@@ -637,9 +662,30 @@ class WorkflowExecutor:
                 f'{tr("execution.linked_data_prefix")}{path}'
                 f'{tr("execution.data_missing_suffix")}'
             )
+        parts = path.split('.')
+        if len(parts) >= 3 and parts[0] == '@template':
+            template_path = '.'.join(parts[:2])
+            current: Any = loop_context.get(template_path)
+            if not isinstance(current, dict):
+                raise ValueError(
+                    f'{tr("execution.field_prefix")}{template_path}'
+                    f'{tr("execution.list_requires_loop_suffix")}'
+                )
+            for index, part in enumerate(parts[2:]):
+                current_path = '.'.join(parts[:index + 3])
+                if part not in current:
+                    raise ValueError(f'{tr("execution.field_missing_prefix")}{current_path}')
+                if index == len(parts[2:]) - 1:
+                    if isinstance(current[part], (dict, list)):
+                        raise ValueError(f'{tr("execution.field_missing_prefix")}{current_path}')
+                    current[part] = value
+                    return
+                current = current[part]
+                if not isinstance(current, dict):
+                    raise ValueError(f'{tr("execution.field_missing_prefix")}{current_path}')
+            return
         current: Any = root_data
         prefix: list[str] = []
-        parts = path.split('.')
         for index, part in enumerate(parts):
             prefix.append(part)
             current_path = '.'.join(prefix)

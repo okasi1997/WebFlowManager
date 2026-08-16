@@ -9,23 +9,29 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QDialogButtonBox, QFileDialog, QFrame,
-    QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QPushButton,
+    QInputDialog, QLabel, QLineEdit, QMenu, QPushButton,
     QSplitter, QTreeWidget, QTreeWidgetItem, QWidget,
 )
 
 from core.database import Database
-from core.excel_io import read_records_excel, read_records_excel_with_schema, write_records_excel
+from core.data_templates import (
+    TEMPLATE_INSTANCES_KEY, copy_template_instance, new_template_instance,
+    data_from_public_json, data_to_public_json, migrate_legacy_template_data,
+    normalize_template_schema, schema_templates, sync_template_instance_names, template_by_id,
+    template_instances,
+)
+from core.excel_io import read_records_excel, write_records_excel
 from i18n import tr
-from .structured import default_value, empty_record
+from .structured import default_value, empty_record, record_default_value
 from ..table_view import (
     HierarchicalReorderTreeWidget, bind_structured_copy_paste, bulk_view_update, capture_scroll_position,
     capture_tree_display_state, configure_table_view, order_with_inserted_after,
-    restore_scroll_position, restore_tree_display_state, set_tree_expanded,
+    restore_scroll_position, restore_tree_display_state,
     unique_copy_name,
 )
 from ..ui_loader import (
     confirm_deletion, confirm_import_overwrite, confirm_pending_changes, load_ui_into, localize_dialog_buttons, require,
-    set_tree_toggle_icon, show_file_exported, show_file_imported, show_information, show_warning,
+    show_file_exported, show_file_imported, show_information, show_warning,
 )
 
 
@@ -59,12 +65,14 @@ class DataPage(QWidget):
     PATH_ROLE = Qt.ItemDataRole.UserRole + 1
     SCHEMA_ROLE = Qt.ItemDataRole.UserRole + 2
     LIST_INDEX_ROLE = Qt.ItemDataRole.UserRole + 3
+    TEMPLATE_INSTANCE_ROLE = Qt.ItemDataRole.UserRole + 4
 
     def __init__(self, db: Database) -> None:
         super().__init__()
         self.db = db
         self.current_record: dict[str, Any] | None = None
         self.current_data: dict[str, Any] = {}
+        self._record_switch_in_progress = False
         load_ui_into(self, 'data.ui')
         record_card = require(self, QFrame, 'recordCard')
         value_card = require(self, QFrame, 'valueCard')
@@ -85,13 +93,15 @@ class DataPage(QWidget):
         self.tree.setColumnCount(2)
         self.tree.setHeaderLabels([tr('名称'), tr('概要')])
         configure_table_view(self.tree, reorder=True)
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.tree.setDefaultDropAction(Qt.DropAction.CopyAction)
         self.tree.setContainerTest(lambda _item: False)
         self.tree.orderChanged.connect(self._persist_record_order)
         for column, width in enumerate((150, 200)):
             self.tree.setColumnWidth(column, width)
-        self.tree.currentItemChanged.connect(lambda *_: self._select_record())
+        self.tree.currentItemChanged.connect(self._select_record)
+        self.tree.itemSelectionChanged.connect(self._sync_record_buttons)
         self.tree.itemDoubleClicked.connect(self._record_double_clicked)
         bind_structured_copy_paste(
             self.tree, 'data-record', self._copy_record_payload, self._paste_record_payload,
@@ -106,31 +116,43 @@ class DataPage(QWidget):
         callbacks = {
             'addRecordButton': self.add_record, 'editRecordButton': self.edit_record,
             'copyRecordButton': self.copy_record, 'deleteRecordButton': self.delete_record,
-            'toggleRecordButton': self.toggle_enabled, 'editValueButton': self.edit_value,
-            'addListItemButton': self.add_list_item, 'deleteListItemButton': self.delete_list_item,
+            'editValueButton': self.edit_value, 'addListItemButton': self.add_list_item,
             'saveRecordButton': self.save_record,
         }
         for name, callback in callbacks.items():
             require(self, QPushButton, name).clicked.connect(callback)
+        self.edit_record_button = require(self, QPushButton, 'editRecordButton')
+        self.copy_record_button = require(self, QPushButton, 'copyRecordButton')
+        self.delete_record_button = require(self, QPushButton, 'deleteRecordButton')
 
-        # 今回実行と実行グループは実行管理へ集約し、左側にはデータ自体を
-        # 管理する新規・編集・複製・削除を表示する。
-        require(self, QPushButton, 'toggleRecordButton').hide()
+        self.template_button = require(self, QPushButton, 'addTemplateButton')
+        template_operation_menu = QMenu(self.template_button)
+        self.template_menu = template_operation_menu.addMenu(tr('テンプレート追加'))
+        self.template_menu.aboutToShow.connect(self._rebuild_template_menu)
+        template_operation_menu.addSeparator()
+        self.rename_template_action = template_operation_menu.addAction(
+            tr('名前変更'), self.rename_data_template,
+        )
+        self.copy_template_action = template_operation_menu.addAction(
+            tr('複製'), self.copy_data_template,
+        )
+        self.move_template_up_action = template_operation_menu.addAction(
+            tr('上へ移動'), lambda: self.move_data_template(-1),
+        )
+        self.move_template_down_action = template_operation_menu.addAction(
+            tr('下へ移動'), lambda: self.move_data_template(1),
+        )
+        self.delete_template_action = template_operation_menu.addAction(
+            tr('削除'), self.delete_data_template,
+        )
+        self.template_button.setMenu(template_operation_menu)
+        self.values.currentItemChanged.connect(lambda *_: self._sync_template_buttons())
 
         list_button = require(self, QPushButton, 'addListItemButton')
         list_menu = QMenu(list_button)
         list_menu.addAction('リスト項目を追加', self.add_list_item)
         list_menu.addAction('リスト項目を削除', self.delete_list_item)
         list_button.setMenu(list_menu)
-        require(self, QPushButton, 'deleteListItemButton').hide()
-        self.value_toggle_button = QPushButton()
-        self.value_toggle_button.setObjectName('valueToggleButton')
-        self.value_toggle_button.setFixedWidth(42)
-        self.value_toggle_button.clicked.connect(self._toggle_values)
-        value_toolbar = require(self, QHBoxLayout, 'valueToolbar')
-        value_toolbar.insertWidget(3, self.value_toggle_button)
-        self.values.itemExpanded.connect(lambda *_: self._sync_value_toggle_button())
-        self.values.itemCollapsed.connect(lambda *_: self._sync_value_toggle_button())
         io_button = require(self, QPushButton, 'exportDataJsonButton')
         io_menu = QMenu(io_button)
         io_menu.addAction('JSON を出力', self.export_json)
@@ -138,10 +160,7 @@ class DataPage(QWidget):
         io_menu.addSeparator()
         io_menu.addAction('Excel を出力', self.export_excel)
         io_menu.addAction('Excel を読み込む', self.import_excel)
-        io_menu.addAction('Excel を読み込む（データ構造を含む）', self.import_excel_with_schema)
         io_button.setMenu(io_menu)
-        require(self, QPushButton, 'importDataJsonButton').hide()
-        require(self, QPushButton, 'excelButton').hide()
         self.reload()
 
     def reload(self, select_id: int | None = None) -> None:
@@ -156,22 +175,40 @@ class DataPage(QWidget):
             if record['id'] == select_id:
                 selected = item
         # 行を画面外で作成し、モデル通知と再描画を一回にまとめる。
-        with bulk_view_update(self.tree):
-            self.tree.clear()
-            self.tree.addTopLevelItems(items)
-        if selected is not None:
-            self.tree.setCurrentItem(selected)
-        elif self.tree.topLevelItemCount():
-            self.tree.setCurrentItem(self.tree.topLevelItem(0))
-        else:
-            self.current_record, self.current_data = None, {}
-            self.values.clear()
-            self._sync_value_toggle_button()
+        self._record_switch_in_progress = True
+        try:
+            with bulk_view_update(self.tree):
+                self.tree.clear()
+                self.tree.addTopLevelItems(items)
+            if selected is not None:
+                self.tree.setCurrentItem(selected)
+            elif self.tree.topLevelItemCount():
+                self.tree.setCurrentItem(self.tree.topLevelItem(0))
+        finally:
+            self._record_switch_in_progress = False
+        self._load_selected_record()
         restore_scroll_position(self.tree, scroll)
+        self._sync_record_buttons()
 
     def selected(self) -> dict[str, Any] | None:
         item = self.tree.currentItem()
         return dict(item.data(0, Qt.ItemDataRole.UserRole)) if item else None
+
+    def selected_records(self) -> list[dict[str, Any]]:
+        """Ctrl 選択された実行データを、画面上の並び順で返す。"""
+        selected_items = set(self.tree.selectedItems())
+        return [
+            dict(item.data(0, Qt.ItemDataRole.UserRole))
+            for index in range(self.tree.topLevelItemCount())
+            if (item := self.tree.topLevelItem(index)) in selected_items
+        ]
+
+    def _sync_record_buttons(self) -> None:
+        """複数選択は一括削除だけに使用し、単一行操作を無効化する。"""
+        count = len(self.tree.selectedItems())
+        self.edit_record_button.setEnabled(count == 1)
+        self.copy_record_button.setEnabled(count == 1)
+        self.delete_record_button.setEnabled(count >= 1)
 
     def _persist_record_order(self) -> None:
         """画面上の行順をデータベースへ保存し、移動行の選択を維持する。"""
@@ -186,9 +223,44 @@ class DataPage(QWidget):
         self.db.reorder_data_records(record_ids)
         self.reload(selected_id)
 
-    def _select_record(self) -> None:
+    def _load_selected_record(self) -> None:
         self.current_record = self.selected()
-        self.current_data = copy.deepcopy((self.current_record or {}).get('data', {}))
+        self.current_data = self._record_data(self.current_record)
+        self.render_values()
+
+    def _record_data(self, record: dict[str, Any] | None) -> dict[str, Any]:
+        """旧テンプレート値も画面を開いた時点で新しい実体形式へ変換する。"""
+        data = copy.deepcopy((record or {}).get('data', {}))
+        return migrate_legacy_template_data(self.db.get_data_schema(), data)
+
+    def _select_record(
+            self, current: QTreeWidgetItem | None, previous: QTreeWidgetItem | None,
+    ) -> None:
+        """PCL 切替前に未保存内容を確認し、別 PCL への誤保存を防ぐ。"""
+        if self._record_switch_in_progress:
+            return
+        next_record = (
+            dict(current.data(0, Qt.ItemDataRole.UserRole)) if current is not None else None
+        )
+        current_id = (self.current_record or {}).get('id')
+        next_id = (next_record or {}).get('id')
+        if current_id != next_id and self.has_pending_changes():
+            choice = confirm_pending_changes(
+                self, '実行データに未保存の変更があります。保存しますか？',
+            )
+            if choice == 'save':
+                self._save_current_record_to_db()
+            elif choice == 'discard':
+                pass
+            else:
+                self._record_switch_in_progress = True
+                try:
+                    self.tree.setCurrentItem(previous)
+                finally:
+                    self._record_switch_in_progress = False
+                return
+        self.current_record = next_record
+        self.current_data = self._record_data(next_record)
         self.render_values()
 
     def has_pending_changes(self) -> bool:
@@ -202,25 +274,71 @@ class DataPage(QWidget):
             return True
         choice = confirm_pending_changes(self, '実行データに未保存の変更があります。保存しますか？')
         if choice == 'save':
-            return self.save_record(show_message=False)
+            self._save_current_record_to_db()
+            return True
         if choice == 'discard':
             self.current_data = copy.deepcopy(self.current_record.get('data', {}))
             self.render_values()
             return True
         return False
 
+    def _save_current_record_to_db(self) -> None:
+        """画面の選択状態ではなく、編集中の PCL ID へ確実に保存する。"""
+        if self.current_record is None:
+            return
+        self.db.update_data_record(
+            self.current_record['id'], self.current_record['name'], self.current_data,
+        )
+        self.current_record['data'] = copy.deepcopy(self.current_data)
+        # PCL 切替時は一覧を再読込しないため、一覧項目が保持しているレコードも
+        # 同期する。ここが古いままだと、保存後に元の PCL へ戻った際に保存前の
+        # 値が画面へ再ロードされ、保存に失敗したように見える。
+        for index in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(index)
+            cached = item.data(0, Qt.ItemDataRole.UserRole)
+            if cached and cached.get('id') == self.current_record['id']:
+                refreshed = dict(cached)
+                refreshed['name'] = self.current_record['name']
+                refreshed['data'] = copy.deepcopy(self.current_data)
+                item.setData(0, Qt.ItemDataRole.UserRole, refreshed)
+                break
+
     def render_values(self) -> None:
         display_state = capture_tree_display_state(
             self.values,
             lambda item: tuple(item.data(0, self.PATH_ROLE) or ()),
         )
-        schema = self.db.get_data_schema()
+        schema = normalize_template_schema(self.db.get_data_schema())
         roots: list[QTreeWidgetItem] = []
 
-        def add(parent, node: dict[str, Any], value: Any, path: list[Any], label: str | None = None, list_index: int | None = None) -> None:
+        def populate_template(
+                parent: QTreeWidgetItem, template: dict[str, Any], instance: dict[str, Any],
+                data_path: list[Any], display_path: list[Any],
+        ) -> None:
+            """保存場所に依存せず、テンプレート実体の子フィールドを表示する。"""
+            values = instance.get('data', {}) if isinstance(instance.get('data'), dict) else {}
+            for child in template.get('children', []):
+                add(
+                    parent, child, values.get(child['name'], default_value(child)),
+                    [*data_path, child['name']], present=child['name'] in values,
+                    display_path=[*display_path, child['name']],
+                )
+
+        def add(
+                parent, node: dict[str, Any], value: Any, path: list[Any],
+                label: str | None = None, list_index: int | None = None,
+                *, present: bool = True, display_path: list[Any] | None = None,
+        ) -> None:
             kind = node['type']
-            shown = f'{len(value or [])} {tr("件")}' if kind == 'list' else ('' if kind == 'object' else (tr('はい') if value is True else tr('いいえ') if value is False else str(value or '')))
-            item = QTreeWidgetItem([label or node['name'], kind, shown, '.'.join(map(str, path))])
+            # 任意テンプレートは、現在の PCL に追加されるまでデータ内容へ表示しない。
+            if node.get('data_template', False) and not present:
+                return
+            shown = (
+                f'{len(value or [])} {tr("件")}' if kind == 'list'
+                else ('' if kind == 'object' else (tr('はい') if value is True else tr('いいえ') if value is False else str(value or '')))
+            )
+            visible_path = display_path if display_path is not None else path
+            item = QTreeWidgetItem([label or node['name'], kind, shown, '.'.join(map(str, visible_path))])
             item.setData(0, self.PATH_ROLE, path)
             item.setData(0, self.SCHEMA_ROLE, node)
             item.setData(0, self.LIST_INDEX_ROLE, list_index)
@@ -230,10 +348,38 @@ class DataPage(QWidget):
             if kind == 'object':
                 mapping = value if isinstance(value, dict) else {}
                 for child in node.get('children', []):
-                    add(item, child, mapping.get(child['name'], default_value(child)), path + [child['name']])
+                    child_present = child['name'] in mapping
+                    add(
+                        item, child, mapping.get(child['name'], default_value(child)),
+                        path + [child['name']], present=child_present,
+                        display_path=[*visible_path, child['name']],
+                    )
             elif kind == 'list':
                 for index, entry in enumerate(value if isinstance(value, list) else []):
-                    entry_item = QTreeWidgetItem([f'[{index}]', 'item', '' if node.get('children') else str(entry), '.'.join(map(str, path + [index]))])
+                    template = (
+                        template_by_id(schema, str(entry.get('template_id', '')))
+                        if isinstance(entry, dict) else None
+                    )
+                    if template is not None:
+                        instance_name = str(entry.get('name', '')).strip() or str(template.get('name', ''))
+                        entry_item = QTreeWidgetItem([
+                            instance_name, tr('テンプレート'), '',
+                            '.'.join(map(str, [*visible_path, instance_name])),
+                        ])
+                        entry_item.setData(0, self.PATH_ROLE, path + [index])
+                        entry_item.setData(0, self.SCHEMA_ROLE, template)
+                        entry_item.setData(0, self.LIST_INDEX_ROLE, index)
+                        entry_item.setData(
+                            0, self.TEMPLATE_INSTANCE_ROLE,
+                            str(entry.get('instance_id', '')),
+                        )
+                        item.addChild(entry_item)
+                        populate_template(
+                            entry_item, template, entry, path + [index, 'data'],
+                            [*visible_path, instance_name],
+                        )
+                        continue
+                    entry_item = QTreeWidgetItem([f'[{index}]', 'item', '' if node.get('children') else str(entry), '.'.join(map(str, [*visible_path, index]))])
                     entry_item.setData(0, self.PATH_ROLE, path + [index])
                     entry_item.setData(0, self.SCHEMA_ROLE, node)
                     entry_item.setData(0, self.LIST_INDEX_ROLE, index)
@@ -241,10 +387,35 @@ class DataPage(QWidget):
                     item.addChild(entry_item)
                     mapping = entry if isinstance(entry, dict) else {}
                     for child in node.get('children', []):
-                        add(entry_item, child, mapping.get(child['name'], default_value(child)), path + [index, child['name']])
+                        add(
+                            entry_item, child, mapping.get(child['name'], default_value(child)),
+                            path + [index, child['name']],
+                            display_path=[*visible_path, index, child['name']],
+                        )
 
         for child in schema.get('children', []):
-            add(roots, child, self.current_data.get(child['name'], default_value(child)), [child['name']])
+            child_present = child['name'] in self.current_data
+            add(
+                roots, child, self.current_data.get(child['name'], default_value(child)),
+                [child['name']], present=child_present,
+            )
+        for instance_index, instance in enumerate(template_instances(self.current_data)):
+            template = template_by_id(schema, str(instance.get('template_id', '')))
+            if template is None:
+                continue
+            instance_path = [TEMPLATE_INSTANCES_KEY, instance_index, 'data']
+            instance_item = QTreeWidgetItem([
+                str(instance.get('name', '')).strip() or str(template.get('name', '')),
+                tr('テンプレート'), '', '',
+            ])
+            instance_item.setData(0, self.PATH_ROLE, [TEMPLATE_INSTANCES_KEY, instance_index])
+            instance_item.setData(0, self.SCHEMA_ROLE, template)
+            instance_item.setData(0, self.TEMPLATE_INSTANCE_ROLE, str(instance.get('instance_id', '')))
+            roots.append(instance_item)
+            populate_template(
+                instance_item, template, instance, instance_path,
+                [str(instance.get('name', ''))],
+            )
         with bulk_view_update(self.values):
             self.values.clear()
             self.values.addTopLevelItems(roots)
@@ -252,7 +423,130 @@ class DataPage(QWidget):
                 self.values, display_state,
                 lambda item: tuple(item.data(0, self.PATH_ROLE) or ()),
             )
-        self._sync_value_toggle_button()
+        self._sync_template_buttons()
+
+    def _rebuild_template_menu(self) -> None:
+        """同じ定義を複数回追加できるテンプレートメニューを再構築する。"""
+        self.template_menu.clear()
+        templates = schema_templates(normalize_template_schema(self.db.get_data_schema()))
+        for template in templates:
+            action = self.template_menu.addAction(str(template.get('name', '')))
+            action.triggered.connect(
+                lambda _checked=False, item=template: self.add_data_template(item)
+            )
+        if not templates:
+            action = self.template_menu.addAction(tr('追加できる構造がありません'))
+            action.setEnabled(False)
+
+    def add_data_template(self, template: dict[str, Any]) -> None:
+        """選択した定義から、現在の PCL に新しいテンプレート実体を追加する。"""
+        if self.current_record is None:
+            show_information(self, tr('テンプレート追加'), tr('実行データを選択してください。'))
+            return
+        selected_list = self._selected_list()
+        if selected_list is not None:
+            instances, _node, selected_index = selected_list
+            insert_at = len(instances) if selected_index is None else selected_index + 1
+        else:
+            instances = self.current_data.setdefault(TEMPLATE_INSTANCES_KEY, [])
+            if not isinstance(instances, list):
+                instances = []
+                self.current_data[TEMPLATE_INSTANCES_KEY] = instances
+            insert_at = len(instances)
+        created = new_template_instance(template, instances)
+        instances.insert(insert_at, created)
+        self.render_values()
+        self._select_template_instance(str(created['instance_id']))
+
+    def _selected_template(self) -> tuple[list[Any], int, dict[str, Any]] | None:
+        """選択行を包含するテンプレート実体と、その格納配列を返す。"""
+        item = self.values.currentItem()
+        while item is not None and not item.data(0, self.TEMPLATE_INSTANCE_ROLE):
+            item = item.parent()
+        if item is None:
+            return None
+        path = item.data(0, self.PATH_ROLE)
+        if not isinstance(path, list) or not path or not isinstance(path[-1], int):
+            return None
+        container, index = self._resolve(path)
+        if isinstance(container, list) and 0 <= index < len(container):
+            instance = container[index]
+            if isinstance(instance, dict):
+                return container, index, instance
+        return None
+
+    def _sync_template_buttons(self) -> None:
+        self.template_button.setEnabled(self.current_record is not None)
+        selected = self._selected_template()
+        enabled = selected is not None
+        self.delete_template_action.setEnabled(enabled)
+        self.rename_template_action.setEnabled(enabled)
+        self.copy_template_action.setEnabled(enabled)
+        index = selected[1] if selected else -1
+        count = len(selected[0]) if selected else 0
+        self.move_template_up_action.setEnabled(enabled and index > 0)
+        self.move_template_down_action.setEnabled(enabled and index + 1 < count)
+
+    def delete_data_template(self) -> None:
+        """現在の PCL だけから、選択した任意構造を取り除く。"""
+        selected = self._selected_template()
+        if selected is None:
+            return
+        instances, index, instance = selected
+        if not confirm_deletion(self, f'{instance.get("name", "")}{tr(" を削除しますか？")}'):
+            return
+        instances.pop(index)
+        self.render_values()
+
+    def rename_data_template(self) -> None:
+        selected = self._selected_template()
+        if selected is None:
+            return
+        _instances, _index, instance = selected
+        name, ok = QInputDialog.getText(
+            self, tr('テンプレート名変更'), tr('テンプレート名'),
+            text=str(instance.get('name', '')),
+        )
+        name = name.strip()
+        if ok and name:
+            instance['name'] = name
+            self.render_values()
+            self._select_template_instance(str(instance.get('instance_id', '')))
+
+    def copy_data_template(self) -> None:
+        selected = self._selected_template()
+        if selected is None:
+            return
+        instances, index, instance = selected
+        copied = copy_template_instance(instance, instances)
+        instances.insert(index + 1, copied)
+        self.render_values()
+        self._select_template_instance(str(copied['instance_id']))
+
+    def move_data_template(self, direction: int) -> None:
+        selected = self._selected_template()
+        if selected is None:
+            return
+        instances, index, instance = selected
+        destination = index + direction
+        if not 0 <= destination < len(instances):
+            return
+        instances[index], instances[destination] = instances[destination], instances[index]
+        self.render_values()
+        self._select_template_instance(str(instance.get('instance_id', '')))
+
+    def _select_template_instance(self, instance_id: str) -> None:
+        """再描画後も操作対象のテンプレート実体を選択する。"""
+        stack = [
+            self.values.topLevelItem(index)
+            for index in reversed(range(self.values.topLevelItemCount()))
+        ]
+        while stack:
+            item = stack.pop()
+            if str(item.data(0, self.TEMPLATE_INSTANCE_ROLE) or '') == instance_id:
+                self.values.setCurrentItem(item)
+                return
+            stack.extend(item.child(index) for index in reversed(range(item.childCount())))
 
     @staticmethod
     def _editable_value_kind(item: QTreeWidgetItem) -> str | None:
@@ -276,45 +570,49 @@ class DataPage(QWidget):
         item.setForeground(2, QBrush(QColor('#0b6fae')))
         item.setToolTip(2, tr('ダブルクリックで値を編集'))
 
-    def _expandable_value_items(self) -> list[QTreeWidgetItem]:
-        """データ内容ツリーの展開可能な項目を表示順で取得する。"""
-        items: list[QTreeWidgetItem] = []
-        stack = [
-            self.values.topLevelItem(index)
-            for index in reversed(range(self.values.topLevelItemCount()))
-        ]
-        while stack:
-            item = stack.pop()
-            if item.childCount():
-                items.append(item)
-            stack.extend(item.child(index) for index in reversed(range(item.childCount())))
-        return items
+    _MISSING_VALUE = object()
 
-    def _sync_value_toggle_button(self) -> None:
-        """展開状態に合わせて、次に行う一括操作をボタンへ表示する。"""
-        items = self._expandable_value_items()
-        all_expanded = bool(items) and all(item.isExpanded() for item in items)
-        # 展開対象がない場合は、機能しない空のボタンをツールバーに残さない。
-        self.value_toggle_button.setVisible(bool(items))
-        self.value_toggle_button.setEnabled(bool(items))
-        set_tree_toggle_icon(self.value_toggle_button, not all_expanded)
-
-    def _toggle_values(self) -> None:
-        """データ内容の全項目を現在と反対の状態へ切り替える。"""
-        items = self._expandable_value_items()
-        if not items:
-            return
-        if all(item.isExpanded() for item in items):
-            set_tree_expanded(self.values, False)
-        else:
-            set_tree_expanded(self.values, True)
-        self._sync_value_toggle_button()
-
-    def _resolve(self, path: list[Any]) -> tuple[Any, Any]:
+    def _resolve(
+            self, path: list[Any], leaf_default: Any=_MISSING_VALUE,
+    ) -> tuple[Any, Any]:
+        """表示上だけ補完されている構造も、操作時に実データへ安全に作成する。"""
+        if not path:
+            raise ValueError('data path is empty')
         target: Any = self.current_data
-        for key in path[:-1]:
-            target = target[key]
-        return target, path[-1]
+        for index, key in enumerate(path[:-1]):
+            next_key = path[index + 1]
+            expected_type = list if isinstance(next_key, int) else dict
+            if isinstance(target, dict):
+                child = target.get(key)
+                if not isinstance(child, expected_type):
+                    child = expected_type()
+                    target[key] = child
+                target = child
+            elif isinstance(target, list) and isinstance(key, int):
+                while len(target) <= key:
+                    target.append(expected_type())
+                child = target[key]
+                if not isinstance(child, expected_type):
+                    child = expected_type()
+                    target[key] = child
+                target = child
+            else:
+                raise TypeError(f'invalid data path: {path!r}')
+
+        leaf_key = path[-1]
+        if leaf_default is not self._MISSING_VALUE:
+            if isinstance(target, dict):
+                current = target.get(leaf_key, self._MISSING_VALUE)
+                wrong_container = (
+                    isinstance(leaf_default, (dict, list))
+                    and not isinstance(current, type(leaf_default))
+                )
+                if current is self._MISSING_VALUE or wrong_container:
+                    target[leaf_key] = copy.deepcopy(leaf_default)
+            elif isinstance(target, list) and isinstance(leaf_key, int):
+                while len(target) <= leaf_key:
+                    target.append(copy.deepcopy(leaf_default))
+        return target, leaf_key
 
     def edit_value(self) -> None:
         item = self.values.currentItem()
@@ -324,7 +622,7 @@ class DataPage(QWidget):
         kind = self._editable_value_kind(item)
         if not node or kind is None:
             return
-        parent, key = self._resolve(path)
+        parent, key = self._resolve(path, default_value(node))
         current = parent[key]
         if kind == 'boolean':
             text, ok = QInputDialog.getItem(self, tr('値を編集'), item.text(0), [tr('はい'), tr('いいえ')], 0 if current else 1, False)
@@ -345,7 +643,7 @@ class DataPage(QWidget):
                 selected_index = int(item.data(0, self.LIST_INDEX_ROLE))
             node = item.data(0, self.SCHEMA_ROLE)
             if node and node['type'] == 'list' and item.text(1) == 'list':
-                parent, key = self._resolve(item.data(0, self.PATH_ROLE))
+                parent, key = self._resolve(item.data(0, self.PATH_ROLE), [])
                 return parent[key], node, selected_index
             item = item.parent()
         return None
@@ -354,7 +652,11 @@ class DataPage(QWidget):
         selected = self._selected_list()
         if selected:
             values, node, selected_index = selected
-            value = ({child['name']: default_value(child) for child in node.get('children', [])}
+            value = ({
+                child['name']: record_default_value(child)
+                for child in node.get('children', [])
+                if not child.get('data_template', False)
+            }
                      if node.get('children') else '')
             insert_at = len(values) if selected_index is None else selected_index + 1
             values.insert(insert_at, value)
@@ -399,7 +701,7 @@ class DataPage(QWidget):
 
     def _copy_record_payload(self) -> dict[str, Any] | None:
         """選択中の実行データを、実行結果を除いてコピーする。"""
-        return self.selected()
+        return self.selected() if len(self.tree.selectedItems()) == 1 else None
 
     def _paste_record_payload(self, record: dict[str, Any]) -> None:
         selected = self.selected() if self.tree.selectedItems() else None
@@ -426,10 +728,19 @@ class DataPage(QWidget):
         self.reload(record_id)
 
     def delete_record(self) -> None:
-        record = self.selected()
-        if record and confirm_deletion(self, f'{record["name"]} を削除しますか？'):
-            self.db.delete_data_record(0, record['id'])
+        records = self.selected_records()
+        if not records:
+            return
+        message = (
+            f'{records[0]["name"]} を削除しますか？'
+            if len(records) == 1
+            else f'選択した {len(records)} 件の実行データを削除しますか？'
+        )
+        if confirm_deletion(self, message):
+            self.db.delete_data_records(0, [record['id'] for record in records])
             self.reload()
+            self.tree.clearSelection()
+            self.tree.setCurrentItem(None)
 
     def toggle_enabled(self) -> None:
         record = self.selected()
@@ -441,9 +752,9 @@ class DataPage(QWidget):
         self.edit_record()
 
     def save_record(self, _checked: bool = False, *, show_message: bool = True) -> bool:
-        record = self.selected()
+        record = self.current_record
         if record:
-            self.db.update_data_record(record['id'], record['name'], self.current_data)
+            self._save_current_record_to_db()
             self.reload(record['id'])
             if show_message:
                 show_information(self, '保存', '実行データを保存しました。')
@@ -455,7 +766,18 @@ class DataPage(QWidget):
         if not path:
             return
         try:
-            Path(path).write_text(json.dumps(self.db.list_data_records(), ensure_ascii=False, indent=2), encoding='utf-8')
+            schema = self.db.get_data_schema()
+            records = [
+                {
+                    'name': record['name'],
+                    'summary': str(record.get('summary', '')),
+                    'enabled': bool(record.get('enabled', True)),
+                    'execution_group': str(record.get('execution_group', '1')),
+                    'data': data_to_public_json(record.get('data', {}), schema),
+                }
+                for record in self.db.list_data_records()
+            ]
+            Path(path).write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding='utf-8')
         except OSError as error:
             show_warning(self, 'JSON 出力', str(error))
             return
@@ -471,6 +793,11 @@ class DataPage(QWidget):
             records = json.loads(Path(path).read_text(encoding='utf-8'))
             if not isinstance(records, list):
                 raise ValueError('JSON の最上位は配列である必要があります。')
+            schema = self.db.get_data_schema()
+            for record in records:
+                if isinstance(record, dict) and isinstance(record.get('data'), dict):
+                    record['data'] = data_from_public_json(record['data'], schema)
+                    sync_template_instance_names(record['data'], schema)
             self.db.replace_data_records(records)
             self.reload()
         except (OSError, ValueError, json.JSONDecodeError, KeyError) as error:
@@ -497,27 +824,6 @@ class DataPage(QWidget):
             return
         try:
             self.db.replace_data_records(read_records_excel(path, self.db.get_data_schema()))
-            self.reload()
-        except Exception as error:
-            show_warning(self, 'Excel 読込', str(error))
-            return
-        show_file_imported(self, path)
-
-    def import_excel_with_schema(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, tr('Excel を読み込む（データ構造を含む）'), '', 'Excel (*.xlsx)',
-        )
-        if not path:
-            return
-        has_existing = bool(
-            self.db.list_data_records() or self.db.get_data_schema().get('children')
-        )
-        if not confirm_import_overwrite(self, has_existing, 'データとデータ構造'):
-            return
-        try:
-            schema, records = read_records_excel_with_schema(path)
-            self.db.save_data_schema(0, schema)
-            self.db.replace_data_records(records)
             self.reload()
         except Exception as error:
             show_warning(self, 'Excel 読込', str(error))

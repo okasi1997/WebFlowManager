@@ -137,10 +137,8 @@
                     </spacer>
                   </item>
                   <item>
-                    <widget class="QPushButton" name="toggleRecordButton">
-                      <property name="text">
-                        <string>実行／スキップ</string>
-                      </property>
+                    <widget class="QPushButton" name="exportDataJsonButton">
+                      <property name="text"><string>データ入出力</string></property>
                     </widget>
                   </item>
                 </layout>
@@ -194,25 +192,18 @@
                   <item>
                     <widget class="QPushButton" name="editValueButton">
                       <property name="text">
-                        <string>値を編集</string>
+                        <string>編集</string>
                       </property>
                     </widget>
                   </item>
                   <item>
                     <widget class="QPushButton" name="addListItemButton">
-                      <property name="text">
-                        <string>リスト操作</string>
-                      </property>
+                      <property name="text"><string>リスト操作</string></property>
                     </widget>
                   </item>
                   <item>
-                    <widget class="QPushButton" name="deleteListItemButton">
-                      <property name="danger" stdset="0">
-                        <bool>true</bool>
-                      </property>
-                      <property name="text">
-                        <string>リスト項目削除</string>
-                      </property>
+                    <widget class="QPushButton" name="addTemplateButton">
+                      <property name="text"><string>テンプレート操作</string></property>
                     </widget>
                   </item>
                   <item>
@@ -227,27 +218,6 @@
                         </size>
                       </property>
                     </spacer>
-                  </item>
-                  <item>
-                    <widget class="QPushButton" name="exportDataJsonButton">
-                      <property name="text">
-                        <string>データ入出力</string>
-                      </property>
-                    </widget>
-                  </item>
-                  <item>
-                    <widget class="QPushButton" name="importDataJsonButton">
-                      <property name="text">
-                        <string>JSON 読込</string>
-                      </property>
-                    </widget>
-                  </item>
-                  <item>
-                    <widget class="QPushButton" name="excelButton">
-                      <property name="text">
-                        <string>Excel 入出力</string>
-                      </property>
-                    </widget>
                   </item>
                   <item>
                     <widget class="QPushButton" name="saveRecordButton">

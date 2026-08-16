@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import copy
 import json
+import uuid
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-    QLineEdit, QMenu, QPushButton, QTreeWidget, QTreeWidgetItem, QWidget,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
+    QHeaderView, QInputDialog, QLineEdit, QMenu, QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QWidget,
 )
 
 from core.database import Database
+from core.data_templates import (
+    migrate_legacy_template_data, normalize_template_schema, schema_templates,
+    sync_template_instance_names, validate_unique_template_names,
+)
 from i18n import tr
 from ..table_view import (
     HierarchicalReorderTreeWidget, bind_structured_copy_paste, configure_row_move_tooltips,
@@ -26,6 +31,14 @@ from ..ui_loader import (
 TYPES = ('text', 'number', 'boolean', 'object', 'list')
 SCHEMA_INDEX_PATH_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 SCHEMA_NODE_KEY_ROLE = int(Qt.ItemDataRole.UserRole) + 2
+STRUCTURE_KIND_ROLE = int(Qt.ItemDataRole.UserRole) + 3
+
+
+def _walk_schema_nodes(node: dict[str, Any]):
+    """構造配下の全ノードを一度ずつ列挙する。"""
+    for child in node.get('children', []):
+        yield child
+        yield from _walk_schema_nodes(child)
 
 
 def default_value(node: dict[str, Any]) -> Any:
@@ -42,14 +55,35 @@ def default_value(node: dict[str, Any]) -> Any:
 
 
 def empty_record(schema: dict[str, Any]) -> dict[str, Any]:
-    return {child['name']: default_value(child) for child in schema.get('children', [])}
+    """新規 PCL には、任意追加のテンプレートを含めない。"""
+    return {
+        child['name']: record_default_value(child)
+        for child in schema.get('children', [])
+        if not child.get('data_template', False)
+    }
 
 
-def validate_schema(node: Any, location: str = 'Data') -> None:
+def record_default_value(node: dict[str, Any]) -> Any:
+    """通常構造だけを補い、任意テンプレートは未追加のまま維持する。"""
+    if node['type'] == 'object':
+        return {
+            child['name']: record_default_value(child)
+            for child in node.get('children', [])
+            if not child.get('data_template', False)
+        }
+    return default_value(node)
+
+
+def validate_schema(node: Any, location: str = 'Data', *, split_ancestor: bool = False) -> None:
     if not isinstance(node, dict) or not str(node.get('name', '')).strip():
         raise ValueError(f'{location}: フィールド名を入力してください')
     if node.get('type') not in TYPES:
         raise ValueError(f'{location}: 未対応の型です: {node.get("type")}')
+    split_here = bool(node.get('excel_sheet', False))
+    if split_here and node.get('type') != 'object':
+        raise ValueError(f'{location}{tr(": Excel の別シート出力は object だけに設定できます。")}')
+    if split_here and split_ancestor:
+        raise ValueError(f'{location}{tr(": 別シート出力の配下では、別のシートを設定できません。")}')
     children = node.get('children', [])
     if node['type'] in ('object', 'list'):
         if not isinstance(children, list):
@@ -60,7 +94,10 @@ def validate_schema(node: Any, location: str = 'Data') -> None:
             if name in names:
                 raise ValueError(f'{location}: フィールド名が重複しています: {name}')
             names.add(name)
-            validate_schema(child, f'{location}.{name}')
+            validate_schema(
+                child, f'{location}.{name}',
+                split_ancestor=split_ancestor or split_here,
+            )
     elif children:
         raise ValueError(f'{location}: 基本型には子フィールドを設定できません')
 
@@ -75,6 +112,13 @@ class FieldDialog(QDialog):
         self.kind = require(self, QComboBox, 'typeCombo')
         self.kind.addItems(TYPES)
         self.kind.setCurrentText(str((node or {}).get('type', 'text')))
+        self.excel_sheet = require(self, QCheckBox, 'excelSheetCheck')
+        self.excel_sheet.setChecked(bool((node or {}).get('excel_sheet', False)))
+        self.excel_skip_empty = require(self, QCheckBox, 'excelSkipEmptyCheck')
+        self.excel_skip_empty.setChecked(bool((node or {}).get('excel_skip_empty', True)))
+        self.kind.currentTextChanged.connect(self._sync_excel_sheet_enabled)
+        self.excel_sheet.toggled.connect(self._sync_excel_sheet_enabled)
+        self._sync_excel_sheet_enabled()
         buttons = require(self, QDialogButtonBox, 'buttonBox')
         localize_dialog_buttons(buttons)
         buttons.accepted.connect(self.accept)
@@ -84,7 +128,18 @@ class FieldDialog(QDialog):
         node: dict[str, Any] = {'name': self.name.text().strip(), 'type': self.kind.currentText()}
         if node['type'] in ('object', 'list'):
             node['children'] = []
+        if node['type'] == 'object' and self.excel_sheet.isChecked():
+            node['excel_sheet'] = True
+            node['excel_skip_empty'] = self.excel_skip_empty.isChecked()
         return node
+
+    def _sync_excel_sheet_enabled(self) -> None:
+        """Excel の別シート出力は、値をまとめられる object だけで設定可能にする。"""
+        enabled = self.kind.currentText() == 'object'
+        self.excel_sheet.setEnabled(enabled)
+        self.excel_skip_empty.setEnabled(enabled and self.excel_sheet.isChecked())
+        if not enabled:
+            self.excel_sheet.setChecked(False)
 
 
 class SchemaPage(QWidget):
@@ -92,7 +147,55 @@ class SchemaPage(QWidget):
         super().__init__()
         self.db = db
         self.schema: dict[str, Any] = {}
+        self._schema_expanded_by_structure: dict[str, set[int]] = {}
         load_ui_into(self, 'schema.ui')
+        manager_placeholder = require(self, QTreeWidget, 'structureManagerTree')
+        manager_layout = manager_placeholder.parentWidget().layout()
+        self.structure_manager = HierarchicalReorderTreeWidget(manager_placeholder.parentWidget())
+        self.structure_manager.setObjectName('structureManagerTree')
+        manager_layout.replaceWidget(manager_placeholder, self.structure_manager)
+        manager_placeholder.setParent(None)
+        manager_placeholder.deleteLater()
+        self.structure_manager.setColumnCount(1)
+        self.structure_manager.setHeaderHidden(True)
+        configure_table_view(self.structure_manager, reorder=True)
+        # 固定行だけが縞色に見えないよう、左側は文字の太さと階層だけで区別する。
+        self.structure_manager.setAlternatingRowColors(False)
+        self.structure_manager.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.structure_manager.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.structure_manager.setIndentation(18)
+        self.structure_manager.setDefaultDropAction(Qt.DropAction.CopyAction)
+        self.structure_manager.setContainerTest(
+            lambda item: item.data(0, STRUCTURE_KIND_ROLE) == 'templates'
+        )
+        self.structure_manager.setMoveTest(
+            lambda source, parent: (
+                source.data(0, STRUCTURE_KIND_ROLE) == 'template'
+                and parent.data(0, STRUCTURE_KIND_ROLE) == 'templates'
+            )
+        )
+        self.structure_manager.orderChanged.connect(self._persist_template_order)
+        self.structure_manager.currentItemChanged.connect(self._select_structure)
+        self.structure_manager.itemDoubleClicked.connect(self._structure_double_clicked)
+        bind_structured_copy_paste(
+            self.structure_manager, 'data-template-definition',
+            self._copy_template_definition_payload,
+            self._paste_template_definition_payload,
+        )
+        template_button = require(self, QPushButton, 'addTemplateDefinitionButton')
+        template_menu = QMenu(template_button)
+        template_menu.addAction(tr('新規'), self.add_template_definition)
+        self.delete_template_definition_action = template_menu.addAction(
+            tr('削除'), self.delete_template_definition,
+        )
+        template_button.setMenu(template_menu)
+        require(self, QPushButton, 'renameTemplateDefinitionButton').clicked.connect(self.rename_template_definition)
+        self.rename_template_definition_button = require(self, QPushButton, 'renameTemplateDefinitionButton')
+        splitter = require(self, QSplitter, 'schemaSplitter')
+        splitter.setHandleWidth(8)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([480, 1340])
         designer_tree = require(self, QTreeWidget, 'schemaTree')
         tree_layout = designer_tree.parentWidget().layout()
         self.tree = HierarchicalReorderTreeWidget(designer_tree.parentWidget())
@@ -105,8 +208,10 @@ class SchemaPage(QWidget):
         # 実データの移動は共通ツリーが CopyAction を受けて安全に行うため、
         # Qt 標準の MoveAction 限定モードを解除し、ドラッグ表示も有効にする。
         self.tree.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
-        self.tree.setColumnCount(3)
-        self.tree.setHeaderLabels([tr('フィールド名'), tr('種別'), tr('イベントリンクパス')])
+        self.tree.setColumnCount(4)
+        self.tree.setHeaderLabels([
+            tr('フィールド名'), tr('種別'), tr('イベントリンクパス'), 'Excel 出力',
+        ])
         self.tree.setDefaultDropAction(Qt.DropAction.CopyAction)
         self.tree.setContainerTest(
             lambda item: str((item.data(0, Qt.ItemDataRole.UserRole) or {}).get('type', '')) in ('object', 'list')
@@ -117,7 +222,7 @@ class SchemaPage(QWidget):
                 for index in range(parent.childCount())
             )
         )
-        for column, width in enumerate((240, 120, 360)):
+        for column, width in enumerate((220, 110, 340, 110)):
             self.tree.setColumnWidth(column, width)
         self._schema_reorder_pending = False
         self._reorder_selected_key: int | None = None
@@ -146,21 +251,224 @@ class SchemaPage(QWidget):
         add_menu.addAction('フィールド追加', self.add_field)
         add_menu.addAction('子フィールド追加', self.add_child)
         add_button.setMenu(add_menu)
-        require(self, QPushButton, 'addChildButton').hide()
         export_button = require(self, QPushButton, 'exportSchemaButton')
-        import_button = require(self, QPushButton, 'importSchemaButton')
         save = require(self, QPushButton, 'saveSchemaButton')
         io_menu = QMenu(export_button)
         io_menu.addAction('JSON を出力', self.export_json)
         io_menu.addAction('JSON を読み込む', self.import_json)
         export_button.setMenu(io_menu)
-        import_button.hide()
         save.clicked.connect(self.save)
+        self.add_field_button = add_button
+        self.edit_field_button = require(self, QPushButton, 'editFieldButton')
+        self.delete_field_button = require(self, QPushButton, 'deleteFieldButton')
+        self.move_field_up_button = require(self, QPushButton, 'moveFieldUpButton')
+        self.move_field_down_button = require(self, QPushButton, 'moveFieldDownButton')
         self.reload()
 
     def reload(self) -> None:
-        self.schema = copy.deepcopy(self.db.get_data_schema())
+        self.schema = normalize_template_schema(self.db.get_data_schema())
         self._saved_schema = copy.deepcopy(self.schema)
+        self._render_structure_manager()
+        self.render()
+
+    def _render_structure_manager(self, selected_template_id: str | None = None) -> None:
+        """共通構造とテンプレート定義を左側の管理ツリーへ表示する。"""
+        current = self.structure_manager.currentItem()
+        if current is not None and hasattr(self, 'tree'):
+            self._capture_schema_expansion(self._structure_key(current))
+        if selected_template_id is None and current is not None:
+            selected_template_id = current.data(0, Qt.ItemDataRole.UserRole)
+        previous_blocked = self.structure_manager.blockSignals(True)
+        self.structure_manager.clear()
+        common = QTreeWidgetItem([tr('共通')])
+        common.setData(0, Qt.ItemDataRole.UserRole, '')
+        common.setData(0, STRUCTURE_KIND_ROLE, 'common')
+        templates_root = QTreeWidgetItem([tr('テンプレート')])
+        templates_root.setData(0, Qt.ItemDataRole.UserRole, None)
+        templates_root.setData(0, STRUCTURE_KIND_ROLE, 'templates')
+        for fixed_item in (common, templates_root):
+            font = fixed_item.font(0)
+            font.setBold(True)
+            fixed_item.setFont(0, font)
+            fixed_item.setFlags(
+                (fixed_item.flags() | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+                & ~Qt.ItemFlag.ItemIsDragEnabled
+            )
+        templates_root.setFlags(templates_root.flags() | Qt.ItemFlag.ItemIsDropEnabled)
+        self.structure_manager.addTopLevelItems([common, templates_root])
+        selected = common
+        for template in schema_templates(self.schema):
+            item = QTreeWidgetItem([str(template.get('name', ''))])
+            template_id = str(template.get('template_id', ''))
+            item.setData(0, Qt.ItemDataRole.UserRole, template_id)
+            item.setData(0, STRUCTURE_KIND_ROLE, 'template')
+            item.setFlags(
+                (item.flags() | Qt.ItemFlag.ItemIsDragEnabled)
+                & ~Qt.ItemFlag.ItemIsDropEnabled
+            )
+            templates_root.addChild(item)
+            if template_id == selected_template_id:
+                selected = item
+        templates_root.setExpanded(True)
+        self.structure_manager.setCurrentItem(selected)
+        self.structure_manager.blockSignals(previous_blocked)
+        self._select_structure(selected, None)
+        self._sync_template_definition_buttons()
+
+    def _persist_template_order(self) -> None:
+        """左側のドラッグ結果をテンプレート定義の保存順へ反映する。"""
+        root = self.structure_manager.topLevelItem(1)
+        if root is None:
+            return
+        by_id = {
+            str(template.get('template_id', '')): template
+            for template in schema_templates(self.schema)
+        }
+        ordered = [
+            by_id[str(root.child(index).data(0, Qt.ItemDataRole.UserRole))]
+            for index in range(root.childCount())
+            if str(root.child(index).data(0, Qt.ItemDataRole.UserRole)) in by_id
+        ]
+        if len(ordered) == len(by_id):
+            self.schema['templates'] = ordered
+
+    def _active_template(self) -> dict[str, Any] | None:
+        """左側で選択中のテンプレート定義を返す。"""
+        item = self.structure_manager.currentItem()
+        template_id = item.data(0, Qt.ItemDataRole.UserRole) if item is not None else ''
+        if not template_id:
+            return None
+        return next(
+            (template for template in schema_templates(self.schema)
+             if str(template.get('template_id', '')) == str(template_id)),
+            None,
+        )
+
+    def _active_root(self) -> dict[str, Any] | None:
+        """右側フィールドツリーが現在編集している構造を返す。"""
+        item = self.structure_manager.currentItem()
+        kind = item.data(0, STRUCTURE_KIND_ROLE) if item is not None else None
+        if kind == 'common':
+            return self.schema
+        if kind == 'template':
+            return self._active_template()
+        return None
+
+    @staticmethod
+    def _structure_key(item: QTreeWidgetItem | None) -> str:
+        """右側の表示状態を構造ごとに保持するためのキーを返す。"""
+        if item is None:
+            return 'none'
+        kind = str(item.data(0, STRUCTURE_KIND_ROLE) or 'none')
+        return f'{kind}:{item.data(0, Qt.ItemDataRole.UserRole) or ""}'
+
+    def _capture_schema_expansion(self, key: str) -> None:
+        self._schema_expanded_by_structure[key] = {
+            int(item.data(0, SCHEMA_NODE_KEY_ROLE))
+            for item in self._all_items()
+            if item.isExpanded() and item.data(0, SCHEMA_NODE_KEY_ROLE) is not None
+        }
+
+    def _select_structure(
+            self, current: QTreeWidgetItem | None, previous: QTreeWidgetItem | None,
+    ) -> None:
+        self._capture_schema_expansion(self._structure_key(previous))
+        self.render(capture_current=False)
+        self._sync_template_definition_buttons()
+
+    def _sync_template_definition_buttons(self) -> None:
+        selected = self._active_template() is not None
+        self.rename_template_definition_button.setEnabled(selected)
+        self.delete_template_definition_action.setEnabled(selected)
+        has_structure = self._active_root() is not None
+        self.add_field_button.setEnabled(has_structure)
+        self.edit_field_button.setEnabled(has_structure)
+        self.delete_field_button.setEnabled(has_structure)
+        self.move_field_up_button.setEnabled(has_structure)
+        self.move_field_down_button.setEnabled(has_structure)
+        self.toggle_all_button.setEnabled(has_structure and bool(self._expandable_items()))
+
+    def _structure_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
+        """テンプレート定義行だけ、ダブルクリックで名称変更を開始する。"""
+        if item.data(0, STRUCTURE_KIND_ROLE) != 'template':
+            return
+        self.structure_manager.setCurrentItem(item)
+        self.rename_template_definition()
+
+    def _copy_template_definition_payload(self) -> dict[str, Any] | None:
+        """選択中のテンプレート定義を Ctrl+C の対象として返す。"""
+        template = self._active_template()
+        return copy.deepcopy(template) if template is not None else None
+
+    def _paste_template_definition_payload(self, source: dict[str, Any]) -> None:
+        """Ctrl+V でテンプレート定義を選択行の直後へ追加する。"""
+        templates = self.schema.setdefault('templates', [])
+        copied = copy.deepcopy(source)
+        copied['template_id'] = uuid.uuid4().hex
+        copied['name'] = unique_copy_name(
+            str(copied.get('name', '')),
+            (str(item.get('name', '')) for item in templates),
+        )
+        selected = self._active_template()
+        insert_at = templates.index(selected) + 1 if selected in templates else len(templates)
+        templates.insert(insert_at, copied)
+        self._render_structure_manager(str(copied['template_id']))
+        self.render()
+
+    def add_template_definition(self) -> None:
+        """空のテンプレート定義を追加し、右側でフィールド編集を開始できるようにする。"""
+        name, ok = QInputDialog.getText(self, tr('テンプレート追加'), tr('テンプレート名'))
+        name = name.strip()
+        if not ok or not name:
+            return
+        if any(str(item.get('name', '')).strip() == name for item in schema_templates(self.schema)):
+            show_warning(self, tr('テンプレート追加'), tr('同じ名前のテンプレートが存在します。'))
+            return
+        template = {'template_id': uuid.uuid4().hex, 'name': name, 'type': 'object', 'children': []}
+        self.schema.setdefault('templates', []).append(template)
+        self._render_structure_manager(template['template_id'])
+        self.render()
+
+    def rename_template_definition(self) -> None:
+        template = self._active_template()
+        if template is None:
+            return
+        name, ok = QInputDialog.getText(
+            self, tr('テンプレート名変更'), tr('テンプレート名'),
+            text=str(template.get('name', '')),
+        )
+        name = name.strip()
+        if not ok or not name or name == template.get('name'):
+            return
+        if any(item is not template and str(item.get('name', '')).strip() == name
+               for item in schema_templates(self.schema)):
+            show_warning(self, tr('テンプレート名変更'), tr('同じ名前のテンプレートが存在します。'))
+            return
+        template['name'] = name
+        self._render_structure_manager(str(template['template_id']))
+
+    def delete_template_definition(self) -> None:
+        template = self._active_template()
+        if template is None:
+            return
+        template_id = str(template.get('template_id', ''))
+        used_count = sum(
+            1 for record in self.db.list_data_records()
+            for instance in record.get('data', {}).get('_template_instances', [])
+            if isinstance(instance, dict) and str(instance.get('template_id', '')) == template_id
+        )
+        if used_count:
+            show_warning(
+                self, tr('テンプレート削除'),
+                f'{tr("このテンプレートは PCL で使用されています: ")}{used_count}',
+            )
+            return
+        if not confirm_deletion(
+            self, f'{template["name"]}{tr(" を削除しますか？")}',
+        ):
+            return
+        self.schema['templates'].remove(template)
+        self._render_structure_manager()
         self.render()
 
     def has_pending_changes(self) -> bool:
@@ -179,19 +487,21 @@ class SchemaPage(QWidget):
             return True
         return False
 
-    def render(self, selected_index_path: tuple[int, ...] | None = None) -> None:
+    def render(
+            self, selected_index_path: tuple[int, ...] | None = None,
+            *, capture_current: bool = True,
+    ) -> None:
         # Qt の UserRole に格納した dict は QVariant 変換時に複製される場合があるため、
         # 選択位置の特定には schema 内の安定したインデックス経路だけを使用する。
         previous_item = self.tree.currentItem()
-        if selected_index_path is None and previous_item is not None:
+        if capture_current and selected_index_path is None and previous_item is not None:
             selected_index_path = self._item_index_path(previous_item)
         vertical_value = self.tree.verticalScrollBar().value()
         horizontal_value = self.tree.horizontalScrollBar().value()
-        had_items = self.tree.topLevelItemCount() > 0
-        expanded_keys = {
-            item.data(0, SCHEMA_NODE_KEY_ROLE)
-            for item in self._all_items() if item.isExpanded()
-        }
+        structure_key = self._structure_key(self.structure_manager.currentItem())
+        if capture_current and self.tree.topLevelItemCount():
+            self._capture_schema_expansion(structure_key)
+        expanded_keys = self._schema_expanded_by_structure.get(structure_key)
         self.tree.clear()
         selected_item: QTreeWidgetItem | None = None
 
@@ -202,7 +512,14 @@ class SchemaPage(QWidget):
             index_path: tuple[int, ...],
         ) -> None:
             nonlocal selected_item
-            item = QTreeWidgetItem([node['name'], node['type'], path])
+            item = QTreeWidgetItem([
+                node['name'], node['type'], path,
+                (
+                    tr('別シート（空時省略）')
+                    if node.get('excel_sheet', False) and node.get('excel_skip_empty', True)
+                    else tr('別シート') if node.get('excel_sheet', False) else '-'
+                ),
+            ])
             item.setData(0, Qt.ItemDataRole.UserRole, node)
             item.setData(0, SCHEMA_INDEX_PATH_ROLE, index_path)
             # 表示順が変わっても同じノードを選び直せるよう、画面内だけで使う識別値を保持する。
@@ -218,13 +535,15 @@ class SchemaPage(QWidget):
             for child_index, child in enumerate(node.get('children', [])):
                 child_path = f'{path}.{child["name"]}' if path else child['name']
                 add(item, child, child_path, (*index_path, child_index))
-        for child_index, child in enumerate(self.schema.get('children', [])):
-            add(self.tree, child, child['name'], (child_index,))
+        active_root = self._active_root()
+        if active_root is not None:
+            for child_index, child in enumerate(active_root.get('children', [])):
+                add(self.tree, child, child['name'], (child_index,))
 
-        if had_items:
+        if expanded_keys is not None:
             for item in self._all_items():
                 item.setExpanded(item.data(0, SCHEMA_NODE_KEY_ROLE) in expanded_keys)
-        else:
+        elif active_root is not None:
             self.tree.expandAll()
         if selected_item is not None:
             self.tree.setCurrentItem(selected_item)
@@ -232,6 +551,7 @@ class SchemaPage(QWidget):
         self.tree.verticalScrollBar().setValue(vertical_value)
         self.tree.horizontalScrollBar().setValue(horizontal_value)
         self._sync_toggle_all_button()
+        self._sync_template_definition_buttons()
 
     def _all_items(self) -> list[QTreeWidgetItem]:
         """ツリー内の全項目を表示順で返す。"""
@@ -271,9 +591,10 @@ class SchemaPage(QWidget):
         self, index_path: tuple[int, ...] | None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]], int] | None:
         """インデックス経路から現在の schema 内の項目と兄弟一覧を取得する。"""
-        if not index_path:
+        active_root = self._active_root()
+        if not index_path or active_root is None:
             return None
-        siblings = self.schema.setdefault('children', [])
+        siblings = active_root.setdefault('children', [])
         for depth, index in enumerate(index_path):
             if not 0 <= index < len(siblings):
                 return None
@@ -334,7 +655,8 @@ class SchemaPage(QWidget):
                 nodes_by_key[id(schema_node)] = schema_node
                 remember_nodes(schema_node.get('children', []))
 
-        remember_nodes(self.schema.get('children', []))
+        active_root = self._active_root()
+        remember_nodes(active_root.get('children', []))
 
         def collect(
             parent: QTreeWidgetItem | QTreeWidget,
@@ -360,7 +682,7 @@ class SchemaPage(QWidget):
                 result.append(node)
             return result
 
-        self.schema['children'] = collect(self.tree)
+        active_root['children'] = collect(self.tree)
         self.render(selected_index_path)
 
     def selected(self) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
@@ -379,13 +701,16 @@ class SchemaPage(QWidget):
 
     def _paste_field_payload(self, source: dict[str, Any]) -> None:
         """選択行と同じ階層の直後へ貼り付ける。"""
+        active_root = self._active_root()
+        if active_root is None:
+            return
         if self._schema_reorder_pending:
             self._apply_schema_tree_order()
         item = self.tree.currentItem() if self.tree.selectedItems() else None
         index_path = self._item_index_path(item) if item is not None else None
         location = self._schema_location(index_path)
         if location is None or index_path is None:
-            siblings = self.schema.setdefault('children', [])
+            siblings = active_root.setdefault('children', [])
             insert_at = len(siblings)
             selected_path = (insert_at,)
         else:
@@ -410,6 +735,9 @@ class SchemaPage(QWidget):
         return result
 
     def add_field(self) -> None:
+        active_root = self._active_root()
+        if active_root is None:
+            return
         node = self._ask_field()
         if not node:
             return
@@ -417,7 +745,7 @@ class SchemaPage(QWidget):
         index_path = self._item_index_path(item) if item is not None else None
         location = self._schema_location(index_path)
         if location is None or index_path is None:
-            siblings = self.schema.setdefault('children', [])
+            siblings = active_root.setdefault('children', [])
             insert_at = len(siblings)
             selected_path = (insert_at,)
         else:
@@ -482,7 +810,23 @@ class SchemaPage(QWidget):
     def save(self, _checked: bool = False, *, show_message: bool = True) -> bool:
         try:
             validate_schema(self.schema)
+            validate_unique_template_names(self.schema)
+            for template in schema_templates(self.schema):
+                name = str(template.get('name', '')).strip()
+                validate_schema(template, f'{tr("テンプレート")}.{name}')
+            old_schema = self.db.get_data_schema()
             self.db.save_data_schema(0, self.schema)
+            # 名称パスで実行できるよう、既存の全実体にも定義名を同期する。
+            for record in self.db.list_data_records():
+                data = record.get('data', {})
+                if sync_template_instance_names(data, self.schema):
+                    self.db.update_data_record(record['id'], record['name'], data)
+            # 旧追加テンプレートを初めて保存する場合だけ、既存 PCL の値も同時に移行する。
+            if any(node.get('data_template', False) for node in _walk_schema_nodes(old_schema)):
+                for record in self.db.list_data_records():
+                    migrated = migrate_legacy_template_data(old_schema, record.get('data', {}))
+                    if migrated != record.get('data', {}):
+                        self.db.update_data_record(record['id'], record['name'], migrated)
         except ValueError as error:
             show_warning(self, '保存', str(error))
             return False
@@ -509,9 +853,13 @@ class SchemaPage(QWidget):
         if not confirm_import_overwrite(self, bool(self.schema.get('children')), 'データ構造'):
             return
         try:
-            schema = json.loads(Path(path).read_text(encoding='utf-8'))
+            schema = normalize_template_schema(json.loads(Path(path).read_text(encoding='utf-8')))
             validate_schema(schema)
+            validate_unique_template_names(schema)
+            for template in schema_templates(schema):
+                validate_schema(template, f'Template.{template.get("name", "")}')
             self.schema = schema
+            self._render_structure_manager()
             self.render()
         except (OSError, ValueError, json.JSONDecodeError) as error:
             show_warning(self, 'JSON 読込', str(error))

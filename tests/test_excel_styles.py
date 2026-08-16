@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,12 +8,266 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from core.excel_io import (
-    read_records_excel, read_records_excel_with_schema, remap_data_for_schema_names, schema_name_path_map,
-    strip_data_record_whitespace, strip_schema_name_whitespace, write_records_excel,
+    normalize_record, read_records_excel, read_records_excel_with_schema, remap_data_for_schema_names, schema_name_path_map,
+    strip_data_record_whitespace, strip_schema_name_whitespace, validate_schema, write_records_excel,
 )
+from core.data_templates import migrate_legacy_template_data, normalize_template_schema
 
 
 class ExcelStyleTests(unittest.TestCase):
+    def test_legacy_template_schema_and_data_are_migrated_without_wrapper_path(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object', 'children': [{
+                'name': 'テンプレート', 'type': 'object', 'children': [{
+                    'name': '仮想商材', 'type': 'object', 'data_template': True,
+                    'template_id': 'product',
+                    'children': [{'name': '名称', 'type': 'text'}],
+                }],
+            }],
+        }
+
+        migrated_schema = normalize_template_schema(schema)
+        migrated_data = migrate_legacy_template_data(
+            schema, {'テンプレート': {'仮想商材': {'名称': 'A'}}},
+        )
+
+        self.assertEqual(migrated_schema['children'], [])
+        self.assertEqual(migrated_schema['templates'][0]['template_id'], 'product')
+        self.assertNotIn('テンプレート', migrated_data)
+        self.assertEqual(migrated_data['_template_instances'][0]['data'], {'名称': 'A'})
+
+    def test_normalize_record_does_not_materialize_optional_data_template(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object', 'children': [
+                {'name': 'common', 'type': 'text'},
+                {'name': 'detail', 'type': 'object', 'data_template': True, 'children': [
+                    {'name': 'value', 'type': 'text'},
+                ]},
+            ],
+        }
+        self.assertEqual(normalize_record(schema, {}), {'common': ''})
+        self.assertEqual(
+            normalize_record(schema, {'detail': {}}),
+            {'common': '', 'detail': {'value': ''}},
+        )
+
+    def test_excel_round_trip_preserves_template_presence_per_record(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object', 'children': [
+                {'name': 'common', 'type': 'text'},
+            ],
+            'templates': [{
+                'name': 'detail', 'type': 'object', 'template_id': 'detail-template',
+                'children': [{'name': 'value', 'type': 'text'}],
+            }],
+        }
+        records = [
+            {'name': 'PCL_001', 'summary': '', 'enabled': True, 'execution_group': '1',
+             'data': {'common': 'A', '_template_instances': [{
+                 'instance_id': 'instance-1', 'template_id': 'detail-template',
+                 'name': 'detail 1', 'data': {'value': 'included'},
+             }, {
+                 'instance_id': 'instance-2', 'template_id': 'detail-template',
+                 'name': 'detail 2', 'data': {'value': 'included twice'},
+             }]}},
+            {'name': 'PCL_002', 'summary': '', 'enabled': True, 'execution_group': '1',
+             'data': {'common': 'B'}},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'templates.xlsx'
+            write_records_excel(path, schema, records)
+            workbook = load_workbook(path, data_only=True)
+            detail_names = [
+                workbook['detail'].cell(row, 1).value
+                for row in range(1, workbook['detail'].max_row + 1)
+            ]
+            self.assertNotIn('__WebFlowManager__', workbook.sheetnames)
+            headers = {
+                workbook['detail'].cell(row, column).value
+                for row in range(1, 3) for column in range(1, 8)
+            }
+            self.assertTrue({'配置先', '順番', 'テンプレート名'} <= headers)
+            self.assertFalse(any(str(value or '').startswith('__') for value in headers))
+            # PCL 直下のテンプレートは配置先を空欄にする。
+            self.assertIsNone(workbook['detail'].cell(3, 2).value)
+            restored_records = read_records_excel(path, schema)
+
+        self.assertEqual(detail_names.count('PCL_001'), 2)
+        self.assertNotIn('PCL_002', detail_names)
+        expected = copy.deepcopy(records)
+        for index, instance in enumerate(expected[0]['data']['_template_instances']):
+            instance['template_name'] = 'detail'
+            instance['instance_id'] = restored_records[0]['data']['_template_instances'][index]['instance_id']
+        self.assertEqual(restored_records, expected)
+
+    def test_excel_round_trip_preserves_template_instance_inside_list(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object',
+            'children': [{'name': 'items', 'type': 'list', 'children': [
+                {'name': 'label', 'type': 'text'},
+            ]}],
+            'templates': [{
+                'name': 'detail', 'type': 'object', 'template_id': 'detail-template',
+                'children': [{'name': 'value', 'type': 'text'}],
+            }],
+        }
+        records = [{
+            'name': 'PCL_001', 'summary': '', 'enabled': True, 'execution_group': '1',
+            'data': {'items': [{
+                'instance_id': 'instance-1', 'template_id': 'detail-template',
+                'name': 'detail 1', 'data': {'value': 'nested'},
+            }]},
+        }]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'nested-template.xlsx'
+            write_records_excel(path, schema, records)
+            workbook = load_workbook(path, data_only=True)
+            self.assertNotIn('__WebFlowManager__', workbook.sheetnames)
+            restored_records = read_records_excel(path, schema)
+
+        expected = copy.deepcopy(records)
+        expected[0]['data']['items'][0]['template_name'] = 'detail'
+        expected[0]['data']['items'][0]['instance_id'] = restored_records[0]['data']['items'][0]['instance_id']
+        self.assertEqual(restored_records, expected)
+
+    def test_excel_sheet_setting_rejects_scalar_and_nested_split_nodes(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_schema({
+                'name': 'Data', 'type': 'object', 'children': [
+                    {'name': '値', 'type': 'text', 'excel_sheet': True},
+                ],
+            })
+        with self.assertRaises(ValueError):
+            validate_schema({
+                'name': 'Data', 'type': 'object', 'children': [{
+                    'name': '親', 'type': 'object', 'excel_sheet': True, 'children': [{
+                        'name': '子', 'type': 'object', 'excel_sheet': True, 'children': [],
+                    }],
+                }],
+            })
+
+    def test_split_excel_sheets_round_trip_with_visible_record_names(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object', 'children': [
+                {'name': 'PCL_NO', 'type': 'text'},
+                {'name': '商材別', 'type': 'object', 'children': [
+                    {'name': '仮想商材1', 'type': 'object', 'excel_sheet': True, 'children': [
+                        {'name': 'プラン名', 'type': 'text'},
+                        {'name': 'オプション', 'type': 'list', 'children': [
+                            {'name': '名称', 'type': 'text'},
+                        ]},
+                    ]},
+                ]},
+            ],
+        }
+        records = [{
+            'name': 'PCL_001', 'summary': '概要', 'enabled': True,
+            'execution_group': '2', 'data': {
+                'PCL_NO': 'PCL_001',
+                '商材別': {'仮想商材1': {
+                    'プラン名': '標準',
+                    'オプション': [{'名称': 'A'}, {'名称': 'B'}],
+                }},
+            },
+        }]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'split.xlsx'
+            write_records_excel(path, schema, records)
+            workbook = load_workbook(path, data_only=True)
+            main_sheet = workbook.worksheets[0]
+            self.assertIn('仮想商材1', workbook.sheetnames)
+            self.assertNotIn('__WebFlowManager__', workbook.sheetnames)
+            # 分割先では親パスを繰り返さず、短いヘッダーだけを表示する。
+            split_headers = {
+                workbook['仮想商材1'].cell(row, column).value
+                for row in range(1, 3) for column in range(2, 4)
+            }
+            self.assertNotIn('商材別', split_headers)
+            restored_records = read_records_excel(path, schema)
+
+        self.assertEqual(restored_records, records)
+
+    def test_split_excel_accepts_new_records_added_with_visible_names(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object', 'children': [
+                {'name': '共通', 'type': 'text'},
+                {'name': '詳細', 'type': 'object', 'excel_sheet': True, 'children': [
+                    {'name': '値', 'type': 'text'},
+                ]},
+            ],
+        }
+        records = [{
+            'name': 'PCL_001', 'enabled': True, 'execution_group': '1',
+            'data': {'共通': 'A', '詳細': {'値': '1'}},
+        }]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'bulk-add.xlsx'
+            write_records_excel(path, schema, records)
+            workbook = load_workbook(path)
+            workbook.worksheets[0].append(['PCL_002', 'B'])
+            workbook['詳細'].append(['PCL_002', '2'])
+            workbook.save(path)
+            restored = read_records_excel(path, schema)
+
+        self.assertEqual([record['name'] for record in restored], ['PCL_001', 'PCL_002'])
+        self.assertEqual(restored[1]['data'], {'共通': 'B', '詳細': {'値': '2'}})
+
+    def test_split_excel_rejects_orphan_record_names(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object', 'children': [
+                {'name': '共通', 'type': 'text'},
+                {'name': '詳細', 'type': 'object', 'excel_sheet': True, 'children': [
+                    {'name': '値', 'type': 'text'},
+                ]},
+            ],
+        }
+        records = [{
+            'name': 'PCL_001', 'enabled': True, 'execution_group': '1',
+            'data': {'共通': 'A', '詳細': {'値': '1'}},
+        }]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'orphan.xlsx'
+            write_records_excel(path, schema, records)
+            workbook = load_workbook(path)
+            workbook['詳細'].append(['PCL_999', 'orphan'])
+            workbook.save(path)
+            with self.assertRaisesRegex(ValueError, 'PCL_999'):
+                read_records_excel(path, schema)
+
+    def test_empty_split_sheet_is_omitted_by_default_and_can_be_forced(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object', 'children': [
+                {'name': '共通', 'type': 'text'},
+                {'name': '詳細', 'type': 'object', 'excel_sheet': True, 'children': [
+                    {'name': '値', 'type': 'text'},
+                ]},
+            ],
+        }
+        records = [{
+            'name': 'PCL_001', 'summary': '', 'enabled': True, 'execution_group': '1',
+            'data': {'共通': 'A', '詳細': {'値': ''}},
+        }]
+        with tempfile.TemporaryDirectory() as directory:
+            omitted_path = Path(directory) / 'omitted.xlsx'
+            write_records_excel(omitted_path, schema, records)
+            workbook = load_workbook(omitted_path, data_only=True)
+            self.assertNotIn('詳細', workbook.sheetnames)
+            self.assertNotIn('__WebFlowManager__', workbook.sheetnames)
+            restored_records = read_records_excel(omitted_path, schema)
+
+            forced_schema = {
+                **schema,
+                'children': [schema['children'][0], {
+                    **schema['children'][1], 'excel_skip_empty': False,
+                }],
+            }
+            forced_path = Path(directory) / 'forced.xlsx'
+            write_records_excel(forced_path, forced_schema, records)
+            forced_workbook = load_workbook(forced_path, data_only=True)
+
+        self.assertEqual(restored_records, records)
+        self.assertIn('詳細', forced_workbook.sheetnames)
+
     def test_excel_headers_can_restore_schema_and_records(self) -> None:
         schema = {
             'name': 'Data', 'type': 'object', 'children': [
@@ -140,6 +395,46 @@ class ExcelStyleTests(unittest.TestCase):
             restored = read_records_excel(path, schema)
 
         self.assertEqual(restored, records)
+
+    def test_execution_settings_are_optional_and_missing_records_use_defaults(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object',
+            'children': [{'name': 'value', 'type': 'text'}],
+        }
+        records = [{
+            'name': 'PCL_001', 'summary': '設定あり', 'enabled': False,
+            'execution_group': '3', 'data': {'value': 'A'},
+        }, {
+            'name': 'PCL_002', 'summary': '削除対象', 'enabled': False,
+            'execution_group': '4', 'data': {'value': 'B'},
+        }]
+        with tempfile.TemporaryDirectory() as directory:
+            partial_path = Path(directory) / 'partial-settings.xlsx'
+            write_records_excel(partial_path, schema, records)
+            workbook = load_workbook(partial_path)
+            settings = workbook['実行設定']
+            settings.delete_rows(3)
+            workbook.save(partial_path)
+            partial = read_records_excel(partial_path, schema)
+
+            no_settings_path = Path(directory) / 'no-settings.xlsx'
+            workbook = load_workbook(partial_path)
+            del workbook['実行設定']
+            workbook.save(no_settings_path)
+            without_settings = read_records_excel(no_settings_path, schema)
+
+        self.assertEqual(
+            (partial[0]['summary'], partial[0]['enabled'], partial[0]['execution_group']),
+            ('設定あり', False, '3'),
+        )
+        self.assertEqual(
+            (partial[1]['summary'], partial[1]['enabled'], partial[1]['execution_group']),
+            ('', True, '1'),
+        )
+        self.assertTrue(all(
+            (record['summary'], record['enabled'], record['execution_group']) == ('', True, '1')
+            for record in without_settings
+        ))
 
     def test_repeated_names_in_multilevel_header_round_trip(self) -> None:
         schema = {

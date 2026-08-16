@@ -2,25 +2,60 @@
 <ui version="4.0">
  <class>FieldDialogForm</class>
  <widget class="QDialog" name="FieldDialogForm">
-  <property name="geometry"><rect><x>0</x><y>0</y><width>520</width><height>224</height></rect></property>
-  <property name="minimumSize"><size><width>520</width><height>224</height></size></property>
-  <property name="maximumSize"><size><width>520</width><height>224</height></size></property>
+  <property name="geometry"><rect><x>0</x><y>0</y><width>560</width><height>470</height></rect></property>
+  <property name="minimumSize"><size><width>560</width><height>470</height></size></property>
+  <property name="maximumSize"><size><width>560</width><height>470</height></size></property>
   <property name="windowTitle"><string>フィールド編集</string></property>
   <layout class="QVBoxLayout" name="rootLayout">
-   <property name="leftMargin"><number>20</number></property><property name="topMargin"><number>18</number></property>
-   <property name="rightMargin"><number>20</number></property><property name="bottomMargin"><number>16</number></property>
-   <property name="spacing"><number>14</number></property>
-   <item><widget class="QFrame" name="fieldCard"><property name="card" stdset="0"><bool>true</bool></property><layout class="QFormLayout" name="formLayout"><property name="labelAlignment"><set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set></property>
-    <property name="leftMargin"><number>18</number></property><property name="topMargin"><number>16</number></property>
-    <property name="rightMargin"><number>18</number></property><property name="bottomMargin"><number>16</number></property>
-    <property name="horizontalSpacing"><number>14</number></property><property name="verticalSpacing"><number>12</number></property>
-    <item row="0" column="0"><widget class="QLabel" name="nameLabel"><property name="text"><string>フィールド名</string></property></widget></item>
-    <item row="0" column="1"><widget class="QLineEdit" name="nameEdit"/></item>
-    <item row="1" column="0"><widget class="QLabel" name="typeLabel"><property name="text"><string>種別</string></property></widget></item>
-    <item row="1" column="1"><widget class="QComboBox" name="typeCombo"/></item>
-   </layout></widget></item>
+   <property name="leftMargin"><number>18</number></property>
+   <property name="topMargin"><number>16</number></property>
+   <property name="rightMargin"><number>18</number></property>
+   <property name="bottomMargin"><number>14</number></property>
+   <property name="spacing"><number>10</number></property>
+   <item>
+    <widget class="QFrame" name="fieldCard">
+     <property name="card" stdset="0"><bool>true</bool></property>
+     <layout class="QVBoxLayout" name="basicLayout">
+      <property name="leftMargin"><number>16</number></property>
+      <property name="topMargin"><number>14</number></property>
+      <property name="rightMargin"><number>16</number></property>
+      <property name="bottomMargin"><number>14</number></property>
+      <property name="spacing"><number>9</number></property>
+      <item><widget class="QLabel" name="basicTitle"><property name="cardTitle" stdset="0"><bool>true</bool></property><property name="text"><string>基本情報</string></property></widget></item>
+      <item>
+       <layout class="QGridLayout" name="basicForm">
+        <property name="horizontalSpacing"><number>12</number></property>
+        <property name="verticalSpacing"><number>10</number></property>
+        <property name="columnStretch"><string>0,1</string></property>
+        <item row="0" column="0"><widget class="QLabel" name="nameLabel"><property name="text"><string>フィールド名</string></property></widget></item>
+        <item row="0" column="1"><widget class="QLineEdit" name="nameEdit"/></item>
+        <item row="1" column="0"><widget class="QLabel" name="typeLabel"><property name="text"><string>種別</string></property></widget></item>
+        <item row="1" column="1"><widget class="QComboBox" name="typeCombo"/></item>
+       </layout>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QFrame" name="excelCard">
+     <property name="card" stdset="0"><bool>true</bool></property>
+     <layout class="QVBoxLayout" name="excelLayout">
+      <property name="leftMargin"><number>16</number></property>
+      <property name="topMargin"><number>14</number></property>
+      <property name="rightMargin"><number>16</number></property>
+      <property name="bottomMargin"><number>14</number></property>
+      <property name="spacing"><number>7</number></property>
+      <item><widget class="QLabel" name="excelTitle"><property name="cardTitle" stdset="0"><bool>true</bool></property><property name="text"><string>Excel 出力設定</string></property></widget></item>
+      <item><widget class="QCheckBox" name="excelSheetCheck"><property name="text"><string>別シートに出力</string></property></widget></item>
+      <item><widget class="QCheckBox" name="excelSkipEmptyCheck"><property name="text"><string>データがない場合は出力しない</string></property></widget></item>
+      <item><widget class="QLabel" name="excelHint"><property name="muted" stdset="0"><bool>true</bool></property><property name="wordWrap"><bool>true</bool></property><property name="text"><string>この項目の配下を独立した Excel シートに出力します</string></property></widget></item>
+     </layout>
+   </widget>
+  </item>
+   <item><spacer name="contentStretch"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint"><size><width>20</width><height>4</height></size></property></spacer></item>
    <item><widget class="QDialogButtonBox" name="buttonBox"><property name="standardButtons"><set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set></property></widget></item>
   </layout>
  </widget>
- <resources/><connections/>
+ <resources/>
+ <connections/>
 </ui>

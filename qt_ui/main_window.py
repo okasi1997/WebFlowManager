@@ -47,7 +47,7 @@ class LazyPageRegistry(Mapping[str, QWidget]):
 
 
 class MainWindow(QMainWindow):
-    DEFAULT_SIZE = QSize(1480, 860)
+    DEFAULT_SIZE = QSize(1280, 780)
 
     def __init__(self, project_dir: Path, db: Database) -> None:
         super().__init__()

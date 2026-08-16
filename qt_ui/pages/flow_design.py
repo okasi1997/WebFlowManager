@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from core.conditions import OPERATORS, decode_guard, summarize_guard
 from core.daily_log import DailyLogWriter
 from core.database import Database
+from core.data_templates import normalize_template_schema, schema_templates
 from core.settings import SELECT_FIRST_VALUE, SUPPORTED_ACTIONS, SUPPORTED_SELECTOR_TYPES
 from browser.element_picker import DebugBrowserSession
 from i18n import tr
@@ -867,6 +868,9 @@ def _schema_condition_paths(schema: dict[str, Any]) -> list[str]:
             else:
                 paths.append(path)
     walk(schema)
+    for template in schema_templates(normalize_template_schema(schema)):
+        prefix = f'@template.{template["name"]}'
+        walk(template, prefix)
     return paths
 
 
@@ -880,6 +884,11 @@ def _schema_paths_of_type(schema: dict[str, Any], allowed_types: set[str]) -> li
             if child.get('type') in {'object', 'list'}:
                 walk(child, path)
     walk(schema)
+    for template in schema_templates(normalize_template_schema(schema)):
+        prefix = f'@template.{template["name"]}'
+        if 'list' in allowed_types:
+            paths.append(prefix)
+        walk(template, prefix)
     return paths
 
 
@@ -914,6 +923,18 @@ class DataPathPickerDialog(QDialog):
 
         for child in schema.get('children', []):
             add(self.tree, child)
+        for template in schema_templates(normalize_template_schema(schema)):
+            path = f'@template.{str(template.get("name", "")).strip()}'
+            item = QTreeWidgetItem([str(template.get('name', '')), tr('テンプレート'), path])
+            item.setData(
+                0, Qt.ItemDataRole.UserRole,
+                path if allowed_types is not None and 'list' in allowed_types else None,
+            )
+            self.tree.addTopLevelItem(item)
+            for child in template.get('children', []):
+                add(item, child, path)
+            if path == current and item.data(0, Qt.ItemDataRole.UserRole):
+                selected_item = item
         self.tree.expandAll()
         self.toggle_all_button.clicked.connect(self._toggle_all)
         self.tree.expanded.connect(self._sync_toggle_all_button)

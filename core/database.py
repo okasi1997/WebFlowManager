@@ -863,6 +863,9 @@ class Database:
         return schema
 
     def save_data_schema(self, _workflow_id: int, schema: dict[str, Any]) -> None:
+        # UI・JSON・Excel など保存経路にかかわらず、名称パスの一意性を保証する。
+        from core.data_templates import validate_unique_template_names
+        validate_unique_template_names(schema)
         payload = json.dumps(schema, ensure_ascii=False)
         self.connection.execute('INSERT INTO global_data_schema(id, schema_json) VALUES (1, ?)\n               ON CONFLICT(id) DO UPDATE SET schema_json=excluded.schema_json', (payload,))
         self.connection.commit()
@@ -1012,8 +1015,18 @@ class Database:
         self.connection.commit()
 
     def delete_data_record(self, _workflow_id: int, record_id: int) -> None:
+        self.delete_data_records(_workflow_id, [record_id])
+
+    def delete_data_records(self, _workflow_id: int, record_ids: list[int]) -> None:
+        """複数の実行データを一括削除し、順番の再採番も一度だけ行う。"""
+        ids = [int(record_id) for record_id in dict.fromkeys(record_ids)]
+        if not ids:
+            return
         with self.connection:
-            self.connection.execute('DELETE FROM global_data_records WHERE id=?', (record_id,))
+            placeholders = ','.join('?' for _ in ids)
+            self.connection.execute(
+                f'DELETE FROM global_data_records WHERE id IN ({placeholders})', ids,
+            )
             rows = self.connection.execute('SELECT id FROM global_data_records ORDER BY position').fetchall()
             for position, row in enumerate(rows, 1):
                 self.connection.execute('UPDATE global_data_records SET position=? WHERE id=?', (position, row['id']))

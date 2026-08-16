@@ -5,6 +5,45 @@ from core.executor import WorkflowExecutor
 
 
 class ExecutorArtifactNameTests(unittest.TestCase):
+    def test_template_instances_are_resolved_as_a_loopable_virtual_path(self) -> None:
+        data = {'_template_instances': [
+            {'template_id': 'product', 'data': {'name': 'A'}},
+            {'template_id': 'product', 'data': {'name': 'B'}},
+            {'template_id': 'other', 'data': {'name': 'C'}},
+        ]}
+
+        items = WorkflowExecutor._resolve_data(data, '@template.product', {})
+
+        self.assertEqual(items, [{'name': 'A'}, {'name': 'B'}])
+        self.assertEqual(
+            WorkflowExecutor._resolve_data(
+                data, '@template.product.name', {'@template.product': items[1]},
+            ),
+            'B',
+        )
+
+    def test_template_instance_inside_list_is_resolved_by_virtual_path(self) -> None:
+        data = {'services': [{
+            'instance_id': 'nested-1', 'template_id': 'product',
+            'name': 'Product 1', 'data': {'name': 'Nested'},
+        }]}
+
+        self.assertEqual(
+            WorkflowExecutor._resolve_data(data, '@template.product', {}),
+            [{'name': 'Nested'}],
+        )
+
+    def test_template_name_can_be_used_as_virtual_path(self) -> None:
+        data = {'_template_instances': [{
+            'template_id': 'generated-id', 'template_name': '仮想商材',
+            'data': {'name': 'A'},
+        }]}
+
+        self.assertEqual(
+            WorkflowExecutor._resolve_data(data, '@template.仮想商材', {}),
+            [{'name': 'A'}],
+        )
+
     def test_unsaved_screenshot_event_uses_timestamp_filename(self) -> None:
         """DB ID のない新規イベントも既定名で試行できる。"""
         filename = WorkflowExecutor._screenshot_filename(

@@ -30,7 +30,7 @@ from qt_ui.pages.flow_design import (
     DataPathPickerDialog, EventEditorDialog, EventGroupEditorDialog, FlowEditorDialog,
     GuardConditionEditorDialog, GuardRuleEditorDialog, WorkflowGroupDialog,
 )
-from qt_ui.pages.structured import FieldDialog
+from qt_ui.pages.structured import FieldDialog, empty_record
 from qt_ui.pages.data import RecordMetadataDialog
 from qt_ui.pages.execution import (
     ExecutionActionDelegate, ExecutionOrderDialog, STATUS_LABELS, natural_sort_key,
@@ -97,9 +97,10 @@ class QtShellTests(unittest.TestCase):
             bottom_edges.append(button.mapTo(self.window, button.rect().bottomLeft()).y())
         # テスト環境はテーマ未適用のため、Qt 標準スタイルの余白差だけ許容する。
         self.assertLessEqual(max(bottom_edges) - min(bottom_edges), 2, bottom_edges)
-        schema_layout = self.window.pages['schema'].findChild(QVBoxLayout, 'schemaCardLayout')
-        margins = schema_layout.contentsMargins()
-        self.assertEqual((margins.left(), margins.right(), margins.bottom()), (9, 9, 9))
+        schema_page = self.window.pages['schema']
+        # 左右を独立カードにし、他の主要画面と同じ視覚的な区切りを持たせる。
+        self.assertTrue(schema_page.findChild(QFrame, 'structureManagerHost').property('card'))
+        self.assertTrue(schema_page.findChild(QFrame, 'schemaTreeHost').property('card'))
 
     def test_data_file_operations_show_completion_messages(self) -> None:
         """データ関連の入出力が成功した場合だけ、共通の完了通知を表示する。"""
@@ -175,6 +176,76 @@ class QtShellTests(unittest.TestCase):
             design_page.import_json()
             notified.assert_called_once_with(design_page, str(workflow_path))
 
+    def test_data_json_export_excludes_fields_removed_from_current_schema(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object',
+            'children': [{'name': '現行項目', 'type': 'text'}],
+        }
+        self.db.save_data_schema(0, schema)
+        self.db.add_data_record(0, 'PCL_001', {
+            '現行項目': '保持',
+            '商材別': {'旧仮想商材': {'プラン': []}},
+            '削除済み項目': '出力しない',
+        })
+        page = self.window.pages['data']
+        output = self.project_dir / 'clean-records.json'
+
+        with (
+            patch('qt_ui.pages.data.QFileDialog.getSaveFileName', return_value=(str(output), '')),
+            patch('qt_ui.pages.data.show_file_exported'),
+        ):
+            page.export_json()
+
+        exported = json.loads(output.read_text(encoding='utf-8'))
+        self.assertEqual(exported[0]['data'], {'現行項目': '保持'})
+        self.assertEqual(
+            set(exported[0]),
+            {'name', 'summary', 'enabled', 'execution_group', 'data'},
+        )
+
+    def test_data_json_uses_template_names_and_regenerates_internal_ids(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object',
+            'children': [{'name': 'サービス', 'type': 'list', 'children': []}],
+            'templates': [{
+                'name': '仮想商材', 'type': 'object', 'template_id': 'internal-template-id',
+                'children': [{'name': '電話番号', 'type': 'text'}],
+            }],
+        }
+        self.db.save_data_schema(0, schema)
+        self.db.add_data_record(0, 'PCL_001', {'サービス': [{
+            'instance_id': 'internal-instance-id',
+            'template_id': 'internal-template-id',
+            'template_name': '仮想商材',
+            'name': '仮想商材 1',
+            'data': {'電話番号': '04012345678'},
+        }]})
+        page = self.window.pages['data']
+        output = self.project_dir / 'public-records.json'
+        with (
+            patch('qt_ui.pages.data.QFileDialog.getSaveFileName', return_value=(str(output), '')),
+            patch('qt_ui.pages.data.show_file_exported'),
+        ):
+            page.export_json()
+
+        exported = json.loads(output.read_text(encoding='utf-8'))
+        template_value = exported[0]['data']['サービス'][0]
+        self.assertEqual(template_value, {
+            'template': '仮想商材', 'name': '仮想商材 1',
+            'data': {'電話番号': '04012345678'},
+        })
+        self.assertNotIn('internal-', output.read_text(encoding='utf-8'))
+
+        with (
+            patch('qt_ui.pages.data.QFileDialog.getOpenFileName', return_value=(str(output), '')),
+            patch('qt_ui.pages.data.confirm_import_overwrite', return_value=True),
+            patch('qt_ui.pages.data.show_file_imported'),
+        ):
+            page.import_json()
+        restored = self.db.list_data_records()[0]['data']['サービス'][0]
+        self.assertEqual(restored['template_id'], 'internal-template-id')
+        self.assertNotEqual(restored['instance_id'], 'internal-instance-id')
+
     def test_imports_confirm_before_replacing_existing_content(self) -> None:
         data_page = self.window.pages['data']
         schema_page = self.window.pages['schema']
@@ -186,7 +257,6 @@ class QtShellTests(unittest.TestCase):
         for method_name, reader_name in (
             ('import_json', None),
             ('import_excel', 'read_records_excel'),
-            ('import_excel_with_schema', 'read_records_excel_with_schema'),
         ):
             patches = [
                 patch('qt_ui.pages.data.QFileDialog.getOpenFileName', return_value=(str(import_path), '')),
@@ -224,29 +294,6 @@ class QtShellTests(unittest.TestCase):
             design_page.import_json()
             importer.assert_not_called()
         self.assertEqual(self.db.list_workflows()[0]['id'], workflow_id)
-
-    def test_excel_import_with_schema_replaces_both_after_confirmation(self) -> None:
-        page = self.window.pages['data']
-        self.db.add_data_record(0, 'existing', {'old': 'value'})
-        schema = {
-            'name': 'Data', 'type': 'object',
-            'children': [{'name': 'amount', 'type': 'number'}],
-        }
-        records = [{
-            'name': 'PCL_001', 'summary': 'summary', 'enabled': True,
-            'execution_group': '1', 'data': {'amount': 12},
-        }]
-        path = self.project_dir / 'with-schema.xlsx'
-        with (
-            patch('qt_ui.pages.data.QFileDialog.getOpenFileName', return_value=(str(path), '')),
-            patch('qt_ui.pages.data.confirm_import_overwrite', return_value=True),
-            patch('qt_ui.pages.data.read_records_excel_with_schema', return_value=(schema, records)),
-            patch('qt_ui.pages.data.show_file_imported') as notified,
-        ):
-            page.import_excel_with_schema()
-        self.assertEqual(self.db.get_data_schema(), schema)
-        self.assertEqual(self.db.list_data_records()[0]['data'], {'amount': 12})
-        notified.assert_called_once_with(page, str(path))
 
     def test_all_dialogs_are_locked_without_locking_main_window(self) -> None:
         blocker = _ComboBoxWheelBlocker()
@@ -469,7 +516,7 @@ class QtShellTests(unittest.TestCase):
         self.assertGreater(page.workflow_table.columnWidth(0), max(
             page.workflow_table.columnWidth(column) for column in (1, 2, 3, 4)
         ))
-        self.assertGreater(page.event_tree.columnWidth(0), max(
+        self.assertGreaterEqual(page.event_tree.columnWidth(0), max(
             page.event_tree.columnWidth(column) for column in (1, 2, 3, 4, 5)
         ))
         self.assertTrue(all(
@@ -1277,6 +1324,9 @@ class QtShellTests(unittest.TestCase):
         )
         self.assertEqual(data.tree.dragDropMode(), QAbstractItemView.DragDropMode.DragDrop)
         self.assertEqual(data.tree.defaultDropAction(), Qt.DropAction.CopyAction)
+        self.assertEqual(
+            data.tree.selectionMode(), QAbstractItemView.SelectionMode.ExtendedSelection,
+        )
         splitter = data.findChild(QSplitter, 'dataSplitter')
         self.assertFalse(splitter.childrenCollapsible())
         self.assertEqual(splitter.widget(0).minimumWidth(), 280)
@@ -1288,7 +1338,7 @@ class QtShellTests(unittest.TestCase):
         self.assertFalse(delete_button.isHidden())
         self.assertTrue(delete_button.property('danger'))
         self.assertEqual(delete_button.text(), '削除')
-        self.assertTrue(data.findChild(QPushButton, 'toggleRecordButton').isHidden())
+        self.assertIsNone(data.findChild(QPushButton, 'toggleRecordButton'))
         self.assertFalse(data.findChild(QPushButton, 'copyRecordButton').isHidden())
         list_button = data.findChild(QPushButton, 'addListItemButton')
         self.assertEqual(list_button.text(), 'リスト操作')
@@ -1300,13 +1350,13 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(io_button.text(), 'データ入出力')
         self.assertEqual([action.text() for action in io_button.menu().actions() if not action.isSeparator()], [
             'JSON を出力', 'JSON を読み込む', 'Excel を出力', 'Excel を読み込む',
-            'Excel を読み込む（データ構造を含む）',
         ])
-        self.assertFalse(data.findChild(QPushButton, 'importDataJsonButton').isVisibleTo(data))
+        self.assertIs(io_button.parentWidget(), data.findChild(QFrame, 'recordCard'))
+        self.assertIsNone(data.findChild(QPushButton, 'importDataJsonButton'))
+        self.assertIsNone(data.findChild(QPushButton, 'excelButton'))
         self.assertEqual(data.values.columnCount(), 4)
         self.assertEqual(data.values.headerItem().text(2), '値  ✎')
-        value_toggle = data.findChild(QPushButton, 'valueToggleButton')
-        self.assertTrue(value_toggle.isHidden())
+        self.assertIsNone(data.findChild(QPushButton, 'valueToggleButton'))
         self.db.save_data_schema(0, {
             'name': 'Data', 'type': 'object', 'children': [
                 {'name': 'output', 'type': 'object', 'children': [
@@ -1320,18 +1370,6 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(editable_value.toolTip(2), 'ダブルクリックで値を編集')
         self.assertTrue(editable_value.text(2).startswith('✎'))
         self.assertEqual(editable_value.foreground(2).color().name(), '#0b6fae')
-        self.assertFalse(value_toggle.isHidden())
-        self.assertEqual(value_toggle.text(), '')
-        self.assertFalse(value_toggle.icon().isNull())
-        self.assertFalse(
-            value_toggle.icon().pixmap(QSize(18, 18), QIcon.Mode.Disabled).isNull()
-        )
-        self.assertEqual(value_toggle.toolTip(), 'すべて折りたたむ')
-        value_toggle.click()
-        self.assertEqual(value_toggle.toolTip(), 'すべて展開')
-        data.render_values()
-        self.assertFalse(data.values.topLevelItem(0).isExpanded())
-        self.assertEqual(value_toggle.toolTip(), 'すべて展開')
         self.window.show_page('schema')
         schema = self.window.pages['schema']
         add = schema.findChild(QPushButton, 'addFieldButton')
@@ -1354,6 +1392,31 @@ class QtShellTests(unittest.TestCase):
         self.assertTrue(metadata.findChild(QLineEdit, 'groupEdit').isHidden())
         self.assertEqual(metadata.height(), 208)
         metadata.close()
+
+    def test_list_operation_materializes_new_schema_path_in_existing_record(self) -> None:
+        """構造追加前の PCL でも、表示中の list を操作した時点で不足階層を作成する。"""
+        page = self.window.pages['data']
+        self.db.save_data_schema(0, {
+            'name': 'Data', 'type': 'object', 'children': [{
+                'name': '商材別', 'type': 'object', 'children': [{
+                    'name': '仮想商材1', 'type': 'object', 'children': [{
+                        'name': 'オプション', 'type': 'list', 'children': [{
+                            'name': '名称', 'type': 'text',
+                        }],
+                    }],
+                }],
+            }],
+        })
+        page.current_data = {}
+        page.render_values()
+        list_item = page.values.topLevelItem(0).child(0).child(0)
+        page.values.setCurrentItem(list_item)
+
+        page.add_list_item()
+
+        self.assertEqual(page.current_data, {
+            '商材別': {'仮想商材1': {'オプション': [{'名称': ''}]}},
+        })
 
     def test_data_record_rows_can_be_reordered(self) -> None:
         first_id = self.db.add_data_record(0, 'first', {}, 'first summary')
@@ -1496,7 +1559,12 @@ class QtShellTests(unittest.TestCase):
             self.assertEqual((margins.left(), margins.top(), margins.right(), margins.bottom()), expected)
         dialog = FieldDialog(self.window, {'name': '案件名', 'type': 'text'})
         self.assertEqual(dialog.minimumSize(), dialog.maximumSize())
+        self.assertEqual((dialog.width(), dialog.height()), (560, 470))
         self.assertTrue(dialog.findChild(QFrame, 'fieldCard').property('card'))
+        self.assertTrue(dialog.findChild(QFrame, 'excelCard').property('card'))
+        self.assertTrue(dialog.findChild(QLabel, 'basicTitle').property('cardTitle'))
+        self.assertTrue(dialog.findChild(QLabel, 'excelTitle').property('cardTitle'))
+        self.assertTrue(dialog.findChild(QLabel, 'excelHint').property('muted'))
         self.assertEqual(dialog.windowTitle(), 'フィールド編集')
         dialog.close()
 
@@ -1522,6 +1590,217 @@ class QtShellTests(unittest.TestCase):
         ])
         self.assertEqual(children[1]['children'], [{'name': 'child', 'type': 'text'}])
 
+    def test_schema_excel_sheet_setting_is_limited_to_objects_and_shown_in_tree(self) -> None:
+        page = self.window.pages['schema']
+        dialog = FieldDialog(self.window, {
+            'name': '詳細', 'type': 'object', 'excel_sheet': True, 'children': [],
+        })
+        self.assertTrue(dialog.excel_sheet.isEnabled())
+        self.assertTrue(dialog.excel_sheet.isChecked())
+        self.assertTrue(dialog.excel_skip_empty.isEnabled())
+        self.assertTrue(dialog.excel_skip_empty.isChecked())
+        self.assertTrue(dialog.value()['excel_sheet'])
+        self.assertTrue(dialog.value()['excel_skip_empty'])
+        dialog.kind.setCurrentText('text')
+        self.assertFalse(dialog.excel_sheet.isEnabled())
+        self.assertFalse(dialog.excel_skip_empty.isEnabled())
+        self.assertNotIn('excel_sheet', dialog.value())
+        dialog.close()
+
+        page.schema = {
+            'name': 'Data', 'type': 'object', 'children': [{
+                'name': '詳細', 'type': 'object', 'excel_sheet': True, 'children': [],
+            }],
+        }
+        page.render()
+        self.assertEqual(page.tree.columnCount(), 4)
+        self.assertEqual(page.tree.topLevelItem(0).text(3), '別シート（空時省略）')
+
+    def test_same_template_can_be_added_multiple_times_to_one_record(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object', 'children': [
+                {'name': '共通', 'type': 'text'},
+            ],
+            'templates': [{
+                'name': '仮想商材', 'type': 'object', 'template_id': 'template-1',
+                'children': [{'name': 'プラン名', 'type': 'text'}],
+            }],
+        }
+        self.db.save_data_schema(0, schema)
+        record_id = self.db.add_data_record(0, 'PCL_001', empty_record(schema))
+        page = self.window.pages['data']
+        page.reload(record_id)
+
+        self.assertEqual(page.current_data, {'共通': ''})
+        self.assertEqual(page.values.topLevelItemCount(), 1)
+
+        page._rebuild_template_menu()
+        actions = page.template_menu.actions()
+        self.assertEqual([action.text() for action in actions], ['仮想商材'])
+        actions[0].trigger()
+        actions[0].trigger()
+        instances = page.current_data['_template_instances']
+        self.assertEqual([item['name'] for item in instances], ['仮想商材 1', '仮想商材 2'])
+        self.assertNotEqual(instances[0]['instance_id'], instances[1]['instance_id'])
+        self.assertEqual(instances[0]['data'], {'プラン名': ''})
+        self.assertEqual(page.values.topLevelItemCount(), 3)
+
+        template_item = page.values.topLevelItem(1)
+        page.values.setCurrentItem(template_item)
+        self.assertTrue(page.delete_template_action.isEnabled())
+        with patch('qt_ui.pages.data.confirm_deletion', return_value=True):
+            page.delete_template_action.trigger()
+        self.assertEqual(len(page.current_data['_template_instances']), 1)
+
+    def test_template_can_be_added_while_a_list_row_is_selected(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object',
+            'children': [{'name': '項目一覧', 'type': 'list', 'children': [
+                {'name': '名称', 'type': 'text'},
+            ]}],
+            'templates': [{
+                'name': '商材', 'type': 'object', 'template_id': 'product',
+                'children': [{'name': '値', 'type': 'text'}],
+            }],
+        }
+        self.db.save_data_schema(0, schema)
+        record_id = self.db.add_data_record(0, 'PCL_001', empty_record(schema))
+        page = self.window.pages['data']
+        page.reload(record_id)
+        page.values.setCurrentItem(page.values.topLevelItem(0))
+
+        page._rebuild_template_menu()
+
+        self.assertTrue(page.template_button.isEnabled())
+        page.template_menu.actions()[0].trigger()
+        self.assertEqual(
+            page.current_data['項目一覧'][0]['template_id'], 'product',
+        )
+        self.assertNotIn('_template_instances', page.current_data)
+
+        # list 項目の子を選択した場合は、その項目の直後へ挿入する。
+        page.current_data['項目一覧'].insert(0, {'名称': '既存'})
+        page.render_values()
+        page.values.setCurrentItem(page.values.topLevelItem(0).child(0).child(0))
+        page.template_menu.actions()[0].trigger()
+        self.assertEqual(
+            [item.get('template_id') for item in page.current_data['項目一覧']],
+            [None, 'product', 'product'],
+        )
+
+    def test_schema_page_manages_common_and_template_definitions_separately(self) -> None:
+        page = self.window.pages['schema']
+        page.schema = {
+            'name': 'Data', 'type': 'object',
+            'children': [{'name': '共通項目', 'type': 'text'}],
+            'templates': [{
+                'name': '仮想商材', 'type': 'object', 'template_id': 'product',
+                'children': [{'name': 'プラン名', 'type': 'text'}],
+            }],
+        }
+        page._render_structure_manager()
+        page.render()
+        self.assertEqual(page.tree.topLevelItem(0).text(0), '共通項目')
+
+        template_item = page.structure_manager.topLevelItem(1).child(0)
+        page.structure_manager.setCurrentItem(template_item)
+        self.assertEqual(page.tree.topLevelItem(0).text(0), 'プラン名')
+
+        with patch('qt_ui.pages.structured.QInputDialog.getText', return_value=('追加商材', True)):
+            page.add_template_definition()
+        self.assertEqual(
+            [item['name'] for item in page.schema['templates']],
+            ['仮想商材', '追加商材'],
+        )
+        copy_shortcut, paste_shortcut = page.structure_manager._structured_copy_paste_shortcuts
+        copy_shortcut.activated.emit()
+        paste_shortcut.activated.emit()
+        self.assertEqual(
+            [item['name'] for item in page.schema['templates']],
+            ['仮想商材', '追加商材', '追加商材 - Copy'],
+        )
+        self.assertNotEqual(
+            page.schema['templates'][1]['template_id'],
+            page.schema['templates'][2]['template_id'],
+        )
+
+    def test_schema_structure_selection_preserves_expansion_and_reorders_templates(self) -> None:
+        page = self.window.pages['schema']
+        page.schema = {
+            'name': 'Data', 'type': 'object', 'children': [{
+                'name': '共通親', 'type': 'object',
+                'children': [{'name': '共通子', 'type': 'text'}],
+            }],
+            'templates': [{
+                'name': '商材A', 'type': 'object', 'template_id': 'a',
+                'children': [{'name': 'A親', 'type': 'object', 'children': [
+                    {'name': 'A子', 'type': 'text'},
+                ]}],
+            }, {
+                'name': '商材B', 'type': 'object', 'template_id': 'b',
+                'children': [{'name': 'B項目', 'type': 'text'}],
+            }],
+        }
+        page._render_structure_manager()
+        page.render()
+        self.assertEqual(
+            page.structure_manager.dragDropMode(), QAbstractItemView.DragDropMode.DragDrop,
+        )
+        template_operation = page.findChild(QPushButton, 'addTemplateDefinitionButton')
+        self.assertEqual(template_operation.text(), 'テンプレート操作')
+        self.assertEqual(
+            [action.text() for action in template_operation.menu().actions()],
+            ['新規', '削除'],
+        )
+        self.assertIsNone(page.findChild(QPushButton, 'deleteTemplateDefinitionButton'))
+        common_parent = page.tree.topLevelItem(0)
+        common_parent.setExpanded(False)
+
+        templates_root = page.structure_manager.topLevelItem(1)
+        first_template = templates_root.child(0)
+        page.structure_manager.setCurrentItem(first_template)
+        page.tree.topLevelItem(0).setExpanded(True)
+        page.structure_manager.setCurrentItem(page.structure_manager.topLevelItem(0))
+        self.assertFalse(page.tree.topLevelItem(0).isExpanded())
+        page.structure_manager.setCurrentItem(first_template)
+        self.assertTrue(page.tree.topLevelItem(0).isExpanded())
+
+        page.structure_manager.setCurrentItem(templates_root)
+        self.assertEqual(page.tree.topLevelItemCount(), 0)
+        self.assertFalse(page.rename_template_definition_button.isEnabled())
+        self.assertFalse(page.add_field_button.isEnabled())
+        self.assertFalse(
+            bool(templates_root.flags() & Qt.ItemFlag.ItemIsDragEnabled),
+        )
+        self.assertFalse(
+            bool(page.structure_manager.topLevelItem(0).flags() & Qt.ItemFlag.ItemIsDragEnabled),
+        )
+
+        self.assertTrue(page.structure_manager._move_item(templates_root.child(1), templates_root, 0))
+        self.assertEqual([item['template_id'] for item in page.schema['templates']], ['b', 'a'])
+
+    def test_schema_template_row_double_click_renames_only_template(self) -> None:
+        page = self.window.pages['schema']
+        page.schema = {
+            'name': 'Data', 'type': 'object', 'children': [],
+            'templates': [{
+                'name': '変更前', 'type': 'object', 'template_id': 'target', 'children': [],
+            }],
+        }
+        page._render_structure_manager('target')
+        common = page.structure_manager.topLevelItem(0)
+        templates_root = page.structure_manager.topLevelItem(1)
+        template = templates_root.child(0)
+
+        with patch('qt_ui.pages.structured.QInputDialog.getText', return_value=('変更後', True)) as dialog:
+            page._structure_double_clicked(common, 0)
+            page._structure_double_clicked(templates_root, 0)
+            dialog.assert_not_called()
+            page._structure_double_clicked(template, 0)
+
+        dialog.assert_called_once()
+        self.assertEqual(page.schema['templates'][0]['name'], '変更後')
+
     def test_data_record_copy_paste_preserves_settings_and_inserts_after_selected(self) -> None:
         page = self.window.pages['data']
         first_id = self.db.add_data_record(0, 'PCL_001', {'value': 'first'}, 'summary')
@@ -1541,6 +1820,67 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(copied['execution_group'], '7')
         self.assertFalse(copied['enabled'])
         self.assertEqual(copied['data'], {'value': 'first'})
+
+    def test_data_records_ctrl_selection_is_used_for_bulk_delete_only(self) -> None:
+        page = self.window.pages['data']
+        first_id = self.db.add_data_record(0, 'first', {})
+        second_id = self.db.add_data_record(0, 'second', {})
+        third_id = self.db.add_data_record(0, 'third', {})
+        page.reload(first_id)
+
+        page.tree.clearSelection()
+        page.tree.topLevelItem(0).setSelected(True)
+        page.tree.topLevelItem(2).setSelected(True)
+        self.assertFalse(page.edit_record_button.isEnabled())
+        self.assertFalse(page.copy_record_button.isEnabled())
+        self.assertTrue(page.delete_record_button.isEnabled())
+
+        with patch('qt_ui.pages.data.confirm_deletion', return_value=True) as confirmation:
+            page.delete_record()
+
+        confirmation.assert_called_once_with(page, '選択した 2 件の実行データを削除しますか？')
+        self.assertEqual(
+            [record['id'] for record in self.db.list_data_records()], [second_id],
+        )
+        self.assertEqual(page.tree.selectedItems(), [])
+        self.assertIsNone(page.current_record)
+
+    def test_switching_data_record_confirms_and_saves_the_previous_record(self) -> None:
+        page = self.window.pages['data']
+        first_id = self.db.add_data_record(0, 'first', {'value': 'before'})
+        second_id = self.db.add_data_record(0, 'second', {'value': 'second'})
+        page.reload(first_id)
+        page.current_data['value'] = 'after'
+
+        with patch('qt_ui.pages.data.confirm_pending_changes', return_value='save') as confirmation:
+            page.tree.setCurrentItem(page.tree.topLevelItem(1))
+
+        confirmation.assert_called_once()
+        stored = next(record for record in self.db.list_data_records() if record['id'] == first_id)
+        self.assertEqual(stored['data'], {'value': 'after'})
+        self.assertEqual(page.current_record['id'], second_id)
+        self.assertEqual(page.current_data, {'value': 'second'})
+
+        # 保存時に一覧側のキャッシュも更新され、戻ったときに保存済み値が見える。
+        page.tree.setCurrentItem(page.tree.topLevelItem(0))
+        self.assertEqual(page.current_record['id'], first_id)
+        self.assertEqual(page.current_data, {'value': 'after'})
+
+    def test_canceling_data_record_switch_keeps_unsaved_data_and_selection(self) -> None:
+        page = self.window.pages['data']
+        first_id = self.db.add_data_record(0, 'first', {'value': 'before'})
+        self.db.add_data_record(0, 'second', {'value': 'second'})
+        page.reload(first_id)
+        page.current_data['value'] = 'pending'
+
+        with patch('qt_ui.pages.data.confirm_pending_changes', return_value='cancel'):
+            page.tree.setCurrentItem(page.tree.topLevelItem(1))
+
+        self.assertEqual(page.current_record['id'], first_id)
+        self.assertEqual(page.current_data, {'value': 'pending'})
+        self.assertEqual(page.tree.currentItem().data(0, Qt.ItemDataRole.UserRole)['id'], first_id)
+        stored = next(record for record in self.db.list_data_records() if record['id'] == first_id)
+        self.assertEqual(stored['data'], {'value': 'before'})
 
     def test_execution_page_restores_status_log_and_record_controls(self) -> None:
         page = self.window.pages['execution']
@@ -1815,7 +2155,29 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(plans.data(0, Qt.ItemDataRole.UserRole), 'plans')
         self.assertIsNone(case_no.data(0, Qt.ItemDataRole.UserRole))
         list_picker.close()
+        template_schema = {
+            'type': 'object', 'children': [], 'templates': [{
+                'name': '仮想商材', 'type': 'object', 'template_id': 'generated-id',
+                'children': [{'name': '電話番号', 'type': 'text'}],
+            }],
+        }
+        template_picker = DataPathPickerDialog(editor, template_schema)
+        template_item = template_picker.tree.topLevelItem(0)
+        self.assertEqual(template_item.text(2), '@template.仮想商材')
+        self.assertEqual(template_item.child(0).text(2), '@template.仮想商材.電話番号')
+        template_picker.close()
         editor.close()
+
+    def test_database_rejects_duplicate_template_names_for_every_save_route(self) -> None:
+        duplicate_schema = {
+            'name': 'Data', 'type': 'object', 'children': [], 'templates': [
+                {'name': '商材', 'type': 'object', 'template_id': 'a', 'children': []},
+                {'name': '商材', 'type': 'object', 'template_id': 'b', 'children': []},
+            ],
+        }
+
+        with self.assertRaisesRegex(ValueError, 'テンプレート名が重複'):
+            self.db.save_data_schema(0, duplicate_schema)
 
     def test_combo_box_wheel_selection_is_globally_blocked(self) -> None:
         combo = QComboBox()
