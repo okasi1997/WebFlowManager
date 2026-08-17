@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QHeaderView, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QPushButton,
+    QHeaderView, QInputDialog, QLabel, QLineEdit, QPushButton,
     QTreeWidget, QTreeWidgetItem, QWidget,
 )
 
@@ -15,8 +15,7 @@ from browser.auth_session import AuthBrowserSession
 from browser.profile_runtime import clear_profile, persistent_profile_dir
 from core.database import Database
 from i18n import tr
-from ..table_view import configure_table_view
-from ..table_view import capture_scroll_position, restore_scroll_position
+from ..table_view import bind_delete_key, capture_scroll_position, configure_table_view, restore_scroll_position
 from ..ui_loader import confirm_deletion, load_ui_into, require, show_information, show_warning
 
 DEFAULT_PROFILE = 'default'
@@ -40,7 +39,6 @@ class AuthPage(QWidget):
         self.session = AuthBrowserSession(project_dir, lambda _message: None)
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='qt-auth')
         load_ui_into(self, 'auth.ui')
-        body_layout = require(self, QHBoxLayout, 'bodyLayout')
         self.profiles = require(self, QTreeWidget, 'profileTree')
         configure_table_view(self.profiles)
         # 小さい画面では名前列だけを縮め、状態列が常に見えるようにする。
@@ -57,6 +55,7 @@ class AuthPage(QWidget):
         delete = require(self, QPushButton, 'deleteProfileButton')
         create.clicked.connect(self.new_profile)
         delete.clicked.connect(self.delete_profile)
+        bind_delete_key(self.profiles, self.delete_profile)
         self.selected = require(self, QLabel, 'selectedLabel')
         self.path = require(self, QLabel, 'pathLabel')
         self.url = require(self, QLineEdit, 'urlEdit')
@@ -127,18 +126,26 @@ class AuthPage(QWidget):
         self.reload()
 
     def delete_profile(self) -> None:
-        name = self.profiles.currentItem().text(0)
-        if name in {DEFAULT_PROFILE, NO_PROFILE}:
+        names = [
+            item.text(0) for item in self.profiles.selectedItems()
+            if item.text(0) not in {DEFAULT_PROFILE, NO_PROFILE}
+        ]
+        if not names:
             show_information(self, tr('common.notice'), tr('login.protected_state_delete_denied'))
             return
-        if not confirm_deletion(self, f'{name} を削除しますか？'):
+        message = (
+            f'{names[0]} を削除しますか？' if len(names) == 1
+            else f'選択した {len(names)} 件のログイン状態を削除しますか？'
+        )
+        if not confirm_deletion(self, message):
             return
-        path = profile_path(self.project_dir, name)
-        if path is not None and path.exists():
-            path.unlink()
-        directory = persistent_profile_dir(self.project_dir, path)
-        if directory is not None:
-            clear_profile(self.project_dir, directory)
+        for name in names:
+            path = profile_path(self.project_dir, name)
+            if path is not None and path.exists():
+                path.unlink()
+            directory = persistent_profile_dir(self.project_dir, path)
+            if directory is not None:
+                clear_profile(self.project_dir, directory)
         self.db.set_auth_profile(DEFAULT_PROFILE)
         self.reload()
 

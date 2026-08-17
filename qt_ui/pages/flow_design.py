@@ -10,12 +10,11 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 from PySide6.QtCore import QEvent, QTimer, Qt
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QFrame, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QSpinBox, QSplitter,
-    QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+    QTabWidget, QTreeWidget, QTreeWidgetItem,
     QWidget,
 )
 
@@ -34,7 +33,7 @@ from ..ui_loader import (
     show_error, show_information, show_warning,
 )
 from ..table_view import (
-    HierarchicalReorderTreeWidget, bind_structured_copy_paste, bulk_view_update, capture_scroll_position,
+    HierarchicalReorderTreeWidget, bind_delete_key, bind_structured_copy_paste, bulk_view_update, capture_scroll_position,
     capture_tree_display_state, configure_row_move_tooltips, configure_table_view,
     restore_scroll_position, restore_tree_display_state,
     set_column_layout, set_row_enabled_appearance, set_tree_expanded, update_preserving_scroll,
@@ -1045,6 +1044,7 @@ class GuardConditionEditorDialog(QDialog):
         for column, width in enumerate((320, 140, 260)):
             self.tree.setColumnWidth(column, width)
         self.tree.itemDoubleClicked.connect(lambda *_: self.edit_rule())
+        bind_delete_key(self.tree, self.delete_rule)
         add = require(self, QPushButton, 'addRuleButton')
         add.clicked.connect(self.add_rule)
         require(self, QPushButton, 'editRuleButton').clicked.connect(self.edit_rule)
@@ -1099,9 +1099,12 @@ class GuardConditionEditorDialog(QDialog):
             self.refresh(index)
 
     def delete_rule(self) -> None:
-        item = self.tree.currentItem()
-        if item is not None:
-            del self.rules[int(item.data(0, Qt.ItemDataRole.UserRole))]
+        indexes = sorted({
+            int(item.data(0, Qt.ItemDataRole.UserRole)) for item in self.tree.selectedItems()
+        }, reverse=True)
+        if indexes:
+            for index in indexes:
+                del self.rules[index]
             self.refresh()
 
     def result_data(self) -> dict[str, Any]:
@@ -1268,6 +1271,7 @@ class FlowDesignPage(QWidget):
             self.workflow_table, 'workflow', self._copy_workflow_payload,
             self._paste_workflow_payload,
         )
+        bind_delete_key(self.workflow_table, self.delete_workflow)
         add_workflow = require(self, QPushButton, 'newWorkflowButton')
         add_workflow_menu = QMenu(add_workflow)
         add_workflow_menu.addAction('フロー追加', self.add_workflow)
@@ -1322,6 +1326,7 @@ class FlowDesignPage(QWidget):
         bind_structured_copy_paste(
             self.event_tree, 'event', self._copy_event_payload, self._paste_event_payload,
         )
+        bind_delete_key(self.event_tree, self.delete_event)
         add = require(self, QPushButton, 'addEventButton')
         add_menu = QMenu(add)
         add_menu.addAction(tr('event.add'), self.add_event)
@@ -1413,6 +1418,9 @@ class FlowDesignPage(QWidget):
                 self.current_workflow_id = None
                 self.event_title.setText(tr('flow.selection_required'))
                 self.event_tree.clear()
+        # 一括更新では選択通知を抑止するため、左側の選択結果を右側へ明示的に反映する。
+        if self.workflow_table.currentItem() is not None:
+            self._workflow_selected()
         self._update_workflow_group_toggle()
 
     def _workflow_selected(self) -> None:
@@ -1939,18 +1947,36 @@ class FlowDesignPage(QWidget):
         self.reload(row['id'])
 
     def delete_workflow(self) -> None:
-        selected_item = self.workflow_table.currentItem()
-        selected_data = selected_item.data(0, self.WORKFLOW_DATA_ROLE) if selected_item is not None else {}
-        if selected_data.get('kind') == 'group':
-            if confirm_deletion(self, 'グループ内の業務フローも削除されます。よろしいですか？'):
-                self.db.delete_workflow_group(int(selected_data['node_id']))
-                self.current_workflow_id = None
-                self.reload(select_first=False)
+        selected_items = set(self.workflow_table.selectedItems())
+        # 親グループとその子が同時選択された場合、親グループだけを削除対象にする。
+        items = []
+        for item in selected_items:
+            parent = item.parent()
+            ancestor_selected = False
+            while parent is not None:
+                if parent in selected_items:
+                    ancestor_selected = True
+                    break
+                parent = parent.parent()
+            if not ancestor_selected:
+                items.append(item)
+        rows = [item.data(0, self.WORKFLOW_DATA_ROLE) or {} for item in items]
+        if not rows:
             return
-        row = self._selected_workflow()
-        if row is None or not confirm_deletion(self, tr('flow.delete_confirmation')):
+        has_group = any(row.get('kind') == 'group' for row in rows)
+        message = (
+            'グループ内の業務フローも削除されます。よろしいですか？'
+            if len(rows) == 1 and has_group else
+            tr('flow.delete_confirmation') if len(rows) == 1 else
+            f'選択した {len(rows)} 件を削除しますか？'
+        )
+        if not confirm_deletion(self, message):
             return
-        self.db.delete_workflow(row['id'])
+        for row in rows:
+            if row.get('kind') == 'group':
+                self.db.delete_workflow_group(int(row['node_id']))
+            elif row.get('id') is not None:
+                self.db.delete_workflow(int(row['id']))
         self.current_workflow_id = None
         self.reload(select_first=False)
 
@@ -2116,19 +2142,27 @@ class FlowDesignPage(QWidget):
         self.load_events(row['id'])
 
     def delete_event(self) -> None:
-        row = self._selected_event()
-        if row is None or self.current_workflow_id is None:
+        if self.current_workflow_id is None:
+            return
+        selected_ids = {
+            int((item.data(0, Qt.ItemDataRole.UserRole + 1) or {})['id'])
+            for item in self.event_tree.selectedItems()
+            if (item.data(0, Qt.ItemDataRole.UserRole + 1) or {}).get('id') is not None
+        }
+        if not selected_ids:
             return
         if not confirm_deletion(self, tr('event.delete_confirmation')):
             return
         rows = [dict(item) for item in self.db.list_events(self.current_workflow_id)]
-        pair_id = self._paired_boundary_event_id(rows, row['id'])
-        delete_ids = [row['id']]
-        if pair_id is not None:
-            start = next(index for index, item in enumerate(rows) if item['id'] == row['id'])
+        delete_ids = set(selected_ids)
+        for event_id in selected_ids:
+            pair_id = self._paired_boundary_event_id(rows, event_id)
+            if pair_id is None:
+                continue
+            start = next(index for index, item in enumerate(rows) if item['id'] == event_id)
             end = next(index for index, item in enumerate(rows) if item['id'] == pair_id)
-            delete_ids = [item['id'] for item in rows[min(start, end):max(start, end) + 1]]
-        self.db.delete_events(delete_ids, self.current_workflow_id)
+            delete_ids.update(item['id'] for item in rows[min(start, end):max(start, end) + 1])
+        self.db.delete_events(sorted(delete_ids), self.current_workflow_id)
         self.load_events()
 
     @staticmethod

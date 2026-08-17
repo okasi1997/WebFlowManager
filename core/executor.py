@@ -581,7 +581,68 @@ class WorkflowExecutor:
         raise ValueError(f"group '{events[start]['name']}' is missing group_end")
 
     @staticmethod
-    def _resolve_data(root_data: dict[str, Any] | None, path: str, loop_context: dict[str, Any]) -> Any:
+    def _matching_template_data(value: Any, template_key: str) -> list[dict[str, Any]]:
+        """指定したテンプレート ID または名前に一致する実体データを返す。"""
+        return [
+            instance.get('data', {}) for _path, instance in iter_template_instances(value)
+            if template_key in {
+                str(instance.get('template_id', '')),
+                str(instance.get('template_name', '')).strip(),
+            }
+        ]
+
+    @classmethod
+    def _template_data_in_scope(
+        cls,
+        root_data: dict[str, Any],
+        template_path: str,
+        template_key: str,
+        loop_context: dict[str, Any],
+    ) -> Any:
+        """現在のループ要素を優先してテンプレート実体を解決する。"""
+        if template_path in loop_context:
+            return loop_context[template_path]
+
+        # 内側のループから順に探索し、現在処理中のデータ要素に属する
+        # テンプレートを、ルート全体にある同種テンプレートより優先する。
+        for context_path in reversed(loop_context):
+            current_item = loop_context[context_path]
+            matches = cls._matching_template_data(current_item, template_key)
+            if matches:
+                return matches[0] if len(matches) == 1 else matches
+
+        # ループ外では従来どおり、同じテンプレートの全実体を一覧として返す。
+        return cls._matching_template_data(root_data, template_key)
+
+    @staticmethod
+    def _resolve_child_data(
+        current: Any,
+        child_parts: list[str],
+        prefix: list[str],
+        loop_context: dict[str, Any],
+    ) -> Any:
+        """辞書階層をたどり、途中のリストは現在のループ要素へ置き換える。"""
+        for part in child_parts:
+            current_path = '.'.join(prefix)
+            if isinstance(current, list):
+                if current_path not in loop_context:
+                    raise ValueError(
+                        f'{tr("execution.field_prefix")}{current_path}'
+                        f'{tr("execution.list_requires_loop_suffix")}'
+                    )
+                current = loop_context[current_path]
+            prefix.append(part)
+            if not isinstance(current, dict) or part not in current:
+                raise ValueError(f'{tr("execution.field_missing_prefix")}{".".join(prefix)}')
+            current = current[part]
+
+        current_path = '.'.join(prefix)
+        if isinstance(current, list) and current_path in loop_context:
+            return loop_context[current_path]
+        return current
+
+    @classmethod
+    def _resolve_data(cls, root_data: dict[str, Any] | None, path: str, loop_context: dict[str, Any]) -> Any:
         if root_data is None:
             raise ValueError(
                 f'{tr("execution.linked_data_prefix")}{path}'
@@ -590,43 +651,11 @@ class WorkflowExecutor:
         parts = path.split('.')
         if len(parts) >= 2 and parts[0] == '@template':
             template_path = '.'.join(parts[:2])
-            current: Any = [
-                item.get('data', {}) for _path, item in iter_template_instances(root_data)
-                if parts[1] in {
-                    str(item.get('template_id', '')),
-                    str(item.get('template_name', '')).strip(),
-                }
-            ]
-            if template_path in loop_context:
-                current = loop_context[template_path]
-            elif len(parts) > 2:
-                raise ValueError(
-                    f'{tr("execution.field_prefix")}{template_path}'
-                    f'{tr("execution.list_requires_loop_suffix")}'
-                )
-            prefix = parts[:2]
-            for part in parts[2:]:
-                prefix.append(part)
-                if not isinstance(current, dict) or part not in current:
-                    raise ValueError(f'{tr("execution.field_missing_prefix")}{".".join(prefix)}')
-                current = current[part]
-            return current
-        current: Any = root_data
-        prefix: list[str] = []
-        for part in parts:
-            prefix.append(part)
-            current_path = '.'.join(prefix)
-            if not isinstance(current, dict) or part not in current:
-                raise ValueError(f'{tr("execution.field_missing_prefix")}{current_path}')
-            current = current[part]
-            if isinstance(current, list) and current_path in loop_context:
-                current = loop_context[current_path]
-            elif isinstance(current, list) and current_path != path:
-                raise ValueError(
-                    f'{tr("execution.field_prefix")}{current_path}'
-                    f'{tr("execution.list_requires_loop_suffix")}'
-                )
-        return current
+            current = cls._template_data_in_scope(
+                root_data, template_path, parts[1], loop_context,
+            )
+            return cls._resolve_child_data(current, parts[2:], parts[:2], loop_context)
+        return cls._resolve_child_data(root_data, parts, [], loop_context)
 
     @classmethod
     def _resolve_guard_data(cls, root_data: dict[str, Any] | None, path: str, loop_context: dict[str, Any]) -> Any:
@@ -654,8 +683,8 @@ class WorkflowExecutor:
 
         return DATA_REFERENCE_PATTERN.sub(replace, text)
 
-    @staticmethod
-    def _assign_data(root_data: dict[str, Any] | None, path: str, loop_context: dict[str, Any], value: Any) -> None:
+    @classmethod
+    def _assign_data(cls, root_data: dict[str, Any] | None, path: str, loop_context: dict[str, Any], value: Any) -> None:
         """取得した値を、現在処理中の PCL または list 要素へ書き戻す。"""
         if root_data is None:
             raise ValueError(
@@ -665,7 +694,9 @@ class WorkflowExecutor:
         parts = path.split('.')
         if len(parts) >= 3 and parts[0] == '@template':
             template_path = '.'.join(parts[:2])
-            current: Any = loop_context.get(template_path)
+            current = cls._template_data_in_scope(
+                root_data, template_path, parts[1], loop_context,
+            )
             if not isinstance(current, dict):
                 raise ValueError(
                     f'{tr("execution.field_prefix")}{template_path}'
@@ -681,6 +712,13 @@ class WorkflowExecutor:
                     current[part] = value
                     return
                 current = current[part]
+                if isinstance(current, list):
+                    if current_path not in loop_context:
+                        raise ValueError(
+                            f'{tr("execution.field_prefix")}{current_path}'
+                            f'{tr("execution.list_requires_loop_suffix")}'
+                        )
+                    current = loop_context[current_path]
                 if not isinstance(current, dict):
                     raise ValueError(f'{tr("execution.field_missing_prefix")}{current_path}')
             return

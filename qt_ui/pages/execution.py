@@ -10,10 +10,10 @@ from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QTimer, Qt
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygon
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QComboBox, QDialog, QDialogButtonBox,
-    QFrame, QHBoxLayout, QInputDialog, QLabel, QMenu, QPlainTextEdit,
+    QFrame, QInputDialog, QLabel, QMenu, QPlainTextEdit,
     QHeaderView, QProgressBar, QPushButton, QSpinBox, QStackedWidget, QStyle,
     QStyledItemDelegate, QStyleOptionHeader, QStyleOptionViewItem, QTreeWidget,
-    QTreeWidgetItem, QVBoxLayout, QWidget,
+    QTreeWidgetItem, QWidget,
 )
 
 from core.conditions import decode_guard
@@ -341,15 +341,9 @@ class ExecutionPage(QWidget):
         self._running_display_order: list[int] | None = None
         load_ui_into(self, 'execution.ui')
 
-        root = require(self, QVBoxLayout, 'rootLayout')
-        summary_card = require(self, QFrame, 'summaryCard')
-        progress_card = require(self, QFrame, 'progressCard')
-        summary_layout = require(self, QHBoxLayout, 'summaryLayout')
         separator = require(self, QFrame, 'summarySeparator1')
         separator.setFrameShape(QFrame.Shape.NoFrame)
         separator.setProperty('summarySeparator', True)
-        progress_layout = require(self, QHBoxLayout, 'progressLayout')
-        toolbar = require(self, QHBoxLayout, 'toolbar')
 
         self.run_button = require(self, QPushButton, 'runButton')
         self.run_button.clicked.connect(self.start)

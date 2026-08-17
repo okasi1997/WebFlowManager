@@ -44,6 +44,14 @@ def bind_structured_copy_paste(
     view._structured_copy_paste_shortcuts = shortcuts
 
 
+def bind_delete_key(view: QAbstractItemView, delete_selected: Callable[[], None]) -> None:
+    """Delete キーを画面上の削除ボタンと同じ処理へ接続する。"""
+    shortcut = QShortcut(QKeySequence(Qt.Key.Key_Delete), view, activated=delete_selected)
+    shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+    # Qt の所有権に加え Python 側でも参照を保持し、予期しない破棄を防ぐ。
+    view._delete_shortcut = shortcut
+
+
 def unique_copy_name(name: str, existing_names: Iterable[str]) -> str:
     """既存の複製表記を維持しながら、重複しない名前を返す。"""
     existing = set(existing_names)
@@ -393,7 +401,8 @@ def configure_table_view(view: QAbstractItemView, *, reorder: bool = False) -> N
     """表形式ビューに共通の表示・選択・列操作設定を適用する。"""
     view.setAlternatingRowColors(True)
     view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-    view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+    # 編集可能な一覧を含め、表形式ビューの選択操作を Ctrl / Shift で統一する。
+    view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
     view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
     view.setItemDelegate(_RowOnlyItemDelegate(view))
     # 行や右端セルを選択しても、ビューの横・縦位置を勝手に変えない。

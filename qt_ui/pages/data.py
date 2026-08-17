@@ -5,11 +5,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtCore import QSignalBlocker, QTimer, Qt
+from PySide6.QtGui import QBrush, QColor, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QDialogButtonBox, QFileDialog, QFrame,
-    QInputDialog, QLabel, QLineEdit, QMenu, QPushButton,
+    QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QPushButton,
     QSplitter, QTreeWidget, QTreeWidgetItem, QWidget,
 )
 
@@ -24,14 +24,14 @@ from core.excel_io import read_records_excel, write_records_excel
 from i18n import tr
 from .structured import default_value, empty_record, record_default_value
 from ..table_view import (
-    HierarchicalReorderTreeWidget, bind_structured_copy_paste, bulk_view_update, capture_scroll_position,
+    HierarchicalReorderTreeWidget, bind_delete_key, bind_structured_copy_paste, bulk_view_update, capture_scroll_position,
     capture_tree_display_state, configure_table_view, order_with_inserted_after,
-    restore_scroll_position, restore_tree_display_state,
+    restore_scroll_position, restore_tree_display_state, set_tree_expanded,
     unique_copy_name,
 )
 from ..ui_loader import (
     confirm_deletion, confirm_import_overwrite, confirm_pending_changes, load_ui_into, localize_dialog_buttons, require,
-    show_file_exported, show_file_imported, show_information, show_warning,
+    set_tree_toggle_icon, show_file_exported, show_file_imported, show_information, show_warning,
 )
 
 
@@ -72,16 +72,21 @@ class DataPage(QWidget):
         self.db = db
         self.current_record: dict[str, Any] | None = None
         self.current_data: dict[str, Any] = {}
+        self._pending_record_data: dict[int, dict[str, Any]] = {}
         self._record_switch_in_progress = False
         load_ui_into(self, 'data.ui')
         record_card = require(self, QFrame, 'recordCard')
         value_card = require(self, QFrame, 'valueCard')
         splitter = require(self, QSplitter, 'dataSplitter')
+        self._data_splitter = splitter
+        self._splitter_user_adjusted = False
+        self._splitter_resize_pending = False
         splitter.setChildrenCollapsible(False)
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 3)
+        # 左側は操作ボタンが収まる最小幅を維持し、余剰幅はデータ内容へ割り当てる。
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
         splitter.setHandleWidth(6)
-        splitter.setSizes([430, 700])
+        splitter.splitterMoved.connect(self._mark_splitter_adjusted)
         designer_tree = require(self, QTreeWidget, 'recordTree')
         tree_layout = designer_tree.parentWidget().layout()
         self.tree = HierarchicalReorderTreeWidget(designer_tree.parentWidget())
@@ -106,6 +111,7 @@ class DataPage(QWidget):
         bind_structured_copy_paste(
             self.tree, 'data-record', self._copy_record_payload, self._paste_record_payload,
         )
+        bind_delete_key(self.tree, self.delete_record)
         self.values = require(self, QTreeWidget, 'valueTree')
         configure_table_view(self.values)
         self.values.headerItem().setText(2, tr('値  ✎'))
@@ -113,6 +119,7 @@ class DataPage(QWidget):
         for column, width in enumerate((190, 100, 260, 260)):
             self.values.setColumnWidth(column, width)
         self.values.itemDoubleClicked.connect(lambda *_: self.edit_value())
+        bind_delete_key(self.values, self._delete_selected_value)
         callbacks = {
             'addRecordButton': self.add_record, 'editRecordButton': self.edit_record,
             'copyRecordButton': self.copy_record, 'deleteRecordButton': self.delete_record,
@@ -161,7 +168,57 @@ class DataPage(QWidget):
         io_menu.addAction('Excel を出力', self.export_excel)
         io_menu.addAction('Excel を読み込む', self.import_excel)
         io_button.setMenu(io_menu)
+        # メニュー設定後の最終 sizeHint を使い、左右どちらの操作ボタンも潰れない幅を確保する。
+        for card, toolbar_name in (
+            (record_card, 'recordToolbar'), (value_card, 'valueToolbar'),
+        ):
+            toolbar = require(self, QHBoxLayout, toolbar_name)
+            margins = card.layout().contentsMargins()
+            buttons = [
+                toolbar.itemAt(index).widget()
+                for index in range(toolbar.count())
+                if toolbar.itemAt(index).widget() is not None
+            ]
+            button_width = sum(button.sizeHint().width() for button in buttons)
+            # spacer 自体は伸縮させるが、各 layout item 間の余白は最小幅へ含める。
+            button_width += toolbar.spacing() * max(0, toolbar.count() - 1)
+            card.setMinimumWidth(max(
+                card.minimumWidth(), button_width + margins.left() + margins.right(),
+            ))
+        self.value_toggle_all_button = require(self, QPushButton, 'valueToggleAllButton')
+        self.value_toggle_all_button.clicked.connect(self._toggle_all_values)
+        self.values.itemExpanded.connect(lambda *_: self._sync_value_toggle_button())
+        self.values.itemCollapsed.connect(lambda *_: self._sync_value_toggle_button())
         self.reload()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """ユーザーが分割線を動かすまでは、余剰幅を右カードへ配分する。"""
+        super().resizeEvent(event)
+        if self._splitter_user_adjusted or self._splitter_resize_pending:
+            return
+        self._splitter_resize_pending = True
+        # 親画面のリサイズ後に一度だけ実行し、連続した resizeEvent をまとめる。
+        QTimer.singleShot(0, self._apply_compact_split)
+
+    def _mark_splitter_adjusted(self, _position: int, _index: int) -> None:
+        """手動調整後は自動配置を止め、利用者が決めた幅を維持する。"""
+        self._splitter_user_adjusted = True
+
+    def _apply_compact_split(self) -> None:
+        """左カードを操作ボタンが欠けない最小幅へ寄せる。"""
+        self._splitter_resize_pending = False
+        if self._splitter_user_adjusted:
+            return
+        left_minimum = self._data_splitter.widget(0).minimumWidth()
+        right_minimum = self._data_splitter.widget(1).minimumWidth()
+        available = max(0, self._data_splitter.width() - self._data_splitter.handleWidth())
+        # setSizes 自体を手動ドラッグとして扱わないよう、通知だけを一時停止する。
+        blocker = QSignalBlocker(self._data_splitter)
+        self._data_splitter.setSizes([
+            left_minimum,
+            max(right_minimum, available - left_minimum),
+        ])
+        del blocker
 
     def reload(self, select_id: int | None = None) -> None:
         scroll = capture_scroll_position(self.tree)
@@ -230,78 +287,63 @@ class DataPage(QWidget):
 
     def _record_data(self, record: dict[str, Any] | None) -> dict[str, Any]:
         """旧テンプレート値も画面を開いた時点で新しい実体形式へ変換する。"""
+        record_id = int(record['id']) if record is not None else None
+        if record_id is not None and record_id in self._pending_record_data:
+            return copy.deepcopy(self._pending_record_data[record_id])
         data = copy.deepcopy((record or {}).get('data', {}))
         return migrate_legacy_template_data(self.db.get_data_schema(), data)
 
     def _select_record(
             self, current: QTreeWidgetItem | None, previous: QTreeWidgetItem | None,
     ) -> None:
-        """PCL 切替前に未保存内容を確認し、別 PCL への誤保存を防ぐ。"""
+        """PCL ごとの変更を一時保持し、確認を出さずに表示を切り替える。"""
         if self._record_switch_in_progress:
             return
         next_record = (
             dict(current.data(0, Qt.ItemDataRole.UserRole)) if current is not None else None
         )
-        current_id = (self.current_record or {}).get('id')
-        next_id = (next_record or {}).get('id')
-        if current_id != next_id and self.has_pending_changes():
-            choice = confirm_pending_changes(
-                self, '実行データに未保存の変更があります。保存しますか？',
-            )
-            if choice == 'save':
-                self._save_current_record_to_db()
-            elif choice == 'discard':
-                pass
-            else:
-                self._record_switch_in_progress = True
-                try:
-                    self.tree.setCurrentItem(previous)
-                finally:
-                    self._record_switch_in_progress = False
-                return
+        self._cache_current_record()
         self.current_record = next_record
         self.current_data = self._record_data(next_record)
         self.render_values()
 
     def has_pending_changes(self) -> bool:
-        return bool(
-            self.current_record
-            and self.current_data != self.current_record.get('data', {})
-        )
+        self._cache_current_record()
+        return bool(self._pending_record_data)
 
     def confirm_pending_changes(self) -> bool:
         if not self.has_pending_changes():
             return True
         choice = confirm_pending_changes(self, '実行データに未保存の変更があります。保存しますか？')
         if choice == 'save':
-            self._save_current_record_to_db()
+            self._save_pending_records_to_db()
             return True
         if choice == 'discard':
-            self.current_data = copy.deepcopy(self.current_record.get('data', {}))
-            self.render_values()
+            selected_id = (self.current_record or {}).get('id')
+            self._pending_record_data.clear()
+            self.reload(selected_id)
             return True
         return False
 
-    def _save_current_record_to_db(self) -> None:
-        """画面の選択状態ではなく、編集中の PCL ID へ確実に保存する。"""
+    def _cache_current_record(self) -> None:
+        """現在の編集値を PCL 単位で保持し、元に戻った値はキャッシュから除外する。"""
         if self.current_record is None:
             return
-        self.db.update_data_record(
-            self.current_record['id'], self.current_record['name'], self.current_data,
-        )
-        self.current_record['data'] = copy.deepcopy(self.current_data)
-        # PCL 切替時は一覧を再読込しないため、一覧項目が保持しているレコードも
-        # 同期する。ここが古いままだと、保存後に元の PCL へ戻った際に保存前の
-        # 値が画面へ再ロードされ、保存に失敗したように見える。
-        for index in range(self.tree.topLevelItemCount()):
-            item = self.tree.topLevelItem(index)
-            cached = item.data(0, Qt.ItemDataRole.UserRole)
-            if cached and cached.get('id') == self.current_record['id']:
-                refreshed = dict(cached)
-                refreshed['name'] = self.current_record['name']
-                refreshed['data'] = copy.deepcopy(self.current_data)
-                item.setData(0, Qt.ItemDataRole.UserRole, refreshed)
-                break
+        record_id = int(self.current_record['id'])
+        if self.current_data != self.current_record.get('data', {}):
+            self._pending_record_data[record_id] = copy.deepcopy(self.current_data)
+        else:
+            self._pending_record_data.pop(record_id, None)
+
+    def _save_pending_records_to_db(self) -> None:
+        """一時保持した全 PCL の変更を一回の保存操作で確定する。"""
+        self._cache_current_record()
+        records = {int(record['id']): record for record in self.db.list_data_records()}
+        for record_id, data in self._pending_record_data.items():
+            record = records.get(record_id)
+            if record is not None:
+                self.db.update_data_record(record_id, record['name'], data)
+        self._pending_record_data.clear()
 
     def render_values(self) -> None:
         display_state = capture_tree_display_state(
@@ -424,6 +466,36 @@ class DataPage(QWidget):
                 lambda item: tuple(item.data(0, self.PATH_ROLE) or ()),
             )
         self._sync_template_buttons()
+        self._sync_value_toggle_button()
+
+    def _expandable_value_items(self) -> list[QTreeWidgetItem]:
+        """データ内容ツリーで展開可能な行だけを返す。"""
+        result: list[QTreeWidgetItem] = []
+        stack = [self.values.topLevelItem(i) for i in range(self.values.topLevelItemCount())]
+        while stack:
+            item = stack.pop()
+            if item.childCount():
+                result.append(item)
+                stack.extend(item.child(i) for i in range(item.childCount()))
+        return result
+
+    def _sync_value_toggle_button(self) -> None:
+        items = self._expandable_value_items()
+        should_expand = bool(items) and all(not item.isExpanded() for item in items)
+        self.value_toggle_all_button.setEnabled(bool(items))
+        set_tree_toggle_icon(self.value_toggle_all_button, should_expand)
+
+    def _toggle_all_values(self) -> None:
+        items = self._expandable_value_items()
+        set_tree_expanded(self.values, bool(items) and all(not item.isExpanded() for item in items))
+        self._sync_value_toggle_button()
+
+    def _delete_selected_value(self) -> None:
+        """選択行の種類に応じ、既存のテンプレートまたはリスト削除を呼び出す。"""
+        if self._selected_template() is not None:
+            self.delete_data_template()
+        else:
+            self.delete_list_item()
 
     def _rebuild_template_menu(self) -> None:
         """同じ定義を複数回追加できるテンプレートメニューを再構築する。"""
@@ -737,6 +809,8 @@ class DataPage(QWidget):
             else f'選択した {len(records)} 件の実行データを削除しますか？'
         )
         if confirm_deletion(self, message):
+            for record in records:
+                self._pending_record_data.pop(int(record['id']), None)
             self.db.delete_data_records(0, [record['id'] for record in records])
             self.reload()
             self.tree.clearSelection()
@@ -753,9 +827,10 @@ class DataPage(QWidget):
 
     def save_record(self, _checked: bool = False, *, show_message: bool = True) -> bool:
         record = self.current_record
-        if record:
-            self._save_current_record_to_db()
-            self.reload(record['id'])
+        if record or self._pending_record_data:
+            selected_id = record['id'] if record else None
+            self._save_pending_records_to_db()
+            self.reload(selected_id)
             if show_message:
                 show_information(self, '保存', '実行データを保存しました。')
             return True
@@ -799,6 +874,8 @@ class DataPage(QWidget):
                     record['data'] = data_from_public_json(record['data'], schema)
                     sync_template_instance_names(record['data'], schema)
             self.db.replace_data_records(records)
+            self._pending_record_data.clear()
+            self.current_record = None
             self.reload()
         except (OSError, ValueError, json.JSONDecodeError, KeyError) as error:
             show_warning(self, 'JSON 読込', str(error))
@@ -824,6 +901,8 @@ class DataPage(QWidget):
             return
         try:
             self.db.replace_data_records(read_records_excel(path, self.db.get_data_schema()))
+            self._pending_record_data.clear()
+            self.current_record = None
             self.reload()
         except Exception as error:
             show_warning(self, 'Excel 読込', str(error))

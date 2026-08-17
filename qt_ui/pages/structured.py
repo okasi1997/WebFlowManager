@@ -8,8 +8,8 @@ from typing import Any
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-    QHeaderView, QInputDialog, QLineEdit, QMenu, QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QWidget,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
+    QHeaderView, QHBoxLayout, QInputDialog, QLineEdit, QMenu, QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QWidget,
 )
 
 from core.database import Database
@@ -19,7 +19,7 @@ from core.data_templates import (
 )
 from i18n import tr
 from ..table_view import (
-    HierarchicalReorderTreeWidget, bind_structured_copy_paste, configure_row_move_tooltips,
+    HierarchicalReorderTreeWidget, bind_delete_key, bind_structured_copy_paste, configure_row_move_tooltips,
     configure_table_view, set_tree_expanded, unique_copy_name,
 )
 from ..ui_loader import (
@@ -182,20 +182,21 @@ class SchemaPage(QWidget):
             self._copy_template_definition_payload,
             self._paste_template_definition_payload,
         )
+        bind_delete_key(self.structure_manager, self.delete_template_definition)
         template_button = require(self, QPushButton, 'addTemplateDefinitionButton')
         template_menu = QMenu(template_button)
         template_menu.addAction(tr('新規'), self.add_template_definition)
+        self.edit_template_definition_action = template_menu.addAction(
+            tr('common.edit'), self.rename_template_definition,
+        )
         self.delete_template_definition_action = template_menu.addAction(
             tr('削除'), self.delete_template_definition,
         )
         template_button.setMenu(template_menu)
-        require(self, QPushButton, 'renameTemplateDefinitionButton').clicked.connect(self.rename_template_definition)
-        self.rename_template_definition_button = require(self, QPushButton, 'renameTemplateDefinitionButton')
         splitter = require(self, QSplitter, 'schemaSplitter')
         splitter.setHandleWidth(8)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([480, 1340])
         designer_tree = require(self, QTreeWidget, 'schemaTree')
         tree_layout = designer_tree.parentWidget().layout()
         self.tree = HierarchicalReorderTreeWidget(designer_tree.parentWidget())
@@ -231,6 +232,7 @@ class SchemaPage(QWidget):
         bind_structured_copy_paste(
             self.tree, 'data-schema-field', self._copy_field_payload, self._paste_field_payload,
         )
+        bind_delete_key(self.tree, self.delete_field)
         actions = {
             'editFieldButton': self.edit_field, 'deleteFieldButton': self.delete_field,
             'moveFieldUpButton': lambda: self.move(-1), 'moveFieldDownButton': lambda: self.move(1),
@@ -258,6 +260,22 @@ class SchemaPage(QWidget):
         io_menu.addAction('JSON を読み込む', self.import_json)
         export_button.setMenu(io_menu)
         save.clicked.connect(self.save)
+        # 左側は操作ボタンが収まる最小幅に止め、残りをフィールド領域へ配分する。
+        for card_name, toolbar_name in (
+            ('structureManagerHost', 'templateManagerToolbar'),
+            ('schemaTreeHost', 'fieldToolbar'),
+        ):
+            card = require(self, QFrame, card_name)
+            toolbar = require(self, QHBoxLayout, toolbar_name)
+            margins = card.layout().contentsMargins()
+            card.setMinimumWidth(max(
+                card.minimumWidth(), toolbar.sizeHint().width()
+                + margins.left() + margins.right(),
+            ))
+        splitter.setSizes([
+            require(self, QFrame, 'structureManagerHost').minimumWidth(),
+            require(self, QFrame, 'schemaTreeHost').minimumWidth(),
+        ])
         self.add_field_button = add_button
         self.edit_field_button = require(self, QPushButton, 'editFieldButton')
         self.delete_field_button = require(self, QPushButton, 'deleteFieldButton')
@@ -378,7 +396,7 @@ class SchemaPage(QWidget):
 
     def _sync_template_definition_buttons(self) -> None:
         selected = self._active_template() is not None
-        self.rename_template_definition_button.setEnabled(selected)
+        self.edit_template_definition_action.setEnabled(selected)
         self.delete_template_definition_action.setEnabled(selected)
         has_structure = self._active_root() is not None
         self.add_field_button.setEnabled(has_structure)
@@ -448,14 +466,22 @@ class SchemaPage(QWidget):
         self._render_structure_manager(str(template['template_id']))
 
     def delete_template_definition(self) -> None:
-        template = self._active_template()
-        if template is None:
+        selected_ids = {
+            str(item.data(0, Qt.ItemDataRole.UserRole))
+            for item in self.structure_manager.selectedItems()
+            if item.data(0, STRUCTURE_KIND_ROLE) == 'template'
+        }
+        templates = [
+            template for template in schema_templates(self.schema)
+            if str(template.get('template_id', '')) in selected_ids
+        ]
+        if not templates:
             return
-        template_id = str(template.get('template_id', ''))
+        used_ids = {str(template.get('template_id', '')) for template in templates}
         used_count = sum(
             1 for record in self.db.list_data_records()
             for instance in record.get('data', {}).get('_template_instances', [])
-            if isinstance(instance, dict) and str(instance.get('template_id', '')) == template_id
+            if isinstance(instance, dict) and str(instance.get('template_id', '')) in used_ids
         )
         if used_count:
             show_warning(
@@ -464,10 +490,14 @@ class SchemaPage(QWidget):
             )
             return
         if not confirm_deletion(
-            self, f'{template["name"]}{tr(" を削除しますか？")}',
+            self,
+            f'{templates[0]["name"]}{tr(" を削除しますか？")}' if len(templates) == 1
+            else f'選択した {len(templates)} 件のテンプレートを削除しますか？',
         ):
             return
-        self.schema['templates'].remove(template)
+        self.schema['templates'] = [
+            template for template in schema_templates(self.schema) if template not in templates
+        ]
         self._render_structure_manager()
         self.render()
 
@@ -788,11 +818,21 @@ class SchemaPage(QWidget):
         self.render()
 
     def delete_field(self) -> None:
-        selected = self.selected()
-        if selected and confirm_deletion(
+        paths = sorted({
+            self._item_index_path(item) for item in self.tree.selectedItems()
+            if self._item_index_path(item) is not None
+        })
+        # 親が選択済みの場合は、その配下を重複して削除しない。
+        paths = [path for path in paths if not any(
+            path[:len(other)] == other for other in paths if len(other) < len(path)
+        )]
+        if paths and confirm_deletion(
             self, '選択したフィールドと子フィールドを削除しますか？',
         ):
-            selected[1].remove(selected[0])
+            for path in sorted(paths, reverse=True):
+                location = self._schema_location(path)
+                if location is not None:
+                    location[1].pop(location[2])
             self.render()
 
     def move(self, direction: int) -> None:

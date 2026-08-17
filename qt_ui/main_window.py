@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from collections.abc import Callable, Iterator, Mapping
 
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, QTimer
 from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QStackedWidget, QWidget
 
 from core.database import Database
@@ -47,7 +47,8 @@ class LazyPageRegistry(Mapping[str, QWidget]):
 
 
 class MainWindow(QMainWindow):
-    DEFAULT_SIZE = QSize(1280, 780)
+    DEFAULT_SIZE = QSize(1240, 780)
+    MINIMUM_SIZE = QSize(1240, 640)
 
     def __init__(self, project_dir: Path, db: Database) -> None:
         super().__init__()
@@ -57,7 +58,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(tr('app.title'))
         # 実行管理で10行を確認でき、フロー設計の操作列まで表示できる初期サイズにする。
         self.resize(self.DEFAULT_SIZE)
-        self.setMinimumSize(self.DEFAULT_SIZE)
+        self.setMinimumSize(self.MINIMUM_SIZE)
         # QApplication に設定済みの共通アイコンを使用する。
         self.setWindowIcon(QApplication.windowIcon())
 
@@ -96,6 +97,19 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(page)
         if key == 'settings':
             page.settings_applied.connect(self._apply_saved_settings)
+        # 遅延生成した画面のカード最小幅を、次のレイアウト計算後にウィンドウへ反映する。
+        QTimer.singleShot(0, self._sync_content_minimum_width)
+
+    def _sync_content_minimum_width(self) -> None:
+        """全カードの最小幅が収まる実幅だけを、主ウィンドウの最小幅に設定する。"""
+        root = self.centralWidget()
+        if root is None:
+            return
+        root.layout().activate()
+        required_width = max(self.MINIMUM_SIZE.width(), root.minimumSizeHint().width())
+        self.setMinimumWidth(required_width)
+        if self.width() < required_width:
+            self.resize(required_width, self.height())
 
     def _create_auth_page(self) -> QWidget:
         from .pages.auth import AuthPage
@@ -129,6 +143,8 @@ class MainWindow(QMainWindow):
         execution = self.pages.existing('execution')
         if execution is not None:
             execution.session_spin.setValue(self.db.get_pcl_session_limit())
+        # フォント変更後の sizeHint を使い、分割画面の操作ボタンが欠けない幅へ更新する。
+        QTimer.singleShot(0, self._sync_content_minimum_width)
 
     def show_page(self, key: str) -> None:
         page = self.pages.existing(key)

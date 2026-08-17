@@ -8,17 +8,15 @@ from unittest.mock import Mock, patch
 import xml.etree.ElementTree as ET
 from pathlib import Path
 import json
-from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from PySide6.QtWidgets import (
-    QApplication, QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox,
+    QApplication, QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHeaderView, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox,
     QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QStyle, QTableWidget,
     QTabWidget, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import QEvent, QModelIndex, QPoint, QSize, QTimer, Qt
-from PySide6.QtGui import QIcon
 from PySide6.QtTest import QTest
 
 from core.database import Database
@@ -75,7 +73,8 @@ class QtShellTests(unittest.TestCase):
         for page_name in self.window.pages:
             self.window.show_page(page_name)
         self.assertEqual(self.window.stack.count(), 6)
-        self.assertEqual(self.window.size(), QSize(1480, 860))
+        self.assertEqual(self.window.size(), QSize(1240, 780))
+        self.assertEqual(self.window.minimumSize(), QSize(1240, 640))
         sidebar = self.window.findChild(QFrame, 'sidebar')
         self.assertEqual(sidebar.width(), 180)
         self.assertEqual(sidebar.minimumWidth(), sidebar.maximumWidth())
@@ -101,6 +100,26 @@ class QtShellTests(unittest.TestCase):
         # 左右を独立カードにし、他の主要画面と同じ視覚的な区切りを持たせる。
         self.assertTrue(schema_page.findChild(QFrame, 'structureManagerHost').property('card'))
         self.assertTrue(schema_page.findChild(QFrame, 'schemaTreeHost').property('card'))
+        field_toolbar = schema_page.findChild(QHBoxLayout, 'fieldToolbar')
+        self.assertEqual(field_toolbar.spacing(), 6)
+        self.assertEqual(field_toolbar.indexOf(schema_page.findChild(QPushButton, 'deleteFieldButton')), 2)
+        self.assertEqual(field_toolbar.indexOf(schema_page.findChild(QPushButton, 'moveFieldUpButton')), 4)
+        manager_toolbar = schema_page.findChild(QHBoxLayout, 'templateManagerToolbar')
+        self.assertEqual(manager_toolbar.spacing(), 6)
+        self.assertEqual(
+            manager_toolbar.indexOf(schema_page.findChild(QPushButton, 'exportSchemaButton')), 2,
+        )
+        schema_splitter = schema_page.findChild(QSplitter, 'schemaSplitter')
+        self.assertGreaterEqual(
+            schema_splitter.widget(0).minimumWidth(), manager_toolbar.sizeHint().width(),
+        )
+        self.assertGreaterEqual(
+            schema_splitter.widget(1).minimumWidth(), field_toolbar.sizeHint().width(),
+        )
+        self.window._sync_content_minimum_width()
+        self.assertGreaterEqual(
+            self.window.minimumWidth(), self.window.centralWidget().minimumSizeHint().width(),
+        )
 
     def test_data_file_operations_show_completion_messages(self) -> None:
         """データ関連の入出力が成功した場合だけ、共通の完了通知を表示する。"""
@@ -175,6 +194,60 @@ class QtShellTests(unittest.TestCase):
         ):
             design_page.import_json()
             notified.assert_called_once_with(design_page, str(workflow_path))
+
+    def test_imports_refresh_right_hand_content_immediately(self) -> None:
+        """各入出力画面は読込直後に左側選択と右側内容を同期する。"""
+        data_page = self.window.pages['data']
+        schema_page = self.window.pages['schema']
+        design_page = self.window.pages['design']
+
+        data_path = self.project_dir / 'refresh-records.json'
+        data_path.write_text(json.dumps([{
+            'name': 'Imported PCL', 'data': {'value': 'Imported value'},
+        }], ensure_ascii=False), encoding='utf-8')
+        self.db.save_data_schema(0, {
+            'type': 'object', 'children': [{'name': 'value', 'type': 'text'}],
+        })
+        with (
+            patch('qt_ui.pages.data.QFileDialog.getOpenFileName', return_value=(str(data_path), '')),
+            patch('qt_ui.pages.data.confirm_import_overwrite', return_value=True),
+            patch('qt_ui.pages.data.show_file_imported'),
+            patch('qt_ui.pages.data.show_warning') as data_warning,
+        ):
+            data_page.import_json()
+        data_warning.assert_not_called()
+        self.assertEqual(data_page.current_record['name'], 'Imported PCL')
+        self.assertEqual(data_page.current_data['value'], 'Imported value')
+        self.assertIn('Imported value', data_page.values.topLevelItem(0).text(2))
+
+        schema_path = self.project_dir / 'refresh-schema.json'
+        schema_path.write_text(json.dumps({
+            'name': 'Data', 'type': 'object',
+            'children': [{'name': 'Imported field', 'type': 'text'}],
+        }), encoding='utf-8')
+        with (
+            patch('qt_ui.pages.structured.QFileDialog.getOpenFileName', return_value=(str(schema_path), '')),
+            patch('qt_ui.pages.structured.confirm_import_overwrite', return_value=True),
+            patch('qt_ui.pages.structured.show_file_imported'),
+            patch('qt_ui.pages.structured.show_warning') as schema_warning,
+        ):
+            schema_page.import_json()
+        schema_warning.assert_not_called()
+        self.assertEqual(schema_page.tree.topLevelItem(0).text(0), 'Imported field')
+
+        workflow_path = self.project_dir / 'refresh-workflows.json'
+        workflow_path.write_text('{}', encoding='utf-8')
+        def import_workflow(*_args) -> None:
+            self.db.add_workflow('Imported flow')
+        with (
+            patch('qt_ui.pages.flow_design.QFileDialog.getOpenFileName', return_value=(str(workflow_path), '')),
+            patch('qt_ui.pages.flow_design.confirm_action', return_value=True),
+            patch.object(self.db, 'import_workflow_collection', side_effect=import_workflow),
+            patch('qt_ui.pages.flow_design.show_file_imported'),
+        ):
+            design_page.import_json()
+        self.assertEqual(design_page.workflow_table.currentItem().text(0), 'Imported flow')
+        self.assertEqual(design_page.event_title.text(), 'Imported flow')
 
     def test_data_json_export_excludes_fields_removed_from_current_schema(self) -> None:
         schema = {
@@ -303,8 +376,8 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(dialog.minimumSize(), dialog.maximumSize())
         self.assertEqual((dialog.width(), dialog.height()), (640, 420))
         self.assertNotEqual(self.window.minimumSize(), self.window.maximumSize())
-        self.assertEqual(self.window.size().height(), 860)
-        self.assertEqual(self.window.minimumSize(), self.window.size())
+        self.assertEqual(self.window.size().height(), 780)
+        self.assertEqual(self.window.minimumSize(), QSize(1240, 640))
         self.window.show_page('settings')
         self.assertIs(self.window.stack.currentWidget(), self.window.pages['settings'])
 
@@ -1329,8 +1402,25 @@ class QtShellTests(unittest.TestCase):
         )
         splitter = data.findChild(QSplitter, 'dataSplitter')
         self.assertFalse(splitter.childrenCollapsible())
-        self.assertEqual(splitter.widget(0).minimumWidth(), 280)
-        self.assertEqual(splitter.widget(1).minimumWidth(), 360)
+        record_toolbar = data.findChild(QHBoxLayout, 'recordToolbar')
+        self.assertEqual(record_toolbar.spacing(), 4)
+        self.assertEqual(
+            record_toolbar.indexOf(data.findChild(QPushButton, 'exportDataJsonButton')), 5,
+        )
+        self.assertEqual(splitter.widget(0).sizePolicy().horizontalStretch(), 0)
+        self.assertEqual(splitter.widget(1).sizePolicy().horizontalStretch(), 1)
+        self.assertGreaterEqual(splitter.widget(0).minimumWidth(), 380)
+        self.assertGreaterEqual(splitter.widget(1).minimumWidth(), 450)
+        for index, toolbar_name in enumerate(('recordToolbar', 'valueToolbar')):
+            toolbar = data.findChild(QHBoxLayout, toolbar_name)
+            buttons = [
+                toolbar.itemAt(item_index).widget()
+                for item_index in range(toolbar.count())
+                if toolbar.itemAt(item_index).widget() is not None
+            ]
+            required_width = sum(button.sizeHint().width() for button in buttons)
+            required_width += toolbar.spacing() * max(0, len(buttons) - 1)
+            self.assertGreaterEqual(splitter.widget(index).minimumWidth(), required_width)
         self.assertIsNone(data.findChild(QPushButton, 'moveRecordUpButton'))
         self.assertIsNone(data.findChild(QPushButton, 'moveRecordDownButton'))
         self.assertIsNone(data.findChild(QPushButton, 'recordMoreButton'))
@@ -1357,6 +1447,12 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(data.values.columnCount(), 4)
         self.assertEqual(data.values.headerItem().text(2), '値  ✎')
         self.assertIsNone(data.findChild(QPushButton, 'valueToggleButton'))
+        value_toggle = data.findChild(QPushButton, 'valueToggleAllButton')
+        self.assertIsNotNone(value_toggle)
+        self.assertFalse(value_toggle.icon().isNull())
+        self.assertEqual(
+            data.values.selectionMode(), QAbstractItemView.SelectionMode.ExtendedSelection,
+        )
         self.db.save_data_schema(0, {
             'name': 'Data', 'type': 'object', 'children': [
                 {'name': 'output', 'type': 'object', 'children': [
@@ -1750,8 +1846,9 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(template_operation.text(), 'テンプレート操作')
         self.assertEqual(
             [action.text() for action in template_operation.menu().actions()],
-            ['新規', '削除'],
+            ['新規', '編集', '削除'],
         )
+        self.assertIsNone(page.findChild(QPushButton, 'renameTemplateDefinitionButton'))
         self.assertIsNone(page.findChild(QPushButton, 'deleteTemplateDefinitionButton'))
         common_parent = page.tree.topLevelItem(0)
         common_parent.setExpanded(False)
@@ -1767,7 +1864,7 @@ class QtShellTests(unittest.TestCase):
 
         page.structure_manager.setCurrentItem(templates_root)
         self.assertEqual(page.tree.topLevelItemCount(), 0)
-        self.assertFalse(page.rename_template_definition_button.isEnabled())
+        self.assertFalse(page.edit_template_definition_action.isEnabled())
         self.assertFalse(page.add_field_button.isEnabled())
         self.assertFalse(
             bool(templates_root.flags() & Qt.ItemFlag.ItemIsDragEnabled),
@@ -1845,42 +1942,95 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(page.tree.selectedItems(), [])
         self.assertIsNone(page.current_record)
 
-    def test_switching_data_record_confirms_and_saves_the_previous_record(self) -> None:
+    def test_editable_trees_support_multiple_selection_and_delete_shortcut(self) -> None:
+        """編集対象ツリーは複数選択でき、Delete も削除ボタンと同じ処理を使う。"""
+        data = self.window.pages['data']
+        schema = self.window.pages['schema']
+        design = self.window.pages['design']
+        auth = self.window.pages['auth']
+        views = (
+            data.tree, data.values, schema.structure_manager, schema.tree,
+            design.workflow_table, design.event_tree, auth.profiles,
+        )
+        for view in views:
+            self.assertEqual(
+                view.selectionMode(), QAbstractItemView.SelectionMode.ExtendedSelection,
+            )
+            self.assertTrue(hasattr(view, '_delete_shortcut'))
+
+        first_id = self.db.add_data_record(0, 'delete-1', {})
+        second_id = self.db.add_data_record(0, 'delete-2', {})
+        data.reload(first_id)
+        data.tree.clearSelection()
+        data.tree.topLevelItem(0).setSelected(True)
+        data.tree.topLevelItem(1).setSelected(True)
+        with patch('qt_ui.pages.data.confirm_deletion', return_value=True):
+            data.tree._delete_shortcut.activated.emit()
+        remaining_ids = {record['id'] for record in self.db.list_data_records()}
+        self.assertNotIn(first_id, remaining_ids)
+        self.assertNotIn(second_id, remaining_ids)
+
+    def test_switching_data_record_keeps_previous_change_until_explicit_save(self) -> None:
         page = self.window.pages['data']
         first_id = self.db.add_data_record(0, 'first', {'value': 'before'})
         second_id = self.db.add_data_record(0, 'second', {'value': 'second'})
         page.reload(first_id)
         page.current_data['value'] = 'after'
 
-        with patch('qt_ui.pages.data.confirm_pending_changes', return_value='save') as confirmation:
+        with patch('qt_ui.pages.data.confirm_pending_changes') as confirmation:
             page.tree.setCurrentItem(page.tree.topLevelItem(1))
 
-        confirmation.assert_called_once()
+        confirmation.assert_not_called()
         stored = next(record for record in self.db.list_data_records() if record['id'] == first_id)
-        self.assertEqual(stored['data'], {'value': 'after'})
+        self.assertEqual(stored['data'], {'value': 'before'})
         self.assertEqual(page.current_record['id'], second_id)
         self.assertEqual(page.current_data, {'value': 'second'})
+        page.current_data['value'] = 'second-after'
 
-        # 保存時に一覧側のキャッシュも更新され、戻ったときに保存済み値が見える。
+        # PCL を戻しても一時保持した値が見え、保存ボタンで全 PCL の変更が確定する。
         page.tree.setCurrentItem(page.tree.topLevelItem(0))
         self.assertEqual(page.current_record['id'], first_id)
         self.assertEqual(page.current_data, {'value': 'after'})
+        self.assertTrue(page.save_record(show_message=False))
+        stored = {record['id']: record for record in self.db.list_data_records()}
+        self.assertEqual(stored[first_id]['data'], {'value': 'after'})
+        self.assertEqual(stored[second_id]['data'], {'value': 'second-after'})
 
-    def test_canceling_data_record_switch_keeps_unsaved_data_and_selection(self) -> None:
+    def test_data_record_switch_does_not_show_pending_confirmation(self) -> None:
         page = self.window.pages['data']
         first_id = self.db.add_data_record(0, 'first', {'value': 'before'})
         self.db.add_data_record(0, 'second', {'value': 'second'})
         page.reload(first_id)
         page.current_data['value'] = 'pending'
 
-        with patch('qt_ui.pages.data.confirm_pending_changes', return_value='cancel'):
+        with patch('qt_ui.pages.data.confirm_pending_changes') as confirmation:
             page.tree.setCurrentItem(page.tree.topLevelItem(1))
 
-        self.assertEqual(page.current_record['id'], first_id)
+        confirmation.assert_not_called()
+        self.assertNotEqual(page.current_record['id'], first_id)
+        page.tree.setCurrentItem(page.tree.topLevelItem(0))
         self.assertEqual(page.current_data, {'value': 'pending'})
-        self.assertEqual(page.tree.currentItem().data(0, Qt.ItemDataRole.UserRole)['id'], first_id)
         stored = next(record for record in self.db.list_data_records() if record['id'] == first_id)
         self.assertEqual(stored['data'], {'value': 'before'})
+
+    def test_leaving_data_page_confirms_and_saves_all_pending_records(self) -> None:
+        """画面遷移時だけ確認し、保存選択時は全 PCL の一時変更を確定する。"""
+        page = self.window.pages['data']
+        first_id = self.db.add_data_record(0, 'first', {'value': 'before-1'})
+        second_id = self.db.add_data_record(0, 'second', {'value': 'before-2'})
+        page.reload(first_id)
+        self.window.show_page('data')
+        page.current_data['value'] = 'after-1'
+        page.tree.setCurrentItem(page.tree.topLevelItem(1))
+        page.current_data['value'] = 'after-2'
+
+        with patch('qt_ui.pages.data.confirm_pending_changes', return_value='save') as confirmation:
+            self.window.show_page('design')
+
+        confirmation.assert_called_once()
+        stored = {record['id']: record['data'] for record in self.db.list_data_records()}
+        self.assertEqual(stored[first_id], {'value': 'after-1'})
+        self.assertEqual(stored[second_id], {'value': 'after-2'})
 
     def test_execution_page_restores_status_log_and_record_controls(self) -> None:
         page = self.window.pages['execution']

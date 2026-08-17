@@ -85,8 +85,20 @@ exit /b 1
 
 :cleanup_done
 echo [7/7] Creating distribution archive...
-powershell.exe -NoProfile -Command "Compress-Archive -LiteralPath 'dist\%APP_NAME%' -DestinationPath 'dist\%APP_NAME%.zip' -Force"
-if errorlevel 1 goto :error
+for /l %%R in (1,1,5) do (
+  powershell.exe -NoProfile -Command "$ErrorActionPreference='Stop'; $archive='dist\%APP_NAME%.zip'; if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }; Compress-Archive -LiteralPath 'dist\%APP_NAME%' -DestinationPath $archive -Force; if (!(Test-Path -LiteralPath $archive -PathType Leaf)) { throw 'Archive was not created.' }"
+  if not errorlevel 1 goto :archive_done
+  echo Archive retry %%R/5...
+  timeout /t 1 /nobreak >nul
+)
+
+echo.
+echo Archive creation failed:
+echo   %CD%\dist\%APP_NAME%.zip
+echo Close programs scanning or using the distribution folder, then run the build again.
+exit /b 1
+
+:archive_done
 
 echo.
 echo Build completed:

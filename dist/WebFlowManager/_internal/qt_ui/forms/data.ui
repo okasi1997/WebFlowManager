@@ -41,7 +41,7 @@
             <enum>Qt::Horizontal</enum>
           </property>
           <widget class="QFrame" name="recordCard">
-            <property name="minimumSize"><size><width>280</width><height>0</height></size></property>
+            <property name="minimumSize"><size><width>380</width><height>0</height></size></property>
             <property name="sizePolicy"><sizepolicy hsizetype="Ignored" vsizetype="Preferred"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
             <property name="card" stdset="0">
               <bool>true</bool>
@@ -89,6 +89,7 @@
               </item>
               <item>
                 <layout class="QHBoxLayout" name="recordToolbar">
+                  <property name="spacing"><number>4</number></property>
                   <item>
                     <widget class="QPushButton" name="addRecordButton">
                       <property name="primary" stdset="0">
@@ -146,7 +147,7 @@
             </layout>
           </widget>
           <widget class="QFrame" name="valueCard">
-            <property name="minimumSize"><size><width>360</width><height>0</height></size></property>
+            <property name="minimumSize"><size><width>450</width><height>0</height></size></property>
             <property name="sizePolicy"><sizepolicy hsizetype="Ignored" vsizetype="Preferred"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
             <property name="card" stdset="0">
               <bool>true</bool>
@@ -218,6 +219,12 @@
                         </size>
                       </property>
                     </spacer>
+                  </item>
+                  <item>
+                    <widget class="QPushButton" name="valueToggleAllButton">
+                      <property name="text"><string/></property>
+                      <property name="toolTip"><string>すべて折りたたむ</string></property>
+                    </widget>
                   </item>
                   <item>
                     <widget class="QPushButton" name="saveRecordButton">

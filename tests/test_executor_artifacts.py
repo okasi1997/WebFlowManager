@@ -33,6 +33,64 @@ class ExecutorArtifactNameTests(unittest.TestCase):
             [{'name': 'Nested'}],
         )
 
+    def test_template_inside_current_outer_list_item_is_resolved_as_object(self) -> None:
+        """外側リストの現在要素にあるテンプレートは単一 object として扱う。"""
+        first_service = {
+            'instance_id': 'service-1', 'template_id': 'microsoft365',
+            'data': {'plans': [{'name': 'Basic'}, {'name': 'Premium'}]},
+        }
+        second_service = {
+            'instance_id': 'service-2', 'template_id': 'microsoft365',
+            'data': {'plans': [{'name': 'Enterprise'}]},
+        }
+        data = {'services': [first_service, second_service]}
+        context = {'services': first_service}
+
+        self.assertEqual(
+            WorkflowExecutor._resolve_data(
+                data, '@template.microsoft365.plans', context,
+            ),
+            [{'name': 'Basic'}, {'name': 'Premium'}],
+        )
+
+    def test_nested_template_list_uses_current_plan_item(self) -> None:
+        """テンプレート内リストの子項目は内側ループの現在値から取得する。"""
+        service = {
+            'instance_id': 'service-1', 'template_id': 'microsoft365',
+            'data': {'plans': [{'name': 'Basic'}, {'name': 'Premium'}]},
+        }
+        data = {'services': [service]}
+        context = {
+            'services': service,
+            '@template.microsoft365.plans': service['data']['plans'][1],
+        }
+
+        self.assertEqual(
+            WorkflowExecutor._resolve_data(
+                data, '@template.microsoft365.plans.name', context,
+            ),
+            'Premium',
+        )
+
+    def test_assign_data_uses_template_in_current_outer_list_item(self) -> None:
+        """入力結果も現在の外側要素に属するテンプレートへ書き戻す。"""
+        service = {
+            'instance_id': 'service-1', 'template_id': 'microsoft365',
+            'data': {'plans': [{'name': 'Basic'}]},
+        }
+        data = {'services': [service]}
+        plan = service['data']['plans'][0]
+        context = {
+            'services': service,
+            '@template.microsoft365.plans': plan,
+        }
+
+        WorkflowExecutor._assign_data(
+            data, '@template.microsoft365.plans.name', context, 'Updated',
+        )
+
+        self.assertEqual(plan['name'], 'Updated')
+
     def test_template_name_can_be_used_as_virtual_path(self) -> None:
         data = {'_template_instances': [{
             'template_id': 'generated-id', 'template_name': '仮想商材',
