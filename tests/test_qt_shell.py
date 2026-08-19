@@ -739,6 +739,48 @@ class QtShellTests(unittest.TestCase):
             for index in range(groups[0].childCount())
         ))
 
+    def test_workflow_names_are_unique_only_within_the_same_level(self) -> None:
+        """Flow名は兄弟間だけ重複を禁止し、別Groupでは同名を許可する。"""
+        first_group = self.db.add_workflow_group('group 1')
+        second_group = self.db.add_workflow_group('group 2')
+        self.db.add_workflow('same', parent_id=first_group)
+        second = self.db.add_workflow('same', parent_id=second_group)
+        self.db.add_workflow('same')
+
+        with self.assertRaisesRegex(ValueError, 'flow.name_duplicate'):
+            self.db.add_workflow('same', parent_id=first_group)
+
+        other = self.db.add_workflow('other', parent_id=second_group)
+        with self.assertRaisesRegex(ValueError, 'flow.name_duplicate'):
+            self.db.update_workflow(other, 'same', '')
+
+        rows = [dict(row) for row in self.db.list_workflow_outline()]
+        nodes = [
+            (
+                int(row['id']),
+                first_group if row['workflow_id'] == second else row['parent_id'],
+                int(row['position']),
+            )
+            for row in rows
+        ]
+        with self.assertRaisesRegex(ValueError, 'flow.name_duplicate'):
+            self.db.reorder_workflow_outline(nodes)
+
+        export_path = self.project_dir / 'same-level-workflows.json'
+        self.db.export_workflow_collection(export_path)
+        imported = Database(self.project_dir / 'same-level-import.db')
+        try:
+            imported.import_workflow_collection(export_path, (), ())
+            self.assertEqual(
+                sum(row['name'] == 'same' for row in imported.list_workflows()), 3,
+            )
+            self.assertEqual(len({
+                imported.workflow_parent_id(int(row['id']))
+                for row in imported.list_workflows() if row['name'] == 'same'
+            }), 3)
+        finally:
+            imported.close()
+
     def test_workflow_delete_leaves_tree_and_event_list_unselected(self) -> None:
         page = self.window.pages['design']
         workflow_id = self.db.add_workflow('delete selection')

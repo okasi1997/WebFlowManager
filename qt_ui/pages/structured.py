@@ -19,8 +19,9 @@ from core.data_templates import (
 )
 from i18n import tr
 from ..table_view import (
-    HierarchicalReorderTreeWidget, bind_delete_key, bind_structured_copy_paste, configure_row_move_tooltips,
-    configure_table_view, set_tree_expanded, unique_copy_name,
+    HierarchicalReorderTreeWidget, bind_delete_key, bind_structured_copy_paste,
+    bulk_view_update, configure_row_move_tooltips, configure_table_view,
+    set_tree_expanded, unique_copy_name,
 )
 from ..ui_loader import (
     confirm_deletion, confirm_import_overwrite, confirm_pending_changes, load_ui_into, localize_dialog_buttons, require,
@@ -331,7 +332,6 @@ class SchemaPage(QWidget):
         self.structure_manager.setCurrentItem(selected)
         self.structure_manager.blockSignals(previous_blocked)
         self._select_structure(selected, None)
-        self._sync_template_definition_buttons()
 
     def _persist_template_order(self) -> None:
         """左側のドラッグ結果をテンプレート定義の保存順へ反映する。"""
@@ -392,7 +392,6 @@ class SchemaPage(QWidget):
     ) -> None:
         self._capture_schema_expansion(self._structure_key(previous))
         self.render(capture_current=False)
-        self._sync_template_definition_buttons()
 
     def _sync_template_definition_buttons(self) -> None:
         selected = self._active_template() is not None
@@ -532,11 +531,11 @@ class SchemaPage(QWidget):
         if capture_current and self.tree.topLevelItemCount():
             self._capture_schema_expansion(structure_key)
         expanded_keys = self._schema_expanded_by_structure.get(structure_key)
-        self.tree.clear()
+        roots: list[QTreeWidgetItem] = []
         selected_item: QTreeWidgetItem | None = None
 
         def add(
-            parent: QTreeWidgetItem | QTreeWidget,
+            parent: QTreeWidgetItem | list[QTreeWidgetItem],
             node: dict[str, Any],
             path: str,
             index_path: tuple[int, ...],
@@ -559,7 +558,8 @@ class SchemaPage(QWidget):
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDropEnabled)
             else:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsDropEnabled)
-            parent.addChild(item) if isinstance(parent, QTreeWidgetItem) else parent.addTopLevelItem(item)
+            # 表示中のツリーへ逐次追加せず、画面外で階層を完成させる。
+            parent.addChild(item) if isinstance(parent, QTreeWidgetItem) else parent.append(item)
             if index_path == selected_index_path:
                 selected_item = item
             for child_index, child in enumerate(node.get('children', [])):
@@ -568,18 +568,22 @@ class SchemaPage(QWidget):
         active_root = self._active_root()
         if active_root is not None:
             for child_index, child in enumerate(active_root.get('children', [])):
-                add(self.tree, child, child['name'], (child_index,))
+                add(roots, child, child['name'], (child_index,))
 
-        if expanded_keys is not None:
-            for item in self._all_items():
-                item.setExpanded(item.data(0, SCHEMA_NODE_KEY_ROLE) in expanded_keys)
-        elif active_root is not None:
-            self.tree.expandAll()
-        if selected_item is not None:
-            self.tree.setCurrentItem(selected_item)
-        # setCurrentItem() による自動スクロールを打ち消し、操作前の表示位置を維持する。
-        self.tree.verticalScrollBar().setValue(vertical_value)
-        self.tree.horizontalScrollBar().setValue(horizontal_value)
+        # クリア・追加・展開状態の復元を一括し、途中の再描画と展開通知を発生させない。
+        with bulk_view_update(self.tree):
+            self.tree.clear()
+            self.tree.addTopLevelItems(roots)
+            if expanded_keys is not None:
+                for item in self._all_items():
+                    item.setExpanded(item.data(0, SCHEMA_NODE_KEY_ROLE) in expanded_keys)
+            elif active_root is not None:
+                self.tree.expandAll()
+            if selected_item is not None:
+                self.tree.setCurrentItem(selected_item)
+            # setCurrentItem() による自動スクロールを打ち消し、操作前の表示位置を維持する。
+            self.tree.verticalScrollBar().setValue(vertical_value)
+            self.tree.horizontalScrollBar().setValue(horizontal_value)
         self._sync_toggle_all_button()
         self._sync_template_definition_buttons()
 

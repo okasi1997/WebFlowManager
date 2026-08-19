@@ -50,6 +50,7 @@ class Database:
             self.connection.execute('ALTER TABLE workflows ADD COLUMN pcl_loop_start INTEGER NOT NULL DEFAULT 0')
         if 'guard_json' not in columns:
             self.connection.execute("ALTER TABLE workflows ADD COLUMN guard_json TEXT NOT NULL DEFAULT ''")
+        self._migrate_workflow_name_uniqueness()
         event_columns = {row['name'] for row in self.connection.execute('PRAGMA table_info(events)').fetchall()}
         if 'data_path' not in event_columns:
             self.connection.execute("ALTER TABLE events ADD COLUMN data_path TEXT NOT NULL DEFAULT ''")
@@ -112,6 +113,41 @@ class Database:
         self._migrate_global_data()
         self._migrate_combined_event_groups()
         self.connection.commit()
+
+    def _migrate_workflow_name_uniqueness(self) -> None:
+        """旧DBのFlow名グローバルUNIQUE制約を除去し、階層単位の検証へ移行する。"""
+        unique_name_index = any(
+            bool(index['unique']) and [
+                column['name'] for column in self.connection.execute(
+                    f'PRAGMA index_info("{index["name"]}")'
+                )
+            ] == ['name']
+            for index in self.connection.execute('PRAGMA index_list(workflows)').fetchall()
+        )
+        if not unique_name_index:
+            return
+        # SQLiteの自動UNIQUE索引は削除できないため、データを維持したまま表を再構築する。
+        self.connection.executescript("""
+            CREATE TABLE workflows_without_global_name_unique (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                position INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                pcl_loop_start INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                guard_json TEXT NOT NULL DEFAULT ''
+            );
+            INSERT INTO workflows_without_global_name_unique
+                (id, name, description, position, enabled, pcl_loop_start,
+                 created_at, updated_at, guard_json)
+            SELECT id, name, description, position, enabled, pcl_loop_start,
+                   created_at, updated_at, guard_json
+            FROM workflows;
+            DROP TABLE workflows;
+            ALTER TABLE workflows_without_global_name_unique RENAME TO workflows;
+        """)
 
     def _migrate_combined_event_groups(self) -> None:
         """旧形式で完全に重なるループと再試行を一つのグループへ統合する。"""
@@ -246,6 +282,36 @@ class Database:
             'SELECT * FROM workflow_outline ORDER BY parent_id, position, id'
         ).fetchall()
 
+    def workflow_names_at_level(
+        self, parent_id: int | None, *, exclude_workflow_id: int | None = None,
+    ) -> list[str]:
+        """指定階層に直接配置されたFlow名を返す。"""
+        query = (
+            "SELECT w.name FROM workflow_outline o "
+            "JOIN workflows w ON w.id=o.workflow_id "
+            "WHERE o.kind='flow' AND o.parent_id IS ?"
+        )
+        params: list[Any] = [parent_id]
+        if exclude_workflow_id is not None:
+            query += ' AND w.id<>?'
+            params.append(exclude_workflow_id)
+        return [str(row['name']) for row in self.connection.execute(query, params)]
+
+    def workflow_parent_id(self, workflow_id: int) -> int | None:
+        row = self.connection.execute(
+            "SELECT parent_id FROM workflow_outline WHERE kind='flow' AND workflow_id=?",
+            (workflow_id,),
+        ).fetchone()
+        return row['parent_id'] if row is not None else None
+
+    def _validate_workflow_name_at_level(
+        self, name: str, parent_id: int | None, *, exclude_workflow_id: int | None = None,
+    ) -> None:
+        if name.strip() in self.workflow_names_at_level(
+            parent_id, exclude_workflow_id=exclude_workflow_id,
+        ):
+            raise ValueError('flow.name_duplicate')
+
     def add_workflow_group(self, name: str, guard: dict[str, Any] | None=None) -> int:
         position = self.connection.execute(
             'SELECT COALESCE(MAX(position), 0) + 1 FROM workflow_outline WHERE parent_id IS NULL'
@@ -297,6 +363,19 @@ class Database:
         existing = {int(row['id']) for row in self.list_workflow_outline()}
         if {node_id for node_id, _parent_id, _position in nodes} != existing:
             raise ValueError('flow.order_mismatch')
+        outline = {int(row['id']): dict(row) for row in self.list_workflow_outline()}
+        workflow_names = {
+            int(row['id']): str(row['name']) for row in self.list_workflows()
+        }
+        sibling_names: set[tuple[int | None, str]] = set()
+        for node_id, parent_id, _position in nodes:
+            row = outline[node_id]
+            if row['kind'] != 'flow':
+                continue
+            key = (parent_id, workflow_names[int(row['workflow_id'])])
+            if key in sibling_names:
+                raise ValueError('flow.name_duplicate')
+            sibling_names.add(key)
         with self.connection:
             for node_id, parent_id, position in nodes:
                 self.connection.execute(
@@ -344,20 +423,27 @@ class Database:
     def list_workflows(self) -> list[sqlite3.Row]:
         return self.connection.execute('SELECT * FROM workflows ORDER BY position, id').fetchall()
 
-    def add_workflow(self, name: str, description: str='') -> int:
+    def add_workflow(
+        self, name: str, description: str='', parent_id: int | None=None,
+    ) -> int:
+        self._validate_workflow_name_at_level(name, parent_id)
         position = self.connection.execute('SELECT COALESCE(MAX(position), 0) + 1 FROM workflows').fetchone()[0]
         cursor = self.connection.execute('INSERT INTO workflows(name, description, position) VALUES (?, ?, ?)', (name.strip(), description.strip(), position))
         outline_position = self.connection.execute(
-            'SELECT COALESCE(MAX(position), 0) + 1 FROM workflow_outline WHERE parent_id IS NULL'
+            'SELECT COALESCE(MAX(position), 0) + 1 FROM workflow_outline WHERE parent_id IS ?',
+            (parent_id,),
         ).fetchone()[0]
         self.connection.execute(
-            "INSERT INTO workflow_outline(kind, workflow_id, parent_id, position) VALUES ('flow', ?, NULL, ?)",
-            (cursor.lastrowid, outline_position),
+            "INSERT INTO workflow_outline(kind, workflow_id, parent_id, position) VALUES ('flow', ?, ?, ?)",
+            (cursor.lastrowid, parent_id, outline_position),
         )
         self.connection.commit()
         return int(cursor.lastrowid)
 
     def update_workflow(self, workflow_id: int, name: str, description: str) -> None:
+        self._validate_workflow_name_at_level(
+            name, self.workflow_parent_id(workflow_id), exclude_workflow_id=workflow_id,
+        )
         self.connection.execute('UPDATE workflows SET name=?, description=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', (name.strip(), description.strip(), workflow_id))
         self.connection.commit()
 
@@ -524,13 +610,15 @@ class Database:
                 event.pop('workflow_id', None)
                 event.pop('refresh_on_retry', None)
                 event['guard'] = decode_guard(event.pop('guard_json', ''))
-            workflows.append({'name': workflow['name'], 'description': workflow['description'], 'position': workflow['position'], 'enabled': int(workflow['enabled']), 'pcl_loop_start': int(workflow['pcl_loop_start']), 'guard': decode_guard(workflow['guard_json']), 'events': self._events_to_group_items(events)})
-        workflow_names = {int(row['id']): str(row['name']) for row in self.list_workflows()}
+            workflows.append({'key': f'workflow:{workflow["id"]}', 'name': workflow['name'], 'description': workflow['description'], 'position': workflow['position'], 'enabled': int(workflow['enabled']), 'pcl_loop_start': int(workflow['pcl_loop_start']), 'guard': decode_guard(workflow['guard_json']), 'events': self._events_to_group_items(events)})
+        workflow_keys = {
+            int(row['id']): f'workflow:{row["id"]}' for row in self.list_workflows()
+        }
         outline_rows = [dict(row) for row in self.list_workflow_outline()]
         outline = [
             {
                 'key': f'node:{row["id"]}', 'kind': row['kind'],
-                'workflow': workflow_names.get(int(row['workflow_id'])) if row['workflow_id'] is not None else None,
+                'workflow': workflow_keys.get(int(row['workflow_id'])) if row['workflow_id'] is not None else None,
                 'name': row['name'],
                 'guard': decode_guard(row.get('guard_json', '')),
                 'parent': f'node:{row["parent_id"]}' if row['parent_id'] is not None else None,
@@ -539,7 +627,7 @@ class Database:
             for row in outline_rows
         ]
         payload = {
-            'version': 2, 'type': 'web-flow-collection',
+            'version': 3, 'type': 'web-flow-collection',
             'browser_visible': self.get_browser_visible(),
             'workflows': workflows, 'workflow_outline': outline,
         }
@@ -552,8 +640,9 @@ class Database:
             payload = json.loads(path.read_text(encoding='utf-8-sig'))
         except json.JSONDecodeError as error:
             raise ValueError(f'{tr("flow.json_format_error_prefix")}{error}') from error
-        if not isinstance(payload, dict) or payload.get('version') not in {1, 2}:
+        if not isinstance(payload, dict) or payload.get('version') not in {1, 2, 3}:
             raise ValueError('flow.json_version_unsupported')
+        version = int(payload['version'])
         workflows = payload.get('workflows')
         outline_payload = payload.get('workflow_outline')
         if payload.get('type') not in {'web-flow-collection', 'salesforce-flow-collection'} or not isinstance(workflows, list):
@@ -563,13 +652,20 @@ class Database:
             raise ValueError('flow.browser_visible_invalid')
         normalized: list[dict[str, Any]] = []
         names: set[str] = set()
+        workflow_keys: set[str] = set()
         for workflow_index, workflow in enumerate(workflows, 1):
             if not isinstance(workflow, dict) or not isinstance(workflow.get('name'), str) or (not workflow['name'].strip()):
                 raise ValueError(f'{tr("validation.ordinal_prefix")}{workflow_index}{tr("flow.invalid_name_suffix")}')
             name = workflow['name'].strip()
-            if name in names:
+            if version < 3 and name in names:
                 raise ValueError(f'{tr("flow.duplicate_name_prefix")}{name}')
             names.add(name)
+            workflow_key = (
+                str(workflow.get('key', '')).strip() if version >= 3 else name
+            )
+            if not workflow_key or workflow_key in workflow_keys:
+                raise ValueError(f'{tr("flow.duplicate_name_prefix")}{name}')
+            workflow_keys.add(workflow_key)
             events = workflow.get('events')
             if not isinstance(events, list):
                 raise ValueError(f'{tr("flow.name_quote_prefix")}{name}{tr("flow.events_array_suffix")}')
@@ -624,7 +720,21 @@ class Database:
                         f'{event_index}{tr("event.retry_values_invalid")}'
                     ) from error
                 checked_events.append({'name': event['name'], 'action': event['action'], 'selector_type': event['selector_type'], 'selector': event['selector'], 'fallback_selector_type': str(event.get('fallback_selector_type', 'none')), 'fallback_selector': str(event.get('fallback_selector', '')), 'iframe_path': str(event.get('iframe_path', '')), 'value': event['value'], 'success_json': str(event.get('success_json', '')), 'scroll_json': str(event.get('scroll_json', '')), 'timeout_ms': timeout, 'enabled': int(bool(event.get('enabled', 1))), 'continue_on_error': int(bool(event.get('continue_on_error', 0))), 'refresh_on_retry': 0, 'failure_action': failure_action, 'failure_target': str(event.get('failure_target', '')), 'data_path': str(event.get('data_path', '')), 'retry_count': retry_count, 'retry_interval_ms': retry_interval_ms, 'guard': decode_guard(event.get('guard'))})
-            normalized.append({'name': name, 'description': str(workflow.get('description', '')), 'enabled': int(bool(workflow.get('enabled', 1))), 'events': checked_events, 'pcl_loop_start': int(bool(workflow.get('pcl_loop_start', 0))), 'guard': decode_guard(workflow.get('guard'))})
+            normalized.append({'key': workflow_key, 'name': name, 'description': str(workflow.get('description', '')), 'enabled': int(bool(workflow.get('enabled', 1))), 'events': checked_events, 'pcl_loop_start': int(bool(workflow.get('pcl_loop_start', 0))), 'guard': decode_guard(workflow.get('guard'))})
+        # Flow名は同じ親ノードに直接配置されるものだけを重複不可とする。
+        parent_by_workflow = {
+            str(item.get('workflow', '')): (
+                str(item.get('parent')) if item.get('parent') is not None else None
+            )
+            for item in outline_payload or []
+            if isinstance(item, dict) and item.get('kind') == 'flow'
+        } if isinstance(outline_payload, list) else {}
+        level_names: set[tuple[str | None, str]] = set()
+        for workflow in normalized:
+            level_key = (parent_by_workflow.get(workflow['key']), workflow['name'])
+            if level_key in level_names:
+                raise ValueError(f'{tr("flow.duplicate_name_prefix")}{workflow["name"]}')
+            level_names.add(level_key)
         if sum((workflow['pcl_loop_start'] for workflow in normalized)) > 1:
             raise ValueError('flow.multiple_data_loop_starts')
         with self.connection:
@@ -637,7 +747,7 @@ class Database:
             for workflow_position, workflow in enumerate(normalized, 1):
                 cursor = self.connection.execute('INSERT INTO workflows\n                       (name, description, position, enabled, pcl_loop_start, guard_json)\n                       VALUES (?, ?, ?, ?, ?, ?)', (workflow['name'], workflow['description'], workflow_position, workflow['enabled'], workflow['pcl_loop_start'], json.dumps(workflow['guard'], ensure_ascii=False)))
                 workflow_id = int(cursor.lastrowid)
-                imported_workflow_ids[str(workflow['name'])] = workflow_id
+                imported_workflow_ids[str(workflow['key'])] = workflow_id
                 for event_position, event in enumerate(workflow['events'], 1):
                     event_cursor = self.connection.execute('INSERT INTO events\n                           (workflow_id, position, name, action, selector_type, selector,\n                            fallback_selector_type, fallback_selector, iframe_path, value,\n                            timeout_ms, enabled, continue_on_error, refresh_on_retry, data_path, guard_json)\n                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (workflow_id, event_position, event['name'], event['action'], event['selector_type'], event['selector'], event['fallback_selector_type'], event['fallback_selector'], event['iframe_path'], event['value'], event['timeout_ms'], event['enabled'], event['continue_on_error'], 0, event['data_path'], json.dumps(event['guard'], ensure_ascii=False)))
                     self.connection.execute('UPDATE events SET failure_action=?, failure_target=?, retry_count=?, retry_interval_ms=?, success_json=?, scroll_json=? WHERE id=?', (event['failure_action'], event['failure_target'], event['retry_count'], event['retry_interval_ms'], event['success_json'], event['scroll_json'], event_cursor.lastrowid))

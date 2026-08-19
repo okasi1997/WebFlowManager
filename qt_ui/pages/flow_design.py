@@ -1484,8 +1484,17 @@ class FlowDesignPage(QWidget):
         self._workflow_reorder_pending = False
         selected = self.workflow_table.currentItem()
         selected_data = selected.data(0, self.WORKFLOW_DATA_ROLE) if selected is not None else {}
-        self.db.reorder_workflow_outline(self._workflow_tree_nodes())
-        self.reload(selected_data.get('id') if selected_data.get('kind') == 'flow' else None)
+        selected_workflow_id = (
+            selected_data.get('id') if selected_data.get('kind') == 'flow' else None
+        )
+        try:
+            self.db.reorder_workflow_outline(self._workflow_tree_nodes())
+        except ValueError as error:
+            if str(error) != 'flow.name_duplicate':
+                raise
+            # 移動先の同一階層に同名フローがある場合は、DB上の配置へ戻す。
+            show_warning(self, tr('error.create_title'), tr('flow.name_duplicate'))
+        self.reload(selected_workflow_id)
 
     def _workflow_groups(self) -> list[QTreeWidgetItem]:
         groups: list[QTreeWidgetItem] = []
@@ -1713,9 +1722,11 @@ class FlowDesignPage(QWidget):
                         continue
                     workflow = dict(child['workflow'])
                     name = unique_copy_name(
-                        str(workflow['name']), (row['name'] for row in self.db.list_workflows()),
+                        str(workflow['name']), self.db.workflow_names_at_level(group_id),
                     )
-                    workflow_id = self.db.add_workflow(name, str(workflow.get('description', '')))
+                    workflow_id = self.db.add_workflow(
+                        name, str(workflow.get('description', '')), group_id,
+                    )
                     self.db.set_workflow_enabled(workflow_id, bool(workflow.get('enabled', True)))
                     self.db.set_workflow_guard(workflow_id, decode_guard(workflow.get('guard_json', '')))
                     for event in child.get('events', []):
@@ -1733,10 +1744,15 @@ class FlowDesignPage(QWidget):
         selected_node_id = (
             int(selected_item.data(0, self.WORKFLOW_NODE_ROLE)) if selected_item is not None else None
         )
-        name = unique_copy_name(
-            str(source['name']), (row['name'] for row in self.db.list_workflows()),
+        parent_id = self._workflow_insertion_parent_id(
+            selected_node_id, group_as_parent=False,
         )
-        workflow_id = self.db.add_workflow(name, str(source.get('description', '')))
+        name = unique_copy_name(
+            str(source['name']), self.db.workflow_names_at_level(parent_id),
+        )
+        workflow_id = self.db.add_workflow(
+            name, str(source.get('description', '')), parent_id,
+        )
         self.db.set_workflow_enabled(workflow_id, bool(source.get('enabled', True)))
         self.db.set_workflow_guard(workflow_id, decode_guard(source.get('guard_json', '')))
         # データ開始位置は一意のため、元フロー側を維持して複製側には移動しない。
@@ -1834,10 +1850,11 @@ class FlowDesignPage(QWidget):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         data = dialog.result_data()
-        if any(row['name'] == data['name'] for row in self.db.list_workflows()):
+        parent_id = self._workflow_insertion_parent_id(selected_node_id)
+        if data['name'] in self.db.workflow_names_at_level(parent_id):
             show_warning(self, tr('error.create_title'), tr('flow.name_duplicate'))
             return
-        workflow_id = self.db.add_workflow(data['name'], data['description'])
+        workflow_id = self.db.add_workflow(data['name'], data['description'], parent_id)
         self.db.set_workflow_enabled(workflow_id, data['enabled'])
         self.db.set_workflow_guard(workflow_id, data['guard'])
         if data['data_start']:
@@ -1856,9 +1873,8 @@ class FlowDesignPage(QWidget):
         rows = [dict(row) for row in self.db.list_workflow_outline()]
         by_id = {int(row['id']): row for row in rows}
         selected = by_id.get(selected_node_id) if selected_node_id is not None else None
-        parent_id = (
-            int(selected['id']) if selected and selected['kind'] == 'group' and group_as_parent
-            else selected['parent_id'] if selected else None
+        parent_id = self._workflow_insertion_parent_id(
+            selected_node_id, group_as_parent=group_as_parent, rows=rows,
         )
         siblings = sorted(
             (row for row in rows if row['parent_id'] == parent_id and int(row['id']) != node_id),
@@ -1887,6 +1903,19 @@ class FlowDesignPage(QWidget):
                 append(current_id)
         append(None)
         self.db.reorder_workflow_outline(ordered)
+
+    def _workflow_insertion_parent_id(
+        self, selected_node_id: int | None, *, group_as_parent: bool=True,
+        rows: list[dict[str, Any]] | None=None,
+    ) -> int | None:
+        """選択行と追加方法から、新しいFlowを配置する親階層を返す。"""
+        outline = rows or [dict(row) for row in self.db.list_workflow_outline()]
+        selected = next(
+            (row for row in outline if int(row['id']) == selected_node_id), None,
+        ) if selected_node_id is not None else None
+        if selected and selected['kind'] == 'group' and group_as_parent:
+            return int(selected['id'])
+        return selected['parent_id'] if selected else None
 
     def _place_new_workflow(self, workflow_id: int, selected_id: int | None) -> None:
         """従来の Flow ID 指定を管理ツリーのノード ID へ変換する互換窓口。"""
@@ -1934,7 +1963,10 @@ class FlowDesignPage(QWidget):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         data = dialog.result_data()
-        if any(item['id'] != row['id'] and item['name'] == data['name'] for item in self.db.list_workflows()):
+        parent_id = self.db.workflow_parent_id(int(row['id']))
+        if data['name'] in self.db.workflow_names_at_level(
+            parent_id, exclude_workflow_id=int(row['id']),
+        ):
             show_warning(self, tr('error.create_title'), tr('flow.name_duplicate'))
             return
         self.db.update_workflow(row['id'], data['name'], data['description'])
