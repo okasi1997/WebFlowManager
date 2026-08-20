@@ -31,6 +31,7 @@ SUPPORTED_SELECTOR_TYPES = (
     'text',
     'css',
     'xpath',
+    'path',
 )
 
 def runtime_settings(start_url: str) -> dict[str, object]:

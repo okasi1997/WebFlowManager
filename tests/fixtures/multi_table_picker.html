@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>多段パス・跨表対応行テスト</title>
+  <style>
+    body { font: 16px sans-serif; padding: 24px; }
+    table { border-collapse: collapse; margin: 12px; }
+    td, th { border: 1px solid #888; padding: 8px 12px; }
+  </style>
+</head>
+<body>
+  <table>
+    <tbody>
+      <tr>
+        <td>
+          <strong id="target1">target1 共通外側範囲</strong>
+          <table>
+            <tbody>
+              <tr>
+                <td>
+                  <strong id="target2">target2 内側範囲</strong>
+                  <table id="source-table">
+                    <tbody>
+                      <tr><td>source row 0</td></tr>
+                      <tr><td id="target3">target3 基準行</td></tr>
+                      <tr><td>source row 2</td></tr>
+                    </tbody>
+                  </table>
+                  <table id="target-table">
+                    <tbody>
+                      <tr><td><input value="target row 0"></td></tr>
+                      <tr><td><input id="target4" value="target4 対象"></td></tr>
+                      <tr><td><input value="target row 2"></td></tr>
+                    </tbody>
+                  </table>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>

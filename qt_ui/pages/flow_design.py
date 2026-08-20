@@ -5,17 +5,20 @@ import copy
 import json
 import ctypes
 import queue
+import re
 import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 from PySide6.QtCore import QEvent, QTimer, Qt
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QFrame, QHBoxLayout, QInputDialog,
-    QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QSpinBox, QSplitter,
-    QTabWidget, QTreeWidget, QTreeWidgetItem,
-    QWidget,
+    QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu,
+    QPlainTextEdit, QPushButton, QSpinBox,
+    QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QTreeWidget,
+    QTreeWidgetItem, QWidget, QWidgetAction,
 )
 
 from core.conditions import OPERATORS, decode_guard, summarize_guard
@@ -24,6 +27,7 @@ from core.database import Database
 from core.data_templates import normalize_template_schema, schema_templates
 from core.settings import SELECT_FIRST_VALUE, SUPPORTED_ACTIONS, SUPPORTED_SELECTOR_TYPES
 from browser.element_picker import DebugBrowserSession
+from browser.locators import multi_path_steps
 from i18n import tr
 from .auth import profile_path
 from ..ui_loader import (
@@ -35,7 +39,7 @@ from ..ui_loader import (
 from ..table_view import (
     HierarchicalReorderTreeWidget, bind_delete_key, bind_structured_copy_paste, bulk_view_update, capture_scroll_position,
     capture_tree_display_state, configure_row_move_tooltips, configure_table_view,
-    restore_scroll_position, restore_tree_display_state,
+    restore_scroll_position, restore_tree_display_state, selected_outer_items,
     set_column_layout, set_row_enabled_appearance, set_tree_expanded, update_preserving_scroll,
     unique_copy_name,
 )
@@ -45,6 +49,9 @@ ACTION_LABELS = {
     'wait': '待機', 'press': 'キー入力', 'get_text': '文字取得', 'screenshot': 'スクリーンショット',
     'pause': '一時停止', 'upload_file': 'ファイル送信', 'group_start': 'グループ',
 }
+
+PARAMETER_MENU_MAX_WIDTH = 560
+PARAMETER_MENU_MAX_HEIGHT = 420
 FAILURE_ACTION_LABELS = {
     'stop': '実行を停止', 'continue': '次のイベントへ進む',
     'refresh': 'ページを再読み込み', 'goto': '指定 URL へ移動',
@@ -60,6 +67,55 @@ ELEMENT_SELECTOR_ACTIONS = frozenset({
 })
 SUCCESS_CONFIRM_ACTIONS = frozenset({'click', 'goto', 'select', 'press'})
 GROUP_ACTION_WIDTH = 120
+SELECTOR_TYPE_LABELS = {'path': '多段パス'}
+INLINE_DATA_REFERENCE_PATTERN = re.compile(r'\$\{data:([^{}]+)\}')
+
+
+def _populate_selector_types(combo: QComboBox, current: Any) -> None:
+    """保存キーを userData に保ち、多段パスだけ利用者向け名称で表示する。"""
+    for selector_type in SUPPORTED_SELECTOR_TYPES:
+        combo.addItem(tr(SELECTOR_TYPE_LABELS.get(selector_type, selector_type)), selector_type)
+    index = combo.findData(str(current))
+    combo.setCurrentIndex(max(0, index))
+
+
+def _selector_type(combo: QComboBox) -> str:
+    """旧来の表示値にも対応しながら selector type の保存キーを返す。"""
+    return str(combo.currentData() or combo.currentText())
+
+
+def _migrate_inline_path_parameters(data: dict[str, Any]) -> dict[str, Any]:
+    """旧 ${data:path} を短い $n 参照へ重複なく移行する。"""
+    parameters = data.setdefault('parameters', {})
+    if not isinstance(parameters, dict):
+        parameters = {}
+        data['parameters'] = parameters
+    path_numbers = {
+        str(parameter.get('value', '')): str(number)
+        for number, parameter in parameters.items()
+        if isinstance(parameter, dict) and parameter.get('source') == 'data'
+    }
+    used = {int(number) for number in parameters if str(number).isdigit()}
+
+    def replace(match: re.Match[str]) -> str:
+        path = match.group(1).strip()
+        if path in path_numbers:
+            return f'${path_numbers[path]}'
+        number = next((candidate for candidate in range(1, 100) if candidate not in used), None)
+        if number is None:
+            return match.group(0)
+        used.add(number)
+        path_numbers[path] = str(number)
+        parameters[str(number)] = {
+            'source': 'data', 'value': path,
+            'empty_action': 'error', 'max_length': 120,
+        }
+        return f'${number}'
+
+    for step in data.get('steps', []):
+        if isinstance(step, dict):
+            step['value'] = INLINE_DATA_REFERENCE_PATTERN.sub(replace, str(step.get('value', '')))
+    return data
 
 
 def _inline_host(*items: tuple[QWidget, int] | QWidget, spacing: int = 8) -> QWidget:
@@ -99,6 +155,173 @@ def _aligned_form_host(
         trailing.setProperty('formHost', True)
     trailing.setFixedWidth(trailing_width)
     return _inline_host((field, 1), trailing)
+
+
+class MultiPathParameterDialog(QDialog):
+    """多段パス内の $n パラメーターを一元管理する。"""
+
+    SOURCE_LABELS = {'data': 'データ構造', 'variable': '実行変数', 'fixed': '固定値'}
+    EMPTY_LABELS = {'error': 'エラー', 'empty': '空文字'}
+
+    def __init__(self, parent: QWidget, parameters: dict[str, Any], schema: dict[str, Any]) -> None:
+        super().__init__(parent)
+        load_ui_into(self, 'multi_path_parameters.ui')
+        self.parameters = copy.deepcopy(parameters) if isinstance(parameters, dict) else {}
+        self.schema = schema
+        self.table = require(self, QTableWidget, 'parameterTable')
+        self.number = require(self, QLineEdit, 'numberEdit')
+        self.source = require(self, QComboBox, 'sourceCombo')
+        self.value = require(self, QLineEdit, 'valueEdit')
+        self.empty = require(self, QComboBox, 'emptyCombo')
+        self.maximum = require(self, QSpinBox, 'lengthSpin')
+        self.data_button = require(self, QPushButton, 'dataButton')
+        for key, label in self.SOURCE_LABELS.items():
+            self.source.addItem(tr(label), key)
+        for key, label in self.EMPTY_LABELS.items():
+            self.empty.addItem(tr(label), key)
+        parameter_header = self.table.horizontalHeader()
+        parameter_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        parameter_header.setMinimumSectionSize(90)
+        parameter_header.setMaximumSectionSize(320)
+        self.table.setTextElideMode(Qt.TextElideMode.ElideNone)
+        # Designer 読込直後は viewport が未確定のため、表示レイアウト確定後に再調整する。
+        QTimer.singleShot(0, self._fit_parameter_columns_to_contents)
+        self.table.itemSelectionChanged.connect(self._load_selected)
+        self.source.currentIndexChanged.connect(self._source_changed)
+        self.value.textEdited.connect(self._save_current)
+        self.empty.currentIndexChanged.connect(self._save_current)
+        self.maximum.valueChanged.connect(self._save_current)
+        self.data_button.clicked.connect(self._choose_data)
+        require(self, QPushButton, 'addButton').clicked.connect(self._add)
+        require(self, QPushButton, 'deleteButton').clicked.connect(self._delete)
+        set_button_icon(self.data_button, 'data-reference', 18)
+        buttons = require(self, QDialogButtonBox, 'buttonBox')
+        localize_dialog_buttons(buttons)
+        buttons.accepted.connect(self._accept_if_valid)
+        buttons.rejected.connect(self.reject)
+        self._refresh()
+
+    def _fit_parameter_columns_to_contents(self) -> None:
+        """各列を内容に合わせて広げ、上限を超えた分は横スクロールで表示する。"""
+        header = self.table.horizontalHeader()
+        for column in range(self.table.columnCount()):
+            self.table.resizeColumnToContents(column)
+            width = max(
+                header.minimumSectionSize(),
+                min(header.maximumSectionSize(), self.table.columnWidth(column)),
+            )
+            self.table.setColumnWidth(column, width)
+
+    @staticmethod
+    def _sort_key(number: str) -> int:
+        return int(number) if number.isdigit() else 1000
+
+    def _refresh(self, selected: str | None = None) -> None:
+        selected = selected or self.number.text().lstrip('$')
+        self.table.setRowCount(0)
+        for number in sorted(self.parameters, key=self._sort_key):
+            parameter = self.parameters[number]
+            if not isinstance(parameter, dict):
+                continue
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            source = str(parameter.get('source', 'fixed'))
+            values = (f'${number}', tr(self.SOURCE_LABELS.get(source, source)), str(parameter.get('value', '')))
+            for column, text in enumerate(values):
+                item = QTableWidgetItem(text)
+                item.setData(Qt.ItemDataRole.UserRole, number)
+                self.table.setItem(row, column, item)
+            if number == selected:
+                self.table.selectRow(row)
+        if self.table.currentRow() < 0 and self.table.rowCount():
+            self.table.selectRow(0)
+        self._fit_parameter_columns_to_contents()
+        self._load_selected()
+
+    def _selected_number(self) -> str | None:
+        item = self.table.item(self.table.currentRow(), 0) if self.table.currentRow() >= 0 else None
+        return str(item.data(Qt.ItemDataRole.UserRole)) if item is not None else None
+
+    def _load_selected(self) -> None:
+        number = self._selected_number()
+        enabled = number is not None
+        require(self, QFrame, 'detailCard').setEnabled(enabled)
+        if not enabled:
+            self.number.clear()
+            return
+        parameter = self.parameters[number]
+        self.number.setText(f'${number}')
+        for combo, key in ((self.source, parameter.get('source', 'fixed')), (self.empty, parameter.get('empty_action', 'error'))):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(max(0, combo.findData(str(key))))
+            combo.blockSignals(False)
+        self.value.blockSignals(True)
+        self.value.setText(str(parameter.get('value', '')))
+        self.value.blockSignals(False)
+        self.maximum.blockSignals(True)
+        self.maximum.setValue(int(parameter.get('max_length', 120)))
+        self.maximum.blockSignals(False)
+        self._source_changed()
+
+    def _save_current(self, *_args) -> None:
+        number = self._selected_number()
+        if number is None:
+            return
+        self.parameters[number] = {
+            'source': str(self.source.currentData()), 'value': self.value.text(),
+            'empty_action': str(self.empty.currentData()), 'max_length': self.maximum.value(),
+        }
+        # 値変更時は対象行だけ更新し、全表再構築を避ける。
+        row = self.table.currentRow()
+        if row >= 0:
+            self.table.item(row, 1).setText(tr(self.SOURCE_LABELS[str(self.source.currentData())]))
+            self.table.item(row, 2).setText(self.value.text())
+
+    def _source_changed(self, *_args) -> None:
+        is_data = self.source.currentData() == 'data'
+        self.data_button.setVisible(is_data)
+        is_variable = self.source.currentData() == 'variable'
+        self.value.setPlaceholderText(
+            tr('変数名 または yyyyMMdd_HHmm') if is_variable else ''
+        )
+        self.value.setToolTip(
+            tr('同名変数を優先し、存在しない場合は対応する日時書式を使用します')
+            if is_variable else ''
+        )
+        self._save_current()
+
+    def _choose_data(self) -> None:
+        dialog = DataPathPickerDialog(self, self.schema, self.value.text())
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.result_path:
+            self.value.setText(dialog.result_path)
+            self._save_current()
+
+    def _add(self) -> None:
+        number = next((str(value) for value in range(1, 100) if str(value) not in self.parameters), None)
+        if number is None:
+            show_warning(self, 'パラメーター設定', 'パラメーターは99個まで設定できます。')
+            return
+        self.parameters[number] = {'source': 'data', 'value': '', 'empty_action': 'error', 'max_length': 120}
+        self._refresh(number)
+
+    def _delete(self) -> None:
+        number = self._selected_number()
+        if number is not None:
+            del self.parameters[number]
+            self._refresh()
+
+    def _accept_if_valid(self) -> None:
+        self._save_current()
+        for number, parameter in self.parameters.items():
+            if not str(parameter.get('value', '')).strip() and parameter.get('source') != 'fixed':
+                show_warning(self, 'パラメーター設定', f'${number} の設定値を入力してください。')
+                return
+        self.accept()
+
+    @property
+    def selected_number(self) -> str | None:
+        """保存時に選択中のパラメーター番号を返す。"""
+        return self._selected_number()
 
 
 class EventEditorDialog(QDialog):
@@ -154,8 +377,7 @@ class EventEditorDialog(QDialog):
             (self.selector_type, event.get('selector_type', 'none')),
             (self.fallback_selector_type, event.get('fallback_selector_type', 'none')),
         ):
-            combo.addItems(SUPPORTED_SELECTOR_TYPES)
-            combo.setCurrentText(str(value))
+            _populate_selector_types(combo, value)
         stored_failure = str(event.get('failure_action', 'none'))
         failure_key = (
             'continue' if stored_failure == 'none' and event.get('continue_on_error', 0)
@@ -199,6 +421,18 @@ class EventEditorDialog(QDialog):
         # QTabBar の expanding は Designer から保存できないため、実行時に補完する。
         self.left_tabs.tabBar().setExpanding(False)
         self.selector_host = require(self, QWidget, 'selectorHost')
+        self.multi_path_title_host = require(self, QWidget, 'multiPathTitleHost')
+        self.multi_path_title = require(self, QLabel, 'multiPathTitle')
+        self.multi_path_host = require(self, QWidget, 'multiPathHost')
+        self.multi_path_form = require(self, QFormLayout, 'multiPathForm')
+        self.fallback_type_host = require(self, QWidget, 'fallbackTypeHost')
+        self.multi_path_inputs: list[QLineEdit] = []
+        self._multi_path_data: dict[str, Any] = {}
+        try:
+            decoded_parameters = json.loads(str(event.get('selector_parameters_json', '') or '{}'))
+            self._selector_parameters = decoded_parameters if isinstance(decoded_parameters, dict) else {}
+        except (TypeError, ValueError):
+            self._selector_parameters = {}
         self.fallback_selector_host = require(self, QWidget, 'fallbackSelectorHost')
         self.value_host = require(self, QWidget, 'valueHost')
         self.path_host = require(self, QWidget, 'pathHost')
@@ -240,8 +474,9 @@ class EventEditorDialog(QDialog):
             str(click_success.get('condition', 'none'))
         )))
         self.click_success_selector_type = require(self, QComboBox, 'clickSuccessTypeCombo')
-        self.click_success_selector_type.addItems(SUPPORTED_SELECTOR_TYPES)
-        self.click_success_selector_type.setCurrentText(str(click_success.get('selector_type', 'css')))
+        _populate_selector_types(
+            self.click_success_selector_type, click_success.get('selector_type', 'css')
+        )
         self.click_success_target = require(self, QLineEdit, 'clickSuccessTargetEdit')
         self.click_success_target.setText(str(click_success.get('target', '')))
         self.click_success_iframe_path = require(self, QLineEdit, 'clickSuccessIframeEdit')
@@ -254,16 +489,22 @@ class EventEditorDialog(QDialog):
         self.fallback_reference_button = require(self, QPushButton, 'fallbackReferenceButton')
         self.value_data_reference_button = require(self, QPushButton, 'valueReferenceButton')
         self.value_action_button = require(self, QPushButton, 'valueActionButton')
-        self.selector_reference_button.clicked.connect(lambda: self._insert_data_reference(self.selector))
-        self.fallback_reference_button.clicked.connect(lambda: self._insert_data_reference(self.fallback_selector))
-        self.value_data_reference_button.clicked.connect(lambda: self._insert_data_reference(self.value))
+        self.selector_reference_button.clicked.connect(
+            lambda: self._configure_event_parameter(self.selector)
+        )
+        self.fallback_reference_button.clicked.connect(
+            lambda: self._configure_event_parameter(self.fallback_selector)
+        )
+        self.value_data_reference_button.clicked.connect(
+            lambda: self._configure_event_parameter(self.value)
+        )
         self.value_action_button.clicked.connect(self._value_action)
         # 利用者が選択値を直接入力した場合は、先頭選択状態を解除する。
         self.value.textEdited.connect(lambda _text: setattr(self, '_select_first', False))
         require(self, QPushButton, 'pathButton').clicked.connect(self.choose_data_path)
         require(self, QPushButton, 'guardButton').clicked.connect(self.edit_guard)
         require(self, QPushButton, 'failureReferenceButton').clicked.connect(
-            lambda: self._insert_data_reference(self.failure_target)
+            lambda: self._configure_event_parameter(self.failure_target)
         )
 
         self.target_url = require(self, QLineEdit, 'targetUrlEdit')
@@ -296,6 +537,162 @@ class EventEditorDialog(QDialog):
         self._update_action_fields()
         self._update_picker_destination()
         self.iframe_path.setText(_iframe_path_text(self.iframe_path.text()))
+        self._load_multi_path_fields()
+
+    def _load_multi_path_fields(self) -> None:
+        """保存済みの各段を、データ参照可能な入力行として再構築する。"""
+        try:
+            data = json.loads(self.selector.text())
+            self._multi_path_data = _migrate_inline_path_parameters(data) if isinstance(data, dict) else {}
+        except (TypeError, ValueError):
+            self._multi_path_data = {}
+        path_parameters = self._multi_path_data.get('parameters', {})
+        if isinstance(self._multi_path_data.get('steps'), list) and isinstance(path_parameters, dict):
+            # 旧多段パスの定義もイベント共通パラメーターへ取り込む。
+            self._selector_parameters = path_parameters | self._selector_parameters
+            self._multi_path_data['parameters'] = self._selector_parameters
+        if self._multi_path_data:
+            self.selector.setText(json.dumps(
+                self._multi_path_data, ensure_ascii=False, separators=(',', ':')
+            ))
+        while self.multi_path_form.count():
+            item = self.multi_path_form.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        self.multi_path_inputs = []
+        steps = multi_path_steps(self.selector.text())
+        self.multi_path_title.setText(f'{tr("多段パス")}（{len(steps)}{tr("段")}）')
+        for index, step in enumerate(steps, start=1):
+            kind = {
+                'target': '対象', 'source_row': '基準行', 'scope': '範囲',
+            }.get(str(step.get('kind')), '範囲')
+            method = str(step.get('match_method', 'text_contains'))
+            attribute = str(step.get('match_attribute', ''))
+            if method == 'attribute_equals' and attribute:
+                match_label = f'{attribute} {tr("と等しい")}'
+            elif method == 'tag':
+                match_label = tr('タグ')
+            else:
+                match_label = tr('文字を含む')
+            label = QLabel(f'{index}. {tr(kind)} · {match_label}')
+            # 外側フォームと同じラベル幅にし、すべての入力欄の開始位置を揃える。
+            label.setFixedWidth(108)
+            value = QLineEdit(str(step.get('value', step.get('display', ''))))
+            value.setToolTip(str(step.get('display', '')))
+            button = QPushButton()
+            button.setFixedWidth(42)
+            button.setProperty('formAction', True)
+            button.setProperty('dataReferenceButton', True)
+            button.setToolTip(tr('パラメーターを挿入'))
+            set_button_icon(button, 'data-reference', 18)
+            button.clicked.connect(lambda _checked=False, field=value: self._configure_event_parameter(field))
+            value.textChanged.connect(self._sync_multi_path_values)
+            row = _inline_host((value, 1), button, spacing=8)
+            self.multi_path_form.addRow(label, row)
+            self.multi_path_inputs.append(value)
+
+    def _sync_multi_path_values(self) -> None:
+        """入力値を内部 JSON へ戻し、イベント保存と試行で同じ値を使用する。"""
+        steps = self._multi_path_data.get('steps', [])
+        if not isinstance(steps, list) or len(steps) != len(self.multi_path_inputs):
+            return
+        for step, field in zip(steps, self.multi_path_inputs):
+            if isinstance(step, dict):
+                step['value'] = field.text()
+        self.selector.setText(json.dumps(
+            self._multi_path_data, ensure_ascii=False, separators=(',', ':')
+        ))
+
+    def _configure_event_parameter(self, target: QLineEdit) -> None:
+        """
+        どのデータ連携ボタンからでもイベント共通設定を開き、
+        保存時に選択中の $n を呼び出し元の入力欄へ挿入する。
+        """
+        if self._selector_parameters:
+            menu, settings_action = self._build_parameter_summary_menu()
+            selected = menu.exec(target.mapToGlobal(target.rect().bottomRight()))
+            selected_number = getattr(menu, '_selected_parameter_number', None)
+            if selected_number:
+                target.insert(f'${selected_number}')
+                target.setFocus()
+                return
+            if selected is None:
+                return
+            if selected is not settings_action:
+                target.insert(f'${selected.data()}')
+                target.setFocus()
+                return
+        dialog = MultiPathParameterDialog(
+            self, self._selector_parameters, self._data_schema(),
+        )
+        dialog.setWindowTitle(tr('イベントパラメーター設定'))
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._selector_parameters = dialog.parameters
+        if isinstance(self._multi_path_data.get('steps'), list):
+            self._multi_path_data['parameters'] = self._selector_parameters
+            self._sync_multi_path_values()
+        if dialog.selected_number:
+            target.insert(f'${dialog.selected_number}')
+            target.setFocus()
+
+    def _build_parameter_summary_menu(self) -> tuple[QMenu, Any]:
+        """番号と取得元を残し、長い値だけを省略したパラメーター概要を作る。"""
+        menu = QMenu(self)
+        menu.setMaximumWidth(PARAMETER_MENU_MAX_WIDTH)
+        parameter_list = QListWidget(menu)
+        parameter_list.setObjectName('parameterSummaryList')
+        parameter_list.setFixedWidth(PARAMETER_MENU_MAX_WIDTH - 24)
+        parameter_list.setMaximumHeight(PARAMETER_MENU_MAX_HEIGHT - 58)
+        parameter_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        parameter_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        parameter_list.setUniformItemSizes(True)
+        metrics = QFontMetrics(parameter_list.font())
+        # リストの左右余白と縦スクロールバー領域を除いた幅を値表示に使用する。
+        reserved_width = 42
+        for number in sorted(
+                self._selector_parameters, key=MultiPathParameterDialog._sort_key,
+        ):
+            parameter = self._selector_parameters[number]
+            if not isinstance(parameter, dict):
+                continue
+            source = MultiPathParameterDialog.SOURCE_LABELS.get(
+                str(parameter.get('source', 'fixed')), str(parameter.get('source', '')),
+            )
+            prefix = f'${number}  {tr(source)}  |  '
+            value = str(parameter.get('value', ''))
+            available = max(
+                40, parameter_list.width()
+                - metrics.horizontalAdvance(prefix) - reserved_width,
+            )
+            shown_value = metrics.elidedText(
+                value, Qt.TextElideMode.ElideMiddle, available,
+            )
+            item = QListWidgetItem(f'{prefix}{shown_value}')
+            item.setData(Qt.ItemDataRole.UserRole, str(number))
+            item.setToolTip(f'{prefix}{value}')
+            parameter_list.addItem(item)
+        row_height = max(34, parameter_list.sizeHintForRow(0))
+        parameter_list.setFixedHeight(min(
+            PARAMETER_MENU_MAX_HEIGHT - 58,
+            max(row_height, row_height * parameter_list.count() + 4),
+        ))
+
+        def select_parameter(item: QListWidgetItem) -> None:
+            menu._selected_parameter_number = item.data(Qt.ItemDataRole.UserRole)
+            menu.close()
+
+        parameter_list.itemClicked.connect(select_parameter)
+        parameter_list.itemActivated.connect(select_parameter)
+        list_action = QWidgetAction(menu)
+        list_action.setDefaultWidget(parameter_list)
+        menu.addAction(list_action)
+        menu.addSeparator()
+        settings_action = menu.addAction(tr('イベントパラメーター設定'))
+        # テストと再利用時に、スクロール対象へ安全にアクセスできるよう保持する。
+        menu._parameter_list = parameter_list
+        menu._selected_parameter_number = None
+        return menu, settings_action
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -330,6 +727,32 @@ class EventEditorDialog(QDialog):
             show_warning(self, '実行条件', str(error))
             return
         action = self.action.currentData()
+        if action in ELEMENT_SELECTOR_ACTIONS:
+            if _selector_type(self.selector_type) == 'path':
+                self._sync_multi_path_values()
+                parameters = self._multi_path_data.get('parameters', {})
+                values = [
+                    str(step.get('value', ''))
+                    for step in self._multi_path_data.get('steps', []) if isinstance(step, dict)
+                ] + [self.value.text(), self.failure_target.text()]
+            else:
+                parameters = self._selector_parameters
+                values = [
+                    self.selector.text(), self.fallback_selector.text(),
+                    self.value.text(), self.failure_target.text(),
+                ]
+            references = {
+                match.group(1) for value in values
+                for match in re.finditer(r'(?<!\$)\$(\d{1,2})(?!\d)', value)
+            }
+            undefined = sorted(
+                (number for number in references if number not in parameters),
+                key=MultiPathParameterDialog._sort_key,
+            )
+            if undefined:
+                names = ', '.join(f'${number}' for number in undefined)
+                show_warning(self, 'パラメーター設定', f'未定義のパラメーターがあります: {names}')
+                return
         if (
             action in SUCCESS_CONFIRM_ACTIONS
             and self.click_success_condition.currentData() != 'none'
@@ -370,21 +793,16 @@ class EventEditorDialog(QDialog):
             self._update_guard_summary()
 
     def choose_data_path(self) -> None:
+        """データ項目は文字列結合せず、従来通り単一項目として選択する。"""
         path = self._select_data_path(self.data_path.currentText())
         if path:
             self.data_path.setCurrentText(path)
 
-    def _insert_data_reference(self, target: QLineEdit) -> None:
-        """カーソル位置または選択範囲へデータ参照式を挿入する。"""
-        path = self._select_data_path()
-        if not path:
-            return
-        target.insert(f'${{data:{path}}}')
-        target.setFocus()
-
     def _update_action_fields(self) -> None:
+        """カーソル位置または選択範囲へデータ参照式を挿入する。"""
         action = self.action.currentData()
         selector_enabled = action in ELEMENT_SELECTOR_ACTIONS
+        path_enabled = selector_enabled and _selector_type(self.selector_type) == 'path'
         require(self, QFrame, 'locatorCard').setVisible(selector_enabled)
         # 項目数が少ない操作でも各入力欄は常に上詰めで表示する。
         require(self, QFrame, 'eventCard').setMinimumHeight(0)
@@ -398,14 +816,18 @@ class EventEditorDialog(QDialog):
                 label.setVisible(visible)
 
         show_row(locator_form, self.selector_type, selector_enabled)
-        show_row(locator_form, self.selector_host, selector_enabled)
-        show_row(locator_form, self.fallback_selector_type, selector_enabled)
-        show_row(locator_form, self.fallback_selector_host, selector_enabled)
+        show_row(locator_form, self.selector_host, selector_enabled and not path_enabled)
+        self.multi_path_title_host.setVisible(path_enabled)
+        show_row(locator_form, self.multi_path_host, path_enabled)
+        show_row(locator_form, self.fallback_type_host, selector_enabled and not path_enabled)
+        show_row(locator_form, self.fallback_selector_host, selector_enabled and not path_enabled)
         show_row(locator_form, self.iframe_path, selector_enabled)
-        self.selector.setEnabled(selector_enabled and self.selector_type.currentText() != 'none')
+        self.selector.setEnabled(
+            selector_enabled and _selector_type(self.selector_type) not in {'none', 'path'}
+        )
         self.selector_reference_button.setEnabled(self.selector.isEnabled())
         self.fallback_selector.setEnabled(
-            selector_enabled and self.fallback_selector_type.currentText() != 'none'
+            selector_enabled and _selector_type(self.fallback_selector_type) != 'none'
         )
         self.fallback_reference_button.setEnabled(self.fallback_selector.isEnabled())
         value_enabled = action in {'goto', 'fill', 'select', 'wait', 'press', 'get_text', 'screenshot', 'pause', 'upload_file'}
@@ -448,6 +870,9 @@ class EventEditorDialog(QDialog):
             execution_form, self.click_success_iframe_path,
             click_success_visible and click_success_condition in {'visible', 'hidden', 'operable'},
         )
+        # 表示行を切り替えた直後でも、未表示の編集画面で座標と高さを確定させる。
+        locator_form.activate()
+        execution_form.activate()
         self._update_picker_destination()
 
     def _update_picker_destination(self, _index: int=-1) -> None:
@@ -576,14 +1001,17 @@ class EventEditorDialog(QDialog):
         pick_success_target = self.pick_button.property('pickDestination') == 'click_success'
         def picked(result: dict[str, Any]) -> str:
             if pick_success_target:
-                self.click_success_selector_type.setCurrentText(result['selector_type'])
+                index = self.click_success_selector_type.findData(result['selector_type'])
+                self.click_success_selector_type.setCurrentIndex(max(0, index))
                 self.click_success_target.setText(result['selector'])
                 self.click_success_iframe_path.setText(
                     _iframe_path_text(result.get('iframe_path', ''))
                 )
                 return f'成功確認要素を選択しました: {result.get("display", result["selector"])}'
-            self.selector_type.setCurrentText(result['selector_type'])
+            index = self.selector_type.findData(result['selector_type'])
+            self.selector_type.setCurrentIndex(max(0, index))
             self.selector.setText(result['selector'])
+            self._load_multi_path_fields()
             self.fallback_selector_type.setCurrentText(result.get('fallback_selector_type', 'none'))
             self.fallback_selector.setText(result.get('fallback_selector', ''))
             self.iframe_path.setText(_iframe_path_text(result.get('iframe_path', '')))
@@ -641,7 +1069,7 @@ class EventEditorDialog(QDialog):
         )
         if preview_success:
             success_event = {
-                'selector_type': self.click_success_selector_type.currentText(),
+                'selector_type': _selector_type(self.click_success_selector_type),
                 'selector': self.click_success_target.text().strip(),
                 'fallback_selector_type': 'none', 'fallback_selector': '',
                 'iframe_path': self.click_success_iframe_path.text().strip(),
@@ -655,10 +1083,58 @@ class EventEditorDialog(QDialog):
                 '成功確認要素をブラウザー上で強調表示しました',
             )
             return
+        from core.executor import find_variables
+        variables: dict[str, str] = {}
+        for name in find_variables([event]):
+            value, ok = QInputDialog.getText(self, tr('変数入力'), name)
+            if not ok:
+                return
+            variables[name] = value
+        # 参照中の data パラメーターがある場合だけ PCL を読み込む。
+        references = set(re.findall(
+            r'(?<!\$)\$(\d{1,2})(?!\d)',
+            ' '.join((
+                str(event.get('selector', '')), str(event.get('fallback_selector', '')),
+                str(event.get('value', '')), str(event.get('failure_target', '')),
+            )),
+        ))
+        try:
+            parameters = json.loads(str(event.get('selector_parameters_json', '') or '{}'))
+        except (TypeError, ValueError):
+            parameters = {}
+        needs_pcl = bool(event.get('data_path')) or '${data:' in ' '.join(
+            str(event.get(field, ''))
+            for field in ('selector', 'fallback_selector', 'value', 'failure_target')
+        ) or any(
+            isinstance(parameters.get(number), dict)
+            and parameters[number].get('source') == 'data'
+            for number in references
+        )
+        records = self._service_host.db.list_data_records(enabled_only=True) if needs_pcl else []
+        if needs_pcl and not records:
+            show_warning(
+                self, tr('イベント試行'),
+                tr('データパラメーターに使用できる有効な PCL がありません。'),
+            )
+            return
+        root_data = records[0]['data'] if records else None
+        execution_logs: queue.Queue[str] = queue.Queue()
+
+        def append_execution_log(message: str) -> None:
+            """単体試行の解決済みパスを「操作結果」と日次ログの両方へ渡す。"""
+            translated = tr(str(message))
+            self._service_host.file_log.append(translated)
+            execution_logs.put(translated)
+
         self._run_debug(
             'イベントを実行しています',
-            lambda: self._service_host.debug_browser.execute_event(event, self.target_url.text().strip()),
+            lambda: self._service_host.debug_browser.execute_event(
+                event, self.target_url.text().strip(),
+                variables=variables, root_data=root_data,
+                logger=append_execution_log,
+            ),
             'イベントを実行しました',
+            log_queue=execution_logs,
         )
 
     def execute_until_event(self) -> None:
@@ -695,6 +1171,7 @@ class EventEditorDialog(QDialog):
     def result_data(self) -> dict[str, Any]:
         failure_choice = str(self.failure_action.currentData())
         action = str(self.action.currentData())
+        selector_type = _selector_type(self.selector_type)
         if action == 'wait':
             value = str(self.wait_condition.currentData())
         elif action == 'select' and self._select_first:
@@ -705,7 +1182,7 @@ class EventEditorDialog(QDialog):
         success_json = '' if action not in SUCCESS_CONFIRM_ACTIONS or success_condition == 'none' else json.dumps(
             {
                 'condition': success_condition,
-                'selector_type': self.click_success_selector_type.currentText(),
+                'selector_type': _selector_type(self.click_success_selector_type),
                 'target': self.click_success_target.text().strip(),
             } | ({'iframe_path': self.click_success_iframe_path.text().strip()}
                  if self.click_success_iframe_path.text().strip() else {}),
@@ -714,10 +1191,19 @@ class EventEditorDialog(QDialog):
         return {
             'name': self.name.text().strip(),
             'action': action,
-            'selector_type': self.selector_type.currentText(),
+            'selector_type': selector_type,
             'selector': self.selector.text().strip(),
-            'fallback_selector_type': self.fallback_selector_type.currentText(),
-            'fallback_selector': self.fallback_selector.text().strip(),
+            'fallback_selector_type': (
+                'none' if selector_type == 'path'
+                else _selector_type(self.fallback_selector_type)
+            ),
+            'fallback_selector': (
+                '' if selector_type == 'path' else self.fallback_selector.text().strip()
+            ),
+            'selector_parameters_json': (
+                '' if not self._selector_parameters
+                else json.dumps(self._selector_parameters, ensure_ascii=False, separators=(',', ':'))
+            ),
             'iframe_path': _iframe_path_text(self.iframe_path.text()),
             'value': value,
             'success_json': success_json,
@@ -885,13 +1371,16 @@ def _schema_paths_of_type(schema: dict[str, Any], allowed_types: set[str]) -> li
     walk(schema)
     for template in schema_templates(normalize_template_schema(schema)):
         prefix = f'@template.{template["name"]}'
-        if 'list' in allowed_types:
+        if 'object' in allowed_types:
             paths.append(prefix)
         walk(template, prefix)
     return paths
 
 
 class DataPathPickerDialog(QDialog):
+    # ダイアログは開くたびに作り直されるため、同じ構造ごとの表示状態を共有する。
+    _display_states: dict[str, tuple[tuple[int, int], set[str]]] = {}
+
     def __init__(self, parent: QWidget, schema: dict[str, Any], current: str = '',
                  allowed_types: set[str] | None = None) -> None:
         super().__init__(parent)
@@ -899,6 +1388,10 @@ class DataPathPickerDialog(QDialog):
         self.setWindowTitle('データ構造から選択')
         self.result_path: str | None = None
         self.tree = require(self, QTreeWidget, 'pathTree')
+        self._display_state_key = json.dumps(
+            normalize_template_schema(schema), ensure_ascii=False, sort_keys=True,
+            separators=(',', ':'),
+        )
         self.toggle_all_button = require(self, QPushButton, 'toggleAllButton')
         configure_table_view(self.tree)
         for column, width in enumerate((210, 100, 300)):
@@ -914,6 +1407,7 @@ class DataPathPickerDialog(QDialog):
                 else node.get('type') not in {'object', 'list'}
             )
             item.setData(0, Qt.ItemDataRole.UserRole, path if selectable else None)
+            item.setData(0, Qt.ItemDataRole.UserRole + 1, path)
             parent.addChild(item) if isinstance(parent, QTreeWidgetItem) else parent.addTopLevelItem(item)
             for child in node.get('children', []):
                 add(item, child, path)
@@ -927,25 +1421,53 @@ class DataPathPickerDialog(QDialog):
             item = QTreeWidgetItem([str(template.get('name', '')), tr('テンプレート'), path])
             item.setData(
                 0, Qt.ItemDataRole.UserRole,
-                path if allowed_types is not None and 'list' in allowed_types else None,
+                path if allowed_types is not None and 'object' in allowed_types else None,
             )
+            item.setData(0, Qt.ItemDataRole.UserRole + 1, path)
             self.tree.addTopLevelItem(item)
             for child in template.get('children', []):
                 add(item, child, path)
             if path == current and item.data(0, Qt.ItemDataRole.UserRole):
                 selected_item = item
-        self.tree.expandAll()
         self.toggle_all_button.clicked.connect(self._toggle_all)
         self.tree.expanded.connect(self._sync_toggle_all_button)
         self.tree.collapsed.connect(self._sync_toggle_all_button)
         self._sync_toggle_all_button()
         if selected_item is not None:
             self.tree.setCurrentItem(selected_item)
+        self._restore_display_state()
         self.tree.itemDoubleClicked.connect(lambda *_: self._choose())
         buttons = require(self, QDialogButtonBox, 'buttonBox')
         localize_dialog_buttons(buttons)
         buttons.accepted.connect(self._choose)
         buttons.rejected.connect(self.reject)
+
+    def _restore_display_state(self) -> None:
+        """初回は全折りたたみ、2回目以降は前回閉じた時の状態へ戻す。"""
+        state = self._display_states.get(self._display_state_key)
+        expanded_paths = state[1] if state is not None else set()
+        for item in self._container_items():
+            path = str(item.data(0, Qt.ItemDataRole.UserRole + 1) or '')
+            item.setExpanded(path in expanded_paths)
+        if state is not None:
+            restore_scroll_position(self.tree, state[0])
+            # レイアウト確定後にスクロール範囲が変わる場合も同じ位置へ戻す。
+            QTimer.singleShot(0, lambda: restore_scroll_position(self.tree, state[0]))
+        self._sync_toggle_all_button()
+
+    def _save_display_state(self) -> None:
+        """閉じる直前の展開項目を、表示名ではなく安定したデータパスで保存する。"""
+        expanded_paths = {
+            str(item.data(0, Qt.ItemDataRole.UserRole + 1) or '')
+            for item in self._container_items() if item.isExpanded()
+        }
+        self._display_states[self._display_state_key] = (
+            capture_scroll_position(self.tree), expanded_paths,
+        )
+
+    def done(self, result: int) -> None:
+        self._save_display_state()
+        super().done(result)
 
     def _container_items(self) -> list[QTreeWidgetItem]:
         """展開・折りたたみの対象となる親項目だけを返す。"""
@@ -1282,8 +1804,8 @@ class FlowDesignPage(QWidget):
         workflow_up = require(self, QPushButton, 'moveWorkflowUpButton')
         workflow_down = require(self, QPushButton, 'moveWorkflowDownButton')
         configure_row_move_tooltips(workflow_up, workflow_down, '業務フロー')
-        workflow_up.clicked.connect(lambda: self.workflow_table.moveCurrent(-1))
-        workflow_down.clicked.connect(lambda: self.workflow_table.moveCurrent(1))
+        workflow_up.clicked.connect(lambda: self.workflow_table.moveSelected(-1))
+        workflow_down.clicked.connect(lambda: self.workflow_table.moveSelected(1))
         self.workflow_group_toggle = require(self, QPushButton, 'workflowGroupToggleButton')
         self.workflow_group_toggle.clicked.connect(self._toggle_workflow_groups)
         self.workflow_table.itemExpanded.connect(self._update_workflow_group_toggle)
@@ -1347,8 +1869,15 @@ class FlowDesignPage(QWidget):
 
     def reload(
         self, select_id: int | None=None, *, select_node_id: int | None=None,
-        select_first: bool=True,
+        select_first: bool=True, selected_node_ids: set[int] | None=None,
     ) -> None:
+        previous = self.workflow_table.currentItem()
+        previous_node_id = (
+            int(previous.data(0, self.WORKFLOW_NODE_ROLE)) if previous is not None else None
+        )
+        if select_id is None and select_node_id is None:
+            # グループ選択も含め、再読込前の行を安定した node ID で復元する。
+            select_node_id = previous_node_id
         display_state = capture_tree_display_state(
             self.workflow_table, lambda item: item.data(0, self.WORKFLOW_NODE_ROLE),
         )
@@ -1418,6 +1947,12 @@ class FlowDesignPage(QWidget):
                 self.current_workflow_id = None
                 self.event_title.setText(tr('flow.selection_required'))
                 self.event_tree.clear()
+            if selected_node_ids:
+                # 並べ替え前の複数選択を、安定したノード ID でまとめて復元する。
+                for node_id in selected_node_ids:
+                    item = items.get(node_id)
+                    if item is not None:
+                        item.setSelected(True)
         # 一括更新では選択通知を抑止するため、左側の選択結果を右側へ明示的に反映する。
         if self.workflow_table.currentItem() is not None:
             self._workflow_selected()
@@ -1494,7 +2029,17 @@ class FlowDesignPage(QWidget):
                 raise
             # 移動先の同一階層に同名フローがある場合は、DB上の配置へ戻す。
             show_warning(self, tr('error.create_title'), tr('flow.name_duplicate'))
-        self.reload(selected_workflow_id)
+        selected_node_id = (
+            int(selected.data(0, self.WORKFLOW_NODE_ROLE)) if selected is not None else None
+        )
+        selected_node_ids = {
+            int(item.data(0, self.WORKFLOW_NODE_ROLE))
+            for item in self.workflow_table.selectedItems()
+        }
+        self.reload(
+            selected_workflow_id, select_node_id=selected_node_id,
+            selected_node_ids=selected_node_ids,
+        )
 
     def _workflow_groups(self) -> list[QTreeWidgetItem]:
         groups: list[QTreeWidgetItem] = []
@@ -1559,7 +2104,9 @@ class FlowDesignPage(QWidget):
         else:
             self.edit_event()
 
-    def load_events(self, select_id: int | None=None) -> None:
+    def load_events(
+        self, select_id: int | None=None, *, selected_ids: set[int] | None=None,
+    ) -> None:
         display_state = capture_tree_display_state(
             self.event_tree,
             lambda item: item.data(0, Qt.ItemDataRole.UserRole),
@@ -1570,6 +2117,7 @@ class FlowDesignPage(QWidget):
         rows = [dict(row) for row in self.db.list_events(self.current_workflow_id)]
         parent_stack: list[QTreeWidgetItem] = []
         roots: list[QTreeWidgetItem] = []
+        items: dict[int, QTreeWidgetItem] = {}
         selected: QTreeWidgetItem | None = None
         for row in rows:
             action = str(row['action'])
@@ -1587,6 +2135,7 @@ class FlowDesignPage(QWidget):
             set_row_enabled_appearance(item, bool(row['enabled']))
             item.setData(0, Qt.ItemDataRole.UserRole, row['id'])
             item.setData(0, Qt.ItemDataRole.UserRole + 1, row)
+            items[int(row['id'])] = item
             # ドロップ位置を全行で受け付け、実際の移動先は専用ツリー側で同階層に限定する。
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
             if parent_stack:
@@ -1604,6 +2153,12 @@ class FlowDesignPage(QWidget):
             self.event_tree.addTopLevelItems(roots)
             if selected is not None:
                 self.event_tree.setCurrentItem(selected)
+            if selected_ids:
+                # 再読込で currentItem 以外の選択が消えないよう ID から復元する。
+                for event_id in selected_ids:
+                    item = items.get(event_id)
+                    if item is not None:
+                        item.setSelected(True)
             restore_tree_display_state(
                 self.event_tree, display_state,
                 lambda item: item.data(0, Qt.ItemDataRole.UserRole),
@@ -1654,6 +2209,10 @@ class FlowDesignPage(QWidget):
             return
         selected = self.event_tree.currentItem()
         selected_id = selected.data(0, Qt.ItemDataRole.UserRole) if selected is not None else None
+        selected_ids = {
+            int(item.data(0, Qt.ItemDataRole.UserRole))
+            for item in self.event_tree.selectedItems()
+        }
         ordered: list[int] = []
 
         def append_item(item: QTreeWidgetItem) -> None:
@@ -1669,7 +2228,7 @@ class FlowDesignPage(QWidget):
         existing = [row['id'] for row in self.db.list_events(self.current_workflow_id)]
         ordered.extend(event_id for event_id in existing if event_id not in ordered)
         self.db.reorder_events(self.current_workflow_id, ordered)
-        self.load_events(selected_id)
+        self.load_events(selected_id, selected_ids=selected_ids)
 
     def _selected_workflow(self) -> dict[str, Any] | None:
         item = self.workflow_table.currentItem()
@@ -1682,11 +2241,8 @@ class FlowDesignPage(QWidget):
         item = self.event_tree.currentItem()
         return dict(item.data(0, Qt.ItemDataRole.UserRole + 1)) if item is not None else None
 
-    def _copy_workflow_payload(self) -> dict[str, Any] | None:
-        """選択した業務フローと配下イベントを一式でコピーする。"""
-        selected = self.workflow_table.currentItem()
-        if selected is None:
-            return None
+    def _copy_workflow_payload(self) -> list[dict[str, Any]] | None:
+        """選択した業務フローを表示順で、配下イベントごとコピーする。"""
         def serialize(item: QTreeWidgetItem) -> dict[str, Any]:
             data = dict(item.data(0, self.WORKFLOW_DATA_ROLE) or {})
             if data.get('kind') == 'group':
@@ -1699,77 +2255,72 @@ class FlowDesignPage(QWidget):
                 'workflow': data,
                 'events': [dict(row) for row in self.db.list_events(int(data['id']))],
             }
-        return serialize(selected)
+        selected = selected_outer_items(self.workflow_table)
+        return [serialize(item) for item in selected] or None
 
-    def _paste_workflow_payload(self, payload: dict[str, Any]) -> None:
-        if 'group' in payload:
-            selected_item = self.workflow_table.currentItem()
-            selected_node_id = (
-                int(selected_item.data(0, self.WORKFLOW_NODE_ROLE)) if selected_item is not None else None
-            )
-            def paste_group(
-                source: dict[str, Any], anchor_node_id: int | None, *, sibling: bool=False,
-            ) -> int:
-                group_id = self.db.add_workflow_group(
-                    str(source.get('group', 'グループ')), decode_guard(source.get('guard')),
-                )
-                self._place_new_workflow_node(
-                    group_id, anchor_node_id, group_as_parent=not sibling,
-                )
-                for child in source.get('children', []):
-                    if 'group' in child:
-                        paste_group(child, group_id)
-                        continue
-                    workflow = dict(child['workflow'])
-                    name = unique_copy_name(
-                        str(workflow['name']), self.db.workflow_names_at_level(group_id),
-                    )
-                    workflow_id = self.db.add_workflow(
-                        name, str(workflow.get('description', '')), group_id,
-                    )
-                    self.db.set_workflow_enabled(workflow_id, bool(workflow.get('enabled', True)))
-                    self.db.set_workflow_guard(workflow_id, decode_guard(workflow.get('guard_json', '')))
-                    for event in child.get('events', []):
-                        self.db.add_event(workflow_id, copy.deepcopy(event))
-                    node = next(
-                        row for row in self.db.list_workflow_outline() if row['workflow_id'] == workflow_id
-                    )
-                    self._place_new_workflow_node(int(node['id']), group_id)
-                return group_id
-            pasted_group_id = paste_group(payload, selected_node_id, sibling=True)
-            self.reload(select_node_id=pasted_group_id)
+    def _paste_workflow_payload(self, payload: dict[str, Any] | list[dict[str, Any]]) -> None:
+        sources = payload if isinstance(payload, list) else [payload]
+        if not sources:
             return
-        source = dict(payload['workflow'])
         selected_item = self.workflow_table.currentItem()
-        selected_node_id = (
+        anchor_node_id = (
             int(selected_item.data(0, self.WORKFLOW_NODE_ROLE)) if selected_item is not None else None
         )
-        parent_id = self._workflow_insertion_parent_id(
-            selected_node_id, group_as_parent=False,
-        )
-        name = unique_copy_name(
-            str(source['name']), self.db.workflow_names_at_level(parent_id),
-        )
-        workflow_id = self.db.add_workflow(
-            name, str(source.get('description', '')), parent_id,
-        )
-        self.db.set_workflow_enabled(workflow_id, bool(source.get('enabled', True)))
-        self.db.set_workflow_guard(workflow_id, decode_guard(source.get('guard_json', '')))
-        # データ開始位置は一意のため、元フロー側を維持して複製側には移動しない。
-        for event in payload.get('events', []):
-            self.db.add_event(workflow_id, copy.deepcopy(event))
-        node = next(
-            row for row in self.db.list_workflow_outline() if row['workflow_id'] == workflow_id
-        )
-        self._place_new_workflow_node(
-            int(node['id']), selected_node_id, group_as_parent=False,
-        )
-        self.reload(workflow_id)
+
+        def paste_group(source: dict[str, Any], anchor_id: int | None, *, sibling: bool) -> int:
+            group_id = self.db.add_workflow_group(
+                str(source.get('group', 'グループ')), decode_guard(source.get('guard')),
+            )
+            self._place_new_workflow_node(group_id, anchor_id, group_as_parent=not sibling)
+            for child in source.get('children', []):
+                if 'group' in child:
+                    paste_group(child, group_id, sibling=False)
+                else:
+                    paste_flow(child, group_id, parent_id=group_id)
+            return group_id
+
+        def paste_flow(
+            source_payload: dict[str, Any], anchor_id: int | None, *, parent_id: int | None=None,
+        ) -> tuple[int, int]:
+            source = dict(source_payload['workflow'])
+            destination_parent = parent_id
+            if destination_parent is None:
+                destination_parent = self._workflow_insertion_parent_id(
+                    anchor_id, group_as_parent=False,
+                )
+            name = unique_copy_name(
+                str(source['name']), self.db.workflow_names_at_level(destination_parent),
+            )
+            workflow_id = self.db.add_workflow(
+                name, str(source.get('description', '')), destination_parent,
+            )
+            self.db.set_workflow_enabled(workflow_id, bool(source.get('enabled', True)))
+            self.db.set_workflow_guard(workflow_id, decode_guard(source.get('guard_json', '')))
+            # データ開始位置は一意のため、元フロー側を維持して複製側には移動しない。
+            for event in source_payload.get('events', []):
+                self.db.add_event(workflow_id, copy.deepcopy(event))
+            node = next(
+                row for row in self.db.list_workflow_outline() if row['workflow_id'] == workflow_id
+            )
+            node_id = int(node['id'])
+            self._place_new_workflow_node(
+                node_id, anchor_id, group_as_parent=parent_id is not None,
+            )
+            return node_id, workflow_id
+
+        last_workflow_id: int | None = None
+        for source in sources:
+            if 'group' in source:
+                anchor_node_id = paste_group(source, anchor_node_id, sibling=True)
+                last_workflow_id = None
+            else:
+                anchor_node_id, last_workflow_id = paste_flow(source, anchor_node_id)
+        self.reload(last_workflow_id, select_node_id=anchor_node_id)
 
     def _copy_event_payload(self) -> list[dict[str, Any]] | None:
         """選択イベントを、グループの場合は終了境界までまとめてコピーする。"""
-        selected = self.event_tree.currentItem()
-        if selected is None or self.current_workflow_id is None:
+        selected = selected_outer_items(self.event_tree)
+        if not selected or self.current_workflow_id is None:
             return None
         event_ids: list[int] = []
 
@@ -1781,7 +2332,8 @@ class FlowDesignPage(QWidget):
             if end_id is not None:
                 event_ids.append(int(end_id))
 
-        append_item(selected)
+        for item in selected:
+            append_item(item)
         rows = {int(row['id']): dict(row) for row in self.db.list_events(self.current_workflow_id)}
         return [rows[event_id] for event_id in event_ids if event_id in rows]
 
@@ -1954,7 +2506,7 @@ class FlowDesignPage(QWidget):
                 self.db.update_workflow_group(
                     int(selected_data['node_id']), dialog.result_name(), dialog.result_guard(),
                 )
-                self.reload()
+                self.reload(select_node_id=int(selected_data['node_id']))
             return
         row = self._selected_workflow()
         if row is None:
@@ -2225,4 +2777,4 @@ class FlowDesignPage(QWidget):
 
     def move_event(self, direction: int) -> None:
         if self.current_workflow_id is not None:
-            self.event_tree.moveCurrent(direction)
+            self.event_tree.moveSelected(direction)

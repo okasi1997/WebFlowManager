@@ -152,7 +152,8 @@ def restore_tree_display_state(
             item.setExpanded(key(item) in expanded)
             stack.extend(item.child(index) for index in range(item.childCount()))
     else:
-        tree.expandAll()
+        # 初回表示は折りたたみ、以後の再構築時だけ記録済み状態を復元する。
+        tree.collapseAll()
     restore_scroll_position(tree, scroll)
 
 
@@ -233,6 +234,41 @@ def configure_row_move_tooltips(
     down_button.setToolTip(f'{tr("選択した")}{tr(target_name)}{tr("を下へ移動")}')
 
 
+def outer_items_in_display_order(
+    tree: QTreeWidget, items: Iterable[QTreeWidgetItem],
+) -> list[QTreeWidgetItem]:
+    """表示順で行を返し、対象に含まれる親の配下は重複対象から除外する。"""
+    def item_path(item: QTreeWidgetItem) -> tuple[int, ...]:
+        path: list[int] = []
+        current = item
+        while current.parent() is not None:
+            parent = current.parent()
+            path.append(parent.indexOfChild(current))
+            current = parent
+        path.append(tree.indexOfTopLevelItem(current))
+        return tuple(reversed(path))
+
+    selected = set(items)
+    outer = [item for item in selected if not any(
+        ancestor in selected
+        for ancestor in _item_ancestors(item)
+    )]
+    return sorted(outer, key=item_path)
+
+
+def selected_outer_items(tree: QTreeWidget) -> list[QTreeWidgetItem]:
+    """表示順で選択行を返し、選択済み親の配下は重複対象から除外する。"""
+    return outer_items_in_display_order(tree, tree.selectedItems())
+
+
+def _item_ancestors(item: QTreeWidgetItem):
+    """対象行の親を近い順に列挙する。"""
+    parent = item.parent()
+    while parent is not None:
+        yield parent
+        parent = parent.parent()
+
+
 class HierarchicalReorderTreeWidget(QTreeWidget):
     """ドラッグと上下ボタンで同じ階層移動規則を使うツリー。"""
 
@@ -240,7 +276,7 @@ class HierarchicalReorderTreeWidget(QTreeWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._drag_source: QTreeWidgetItem | None = None
+        self._drag_sources: list[QTreeWidgetItem] = []
         self._container_test: Callable[[QTreeWidgetItem], bool] = lambda item: bool(item.childCount())
         self._move_test: Callable[[QTreeWidgetItem, QTreeWidgetItem], bool] = lambda _source, _parent: True
 
@@ -253,7 +289,12 @@ class HierarchicalReorderTreeWidget(QTreeWidget):
         self._move_test = test
 
     def startDrag(self, supported_actions) -> None:
-        self._drag_source = self.currentItem()
+        current = self.currentItem()
+        selected = selected_outer_items(self)
+        self._drag_sources = (
+            selected if current is not None and current.isSelected()
+            else ([current] if current else [])
+        )
         # Qt に元行を削除させず、項目一式の移動をこのクラスだけで処理する。
         super().startDrag(Qt.DropAction.CopyAction)
 
@@ -289,10 +330,48 @@ class HierarchicalReorderTreeWidget(QTreeWidget):
         self.orderChanged.emit()
         return True
 
+    def _move_items(
+        self, sources: list[QTreeWidgetItem], parent: QTreeWidgetItem, index: int,
+    ) -> bool:
+        """複数サブツリーを表示順のまま、指定した1か所へまとめて移す。"""
+        sources = outer_items_in_display_order(self, sources)
+        if not sources:
+            return False
+        if any(
+            parent is source or self._is_ancestor(source, parent)
+            or not self._move_test(source, parent)
+            for source in sources
+        ):
+            return False
+        locations = [
+            (source, self._parent_item(source), self._parent_item(source).indexOfChild(source))
+            for source in sources
+        ]
+        if any(source_index < 0 for _source, _source_parent, source_index in locations):
+            return False
+        # 挿入位置より前にある移動元は、取り外すとその分だけ挿入番号が前へずれる。
+        index -= sum(
+            1 for _source, source_parent, source_index in locations
+            if source_parent is parent and source_index < index
+        )
+        for _source, source_parent, source_index in sorted(
+            locations, key=lambda value: value[2], reverse=True,
+        ):
+            source_parent.takeChild(source_index)
+        insert_at = max(0, min(index, parent.childCount()))
+        for offset, source in enumerate(sources):
+            parent.insertChild(insert_at + offset, source)
+        self.clearSelection()
+        self.setCurrentItem(sources[0])
+        for source in sources:
+            source.setSelected(True)
+        self.orderChanged.emit()
+        return True
+
     def dropEvent(self, event) -> None:
-        source = self._drag_source
-        self._drag_source = None
-        if source is None:
+        sources = self._drag_sources
+        self._drag_sources = []
+        if not sources:
             event.ignore()
             return
         target = self.itemAt(event.position().toPoint())
@@ -307,10 +386,7 @@ class HierarchicalReorderTreeWidget(QTreeWidget):
             else:
                 parent = self._parent_item(target)
                 index = parent.indexOfChild(target) + (relative_y > rect.height() / 2)
-        if parent is source or self._is_ancestor(source, parent) or not self._move_test(source, parent):
-            event.ignore()
-            return
-        if self._move_item(source, parent, index):
+        if self._move_items(sources, parent, index):
             event.setDropAction(Qt.DropAction.CopyAction)
             event.accept()
         else:
@@ -337,6 +413,71 @@ class HierarchicalReorderTreeWidget(QTreeWidget):
         grandparent = self._parent_item(parent)
         parent_index = grandparent.indexOfChild(parent)
         return self._move_item(source, grandparent, parent_index + (direction > 0))
+
+    def moveSelected(self, direction: int) -> bool:
+        """複数選択をまとまりとして一行移動し、境界では親階層の外へ出す。"""
+        selected = selected_outer_items(self)
+        if not selected or direction not in (-1, 1):
+            return False
+        if len(selected) == 1:
+            self.setCurrentItem(selected[0])
+            return self.moveCurrent(direction)
+
+        # 同じ親を持つ選択行をまとめ、親の先頭／末尾に接する連続ブロックは
+        # 単一選択と同じ規則で親階層の外へまとめて移動する。
+        moved = False
+        selected_set = set(selected)
+        remaining = set(selected)
+        groups: dict[QTreeWidgetItem, list[QTreeWidgetItem]] = {}
+        for item in selected:
+            groups.setdefault(self._parent_item(item), []).append(item)
+        root = self.invisibleRootItem()
+        for parent, items in groups.items():
+            if parent is root:
+                continue
+            indexes = sorted(parent.indexOfChild(item) for item in items)
+            boundary = (
+                indexes == list(range(len(indexes))) if direction < 0
+                else indexes == list(range(parent.childCount() - len(indexes), parent.childCount()))
+            )
+            if not boundary:
+                continue
+            grandparent = self._parent_item(parent)
+            if not all(self._move_test(item, grandparent) for item in items):
+                continue
+            parent_index = grandparent.indexOfChild(parent)
+            insert_at = parent_index + (direction > 0)
+            moving = [parent.takeChild(index) for index in reversed(indexes)]
+            moving.reverse()
+            for offset, item in enumerate(moving):
+                grandparent.insertChild(insert_at + offset, item)
+                remaining.discard(item)
+            moved = True
+
+        # 境界以外では、上移動を先頭から、下移動を末尾から処理すると
+        # 複数の選択ブロックが互いの相対順を崩さず一行ずつ移動できる。
+        ordered = selected if direction < 0 else list(reversed(selected))
+        for item in ordered:
+            if item not in remaining:
+                continue
+            parent = self._parent_item(item)
+            index = parent.indexOfChild(item)
+            adjacent_index = index + direction
+            if not 0 <= adjacent_index < parent.childCount():
+                continue
+            if parent.child(adjacent_index) in selected_set:
+                continue
+            moved_item = parent.takeChild(index)
+            parent.insertChild(adjacent_index, moved_item)
+            moved = True
+        if not moved:
+            return False
+        self.clearSelection()
+        self.setCurrentItem(selected[0] if direction < 0 else selected[-1])
+        for item in selected:
+            item.setSelected(True)
+        self.orderChanged.emit()
+        return True
 
 
 class BranchNeutralStyle(QProxyStyle):

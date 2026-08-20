@@ -55,7 +55,7 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
   <div class="tag">全体フロー</div>
   <h1>Web フロー管理<br>全体操作手順</h1>
   <p class="lead">プログラムの準備、業務フローの登録、実行データの作成、実行、結果確認、バックアップまでの一連の流れを説明します。</p>
-  <div class="meta">対象プログラム：WebFlowManager<br>表示言語：日本語<br>更新日：2026年8月5日</div>
+  <div class="meta">対象プログラム：WebFlowManager<br>表示言語：日本語<br>更新日：2026年8月20日</div>
 </section>
 
 <h2>1. 全体の流れ</h2>
@@ -141,6 +141,7 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
 <div class="step"><b>手順 6</b>　必要に応じて実行条件と失敗時の操作を設定し、保存します。</div>
 <div class="step"><b>手順 7</b>　イベント一覧を実際の操作順に並べます。</div>
 <div class="tip"><span class="label">途中のページを登録する場合：</span>「直前まで実行」で対象イベントの直前まで進めてから、現在ページ上の要素を選択します。</div>
+<div class="tip"><span class="label">複雑な表を登録する場合：</span>F1 で外側範囲を順に選び、最後の F1 を基準行、F2 を対象にします。各段ではイベント共通の <code>$1</code> ～ <code>$99</code> パラメーターを再利用でき、試行時は固定値または有効な先頭 PCL で展開したパスをログに表示します。</div>
 <div class="tip"><span class="label">スクリーンショット：</span>1回目にスクリーンショット範囲、2回目に必要な場合だけスクロール領域を選びます。スクロール領域がない場合は2回目を Esc で省略します。</div>
 
 <h3>イベントグループを使う場面</h3>
@@ -153,11 +154,13 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
 <h2>5. 実行データを準備する</h2>
 <p>案件ごとに異なる値を使う場合は、先にデータ構造を定義し、その構造に沿って値を登録します。</p>
 <div class="step"><b>手順 1</b>　「データ構造」で必要な項目と型を定義します。</div>
-<div class="step"><b>手順 2</b>　構造を保存し、「データ管理」を開きます。</div>
-<div class="step"><b>手順 3</b>　データを追加し、項目ごとの値を入力します。</div>
-<div class="step"><b>手順 4</b>　必要なデータ件数分、追加または複製して値を整えます。</div>
-<div class="step"><b>手順 5</b>　各データの「今回実行」と実行グループを確認します。</div>
-<div class="step"><b>手順 6</b>　並列処理を行う場合は「同時セッション数」を設定します。</div>
+<div class="step"><b>手順 2</b>　複数 PCL で再利用する構造がある場合は Template を定義します。Template は常に object として扱います。</div>
+<div class="step"><b>手順 3</b>　構造を保存し、「データ管理」を開きます。</div>
+<div class="step"><b>手順 4</b>　データを追加し、項目ごとの値を入力します。Template を複数件扱う場合は list の中へ追加します。</div>
+<div class="step"><b>手順 5</b>　必要なデータ件数分、追加または複製して値を整えます。</div>
+<div class="step"><b>手順 6</b>　各データの「今回実行」と実行グループを確認します。</div>
+<div class="step"><b>手順 7</b>　並列処理を行う場合は「同時セッション数」を設定します。</div>
+<div class="note"><span class="label">Template の更新：</span>Template 定義を保存すると追加済みの全 PCL へ最新構造が反映されます。同名項目の値は保持されます。</div>
 
 <h3>実行グループの考え方</h3>
 <p>同じグループのデータは順番に実行され、異なるグループは並列に実行されます。</p>
@@ -186,22 +189,22 @@ th { background:#eaf3f9; color:#153b5b; text-align:left; }
   <li>各 locator の検出結果が1件になっている。</li>
   <li>使用するログイン状態でログインできる。</li>
 </ul>
-<div class="step"><b>手順 1</b>　実行管理画面で「実行開始」を押します。</div>
+<div class="step"><b>手順 1</b>　実行管理画面右上の「一括実行」を押します。</div>
 <div class="step"><b>手順 2</b>　Chrome 上の動きと「実行状況」を確認します。</div>
-<div class="step"><b>手順 3</b>　完了後、「実行ログ」で失敗やスキップがないか確認します。</div>
+<div class="step"><b>手順 3</b>　完了後、「ログ」タブで失敗やスキップがないか確認します。</div>
 <div class="step"><b>手順 4</b>　問題があれば対象イベントを修正し、同じデータでもう一度確認します。</div>
 
 <h2>8. 通常実行を行う</h2>
 <div class="step"><b>手順 1</b>　通常実行に必要な実行データを「今回実行」に切り替えます。</div>
 <div class="step"><b>手順 2</b>　実行グループと同時セッション数を確認します。</div>
 <div class="step"><b>手順 3</b>　業務フロー、イベント、実行条件、ログイン状態を最終確認します。</div>
-<div class="step"><b>手順 4</b>　実行管理画面で「実行開始」を押します。</div>
+<div class="step"><b>手順 4</b>　実行管理画面右上の「一括実行」を押します。</div>
 <div class="step"><b>手順 5</b>　「実行状況」で実行中、待機中、完了、失敗の状態を確認します。</div>
 <div class="note"><span class="label">同時セッション数：</span>数を増やすと処理速度が上がる場合がありますが、端末と対象サイトの負荷も増えます。少ない数から確認してください。</div>
 
 <h2>9. 結果を確認する</h2>
 <div class="step"><b>手順 1</b>　「実行状況」で全データの処理が終了したことを確認します。</div>
-<div class="step"><b>手順 2</b>　「実行ログ」で失敗、再実行、条件によるスキップを確認します。</div>
+<div class="step"><b>手順 2</b>　「ログ」タブで失敗、再実行、条件によるスキップを確認します。</div>
 <div class="step"><b>手順 3</b>　失敗した場合は、ログに表示された業務フロー、イベント、実行データ名、失敗時 URL（ログ表記：<code>Failure URL</code>）を確認します。</div>
 <div class="step"><b>手順 4</b>　必要に応じて <code>artifacts/yyyyMMdd_HHmmss/</code> 内のエラー画像を確認します。画像がない実行ではフォルダーは作成されません。</div>
 <div class="step"><b>手順 5</b>　原因を修正し、失敗したデータだけを「今回実行」にして再実行します。</div>

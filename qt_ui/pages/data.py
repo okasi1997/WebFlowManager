@@ -221,6 +221,14 @@ class DataPage(QWidget):
         del blocker
 
     def reload(self, select_id: int | None = None) -> None:
+        if select_id is None:
+            current = self.tree.currentItem()
+            current_record = (
+                current.data(0, Qt.ItemDataRole.UserRole) if current is not None else None
+            )
+            if isinstance(current_record, dict):
+                # 並べ替えや編集後も、左一覧の現在行を維持する。
+                select_id = int(current_record['id'])
         scroll = capture_scroll_position(self.tree)
         selected = None
         items: list[QTreeWidgetItem] = []
@@ -524,6 +532,17 @@ class DataPage(QWidget):
             if not isinstance(instances, list):
                 instances = []
                 self.current_data[TEMPLATE_INSTANCES_KEY] = instances
+            template_id = str(template.get('template_id', ''))
+            if any(
+                isinstance(instance, dict)
+                and str(instance.get('template_id', '')) == template_id
+                for instance in instances
+            ):
+                show_information(
+                    self, tr('テンプレート追加'),
+                    tr('最上位のテンプレートは1つの構造体として使用します。'),
+                )
+                return
             insert_at = len(instances)
         created = new_template_instance(template, instances)
         instances.insert(insert_at, created)
@@ -553,7 +572,10 @@ class DataPage(QWidget):
         enabled = selected is not None
         self.delete_template_action.setEnabled(enabled)
         self.rename_template_action.setEnabled(enabled)
-        self.copy_template_action.setEnabled(enabled)
+        is_top_level = bool(
+            selected and selected[0] is template_instances(self.current_data)
+        )
+        self.copy_template_action.setEnabled(enabled and not is_top_level)
         index = selected[1] if selected else -1
         count = len(selected[0]) if selected else 0
         self.move_template_up_action.setEnabled(enabled and index > 0)
@@ -590,6 +612,8 @@ class DataPage(QWidget):
         if selected is None:
             return
         instances, index, instance = selected
+        if instances is template_instances(self.current_data):
+            return
         copied = copy_template_instance(instance, instances)
         instances.insert(index + 1, copied)
         self.render_values()
@@ -767,19 +791,32 @@ class DataPage(QWidget):
             self.reload(record['id'])
 
     def copy_record(self) -> None:
-        record = self.selected()
-        if record:
-            self._duplicate_record(record, record['id'])
+        records = self._copy_record_payload()
+        if records:
+            selected = self.selected()
+            anchor_id = selected['id'] if selected else None
+            for record in records:
+                anchor_id = self._duplicate_record(record, anchor_id)
 
-    def _copy_record_payload(self) -> dict[str, Any] | None:
-        """選択中の実行データを、実行結果を除いてコピーする。"""
-        return self.selected() if len(self.tree.selectedItems()) == 1 else None
+    def _copy_record_payload(self) -> list[dict[str, Any]] | None:
+        """選択中の実行データを表示順で、実行結果を除いてコピーする。"""
+        selected = set(self.tree.selectedItems())
+        payload = [
+            dict(item.data(0, Qt.ItemDataRole.UserRole) or {})
+            for index in range(self.tree.topLevelItemCount())
+            for item in [self.tree.topLevelItem(index)]
+            if item in selected
+        ]
+        return payload or None
 
-    def _paste_record_payload(self, record: dict[str, Any]) -> None:
+    def _paste_record_payload(self, record: dict[str, Any] | list[dict[str, Any]]) -> None:
         selected = self.selected() if self.tree.selectedItems() else None
-        self._duplicate_record(record, selected['id'] if selected else None)
+        anchor_id = selected['id'] if selected else None
+        records = record if isinstance(record, list) else [record]
+        for source in records:
+            anchor_id = self._duplicate_record(source, anchor_id)
 
-    def _duplicate_record(self, record: dict[str, Any], selected_id: int | None) -> None:
+    def _duplicate_record(self, record: dict[str, Any], selected_id: int | None) -> int:
         name = unique_copy_name(
             str(record['name']), (row['name'] for row in self.db.list_data_records()),
         )
@@ -789,6 +826,7 @@ class DataPage(QWidget):
         self.db.set_data_record_group(record_id, str(record.get('execution_group', '1')))
         self.db.set_data_record_enabled(record_id, bool(record.get('enabled', True)))
         self._place_new_record(record_id, selected_id)
+        return record_id
 
     def _place_new_record(self, record_id: int, selected_id: int | None) -> None:
         """新規・複製データを選択行の直後、未選択時は末尾へ配置する。"""

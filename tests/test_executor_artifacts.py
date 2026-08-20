@@ -5,21 +5,18 @@ from core.executor import WorkflowExecutor
 
 
 class ExecutorArtifactNameTests(unittest.TestCase):
-    def test_template_instances_are_resolved_as_a_loopable_virtual_path(self) -> None:
+    def test_top_level_template_is_resolved_as_an_object(self) -> None:
         data = {'_template_instances': [
             {'template_id': 'product', 'data': {'name': 'A'}},
-            {'template_id': 'product', 'data': {'name': 'B'}},
             {'template_id': 'other', 'data': {'name': 'C'}},
         ]}
 
-        items = WorkflowExecutor._resolve_data(data, '@template.product', {})
+        product = WorkflowExecutor._resolve_data(data, '@template.product', {})
 
-        self.assertEqual(items, [{'name': 'A'}, {'name': 'B'}])
+        self.assertEqual(product, {'name': 'A'})
         self.assertEqual(
-            WorkflowExecutor._resolve_data(
-                data, '@template.product.name', {'@template.product': items[1]},
-            ),
-            'B',
+            WorkflowExecutor._resolve_data(data, '@template.product.name', {}),
+            'A',
         )
 
     def test_template_instance_inside_list_is_resolved_by_virtual_path(self) -> None:
@@ -99,7 +96,7 @@ class ExecutorArtifactNameTests(unittest.TestCase):
 
         self.assertEqual(
             WorkflowExecutor._resolve_data(data, '@template.仮想商材', {}),
-            [{'name': 'A'}],
+            {'name': 'A'},
         )
 
     def test_unsaved_screenshot_event_uses_timestamp_filename(self) -> None:

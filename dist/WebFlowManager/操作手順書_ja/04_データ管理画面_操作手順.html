@@ -13,7 +13,7 @@
 <table><thead><tr><th>ボタン</th><th>操作内容</th><th>注意</th></tr></thead><tbody>
 <tr><td>新規</td><td>名称と概要を指定して空のデータを1件作ります。</td><td>作成後、右側で値を入力します。</td></tr>
 <tr><td>編集</td><td>選択データの名称と概要を変更します。</td><td>データ内容と実行グループは変わりません。</td></tr>
-<tr><td>複製</td><td>選択中のデータをコピーします。</td><td>似たデータの作成に使います。</td></tr>
+<tr><td>複製</td><td>選択中の実行データを表示順でまとめてコピーします。</td><td>Ctrl／Shift で複数選択できます。似たデータの作成に使います。</td></tr>
 <tr class="danger-row"><td>削除</td><td>選択データを削除します。</td><td>確認画面の対象名を確認します。</td></tr>
 </tbody></table>
 <h2>右側の操作</h2>
@@ -21,6 +21,8 @@
 <tr><td>値を編集</td><td>選択した text、number、boolean の値を編集します。値列のダブルクリックでも編集できます。</td><td>編集後は「保存」を押します。</td></tr>
 <tr><td>リスト操作▼ → リスト項目を追加</td><td>選択した list に空の項目または構造付き項目を追加します。</td><td>追加後は「保存」を押します。</td></tr>
 <tr class="danger-row"><td>リスト操作▼ → リスト項目を削除</td><td>選択した [1]、[2] などのリスト項目を削除します。</td><td>削除後は「保存」を押します。</td></tr>
+<tr><td>Template 追加▼</td><td>定義済み Template を、PCL 最上位または選択中の list に追加します。</td><td>最上位では同じ Template は1つだけです。list 内では必要な件数を追加できます。</td></tr>
+<tr><td>Template 操作▼</td><td>選択中の Template 実体を削除します。list 内の実体は複製もできます。</td><td>追加・複製・削除後は「保存」を押します。</td></tr>
 <tr><td><img class="inline-icon" src="images/expand-all.svg" alt="すべて展開">／<img class="inline-icon" src="images/collapse-all.svg" alt="すべて折りたたむ"></td><td>データ内容の object/list 配下を一括して展開または折りたたみます。</td><td>＋は「すべて展開」、－は「すべて折りたたむ」です。</td></tr>
 <tr><td>データ入出力▼ → JSON を出力</td><td>全実行データを JSON ファイルへ出力します。</td><td>バックアップに使用します。</td></tr>
 <tr><td>データ入出力▼ → JSON を読み込む</td><td>JSON ファイルから全実行データを復元します。</td><td>現在の全データが置き換わります。</td></tr>
@@ -28,8 +30,10 @@
 <tr><td>データ入出力▼ → Excel を読み込む</td><td>Excel ファイルから全実行データを復元します。</td><td>現在の全データが置き換わります。</td></tr>
 <tr><td>保存</td><td>右側で編集中の1件を保存します。</td><td>値、リスト項目の追加・削除を確定します。</td></tr>
 </tbody></table>
+<div class="note"><b>選択と表示状態：</b>左側一覧は編集、並べ替え、再読込後も現在の PCL を選択したままにします。右側の階層表は初回だけ折りたたみ、以後は直前の展開状態とスクロール位置を保持します。</div>
 <div class="note"><b>保存タイミング：</b>右側の値編集、リスト項目の追加・削除は「保存」で確定します。未保存のまま別データや別画面へ移動するかアプリを閉じると、保存／破棄／キャンセルを選ぶ確認画面が表示されます。</div>
 <div class="note"><b>すぐに反映される操作：</b>新規、編集、複製、削除、JSON／Excel 読込は操作確定時にデータベースへ反映されます。</div>
+<div class="note"><b>複数選択：</b>左側の実行データは Ctrl／Shift で複数選択し、「複製」または Ctrl+C／Ctrl+V で表示順のまままとめて複製できます。Delete キーではまとめて削除できます。右側の Template 実体の移動・複製は従来どおり1件ずつ操作します。</div>
 <h2>データを1件登録する</h2>
 <div class="step"><b>手順 1</b>　<span class="button">新規</span> を押し、名称と概要を入力します。</div>
 <div class="step"><b>手順 2</b>　作成したデータを左側で選択します。</div>
@@ -38,11 +42,18 @@
 <div class="step"><b>手順 5</b>　<span class="button">保存</span> を押し、「保存しました」を確認します。</div>
 <div class="step"><b>手順 6</b>　基本情報を変更する場合は左側で対象を選び、<span class="button">編集</span> を押します。</div>
 <div class="success"><b>完了確認：</b>保存後に別データへ切り替えて戻り、入力値が保持されていることを確認します。</div>
+<h2>Template を PCL に追加する</h2>
+<div class="step"><b>手順 1</b>　対象 PCL を左側で選択します。</div>
+<div class="step"><b>手順 2</b>　1件の構造体として追加する場合は右側の空白または最上位行を選び、<span class="button">Template 追加▼</span> から Template を選びます。</div>
+<div class="step"><b>手順 3</b>　複数件必要な場合は通常の list 行を選び、同じ操作を必要な回数行います。</div>
+<div class="step"><b>手順 4</b>　追加された項目へ値を入力し、<span class="button">保存</span> を押します。</div>
+<div class="note"><b>定義変更時：</b>データ構造画面で Template を更新して保存すると、追加済みの PCL へ構造が自動反映されます。同名項目の入力値は保持されます。</div>
 <h2>Excel で一括更新する</h2>
 <div class="step"><b>手順 1</b>　右側の <span class="button">データ入出力▼</span> から「Excel を出力」を選び、出力したファイルをひな形として編集します。</div>
 <div class="step"><b>手順 2</b>　列名を変えずに値を編集して保存します。</div>
 <div class="step"><b>手順 3</b>　右側の <span class="button">データ入出力▼</span> から「Excel を読み込む」を選び、ファイルと復元件数を確認します。</div>
 <div class="note"><b>出力ファイルの見方：</b>すべてのセルは左揃えです。階層型の列見出しは、上位階層を濃い青、下位階層を順に明るい青で表示します。結合された見出し名と列順は変更しないでください。</div>
+<div class="note"><b>別シート出力：</b>データ構造で「Excel 別シート出力」を設定した object は専用シートへ出力されます。「空時省略」が有効で全件空の場合、そのシートは作成されません。復元時は PCL の表示名で本体行と別シート行を対応付けます。</div>
 <div class="danger"><b>重要：</b>JSON 読込と Excel 読込は、どちらも追加ではなく全件置換です。現在データは先に出力してください。</div>
 <div class="warning"><b>読込後の確認：</b>件数、データ名、概要、list の件数を確認し、「実行管理」で今回実行と実行グループを確認してください。</div>
 <p class="manual-nav"><a href="03_データ構造画面_操作手順.html">データ構造の手順へ</a>　｜　<a href="index.html">全体操作手順へ</a></p>

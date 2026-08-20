@@ -82,6 +82,25 @@ def sync_template_instance_names(data: dict[str, Any], schema: dict[str, Any]) -
     return changed
 
 
+def sync_template_instances_to_schema(data: dict[str, Any], schema: dict[str, Any]) -> bool:
+    """既存 PCL のテンプレート実体を最新定義へ同期し、同名項目の値は保持する。"""
+    projected = project_data_to_schema(data, schema)
+    projected_by_id = {
+        str(instance.get('instance_id', '')): instance
+        for _path, instance in iter_template_instances(projected)
+        if str(instance.get('instance_id', ''))
+    }
+    changed = False
+    # 先に一覧化し、親実体の data 更新中に走査先を変更しない。
+    for _path, instance in list(iter_template_instances(data)):
+        projected_instance = projected_by_id.get(str(instance.get('instance_id', '')))
+        if projected_instance is not None and instance != projected_instance:
+            instance.clear()
+            instance.update(copy.deepcopy(projected_instance))
+            changed = True
+    return changed
+
+
 def project_data_to_schema(data: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
     """現在の構造に存在する値だけを、JSON 出力用に抽出する。"""
     normalized_schema = normalize_template_schema(schema)

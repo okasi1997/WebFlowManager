@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -11,7 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from qt_ui.application import QtFlowManagerApplication  # noqa: E402
-from qt_ui.pages.flow_design import EventEditorDialog, EventGroupEditorDialog  # noqa: E402
+from qt_ui.pages.flow_design import (  # noqa: E402
+    EventEditorDialog, EventGroupEditorDialog, MultiPathParameterDialog,
+)
 from qt_ui.ui_loader import apply_application_font  # noqa: E402
 
 
@@ -92,7 +95,35 @@ if not options.flow_only and not options.data_only:
     group_dialog = EventGroupEditorDialog(design)
     save(group_dialog, "08_event_group_pyside6.png")
     group_dialog.close()
-    captured += 2
+
+    path_data = {
+        "version": 1,
+        "steps": [
+            {"kind": "scope", "display": "契約エリア", "value": "契約 $1", "match_method": "text_contains"},
+            {"kind": "scope", "display": "料金表", "value": "料金明細", "match_method": "text_contains"},
+            {"kind": "source_row", "display": "基準行", "value": "$2", "match_method": "text_contains"},
+            {"kind": "target", "display": "入力欄", "value": "price", "match_method": "attribute_equals", "match_attribute": "name"},
+        ],
+        "parameters": {
+            "1": {"source": "data", "value": "customer.contract", "empty_action": "error", "max_length": 120},
+            "2": {"source": "fixed", "value": "月額料金", "empty_action": "error", "max_length": 120},
+        },
+        "resolved": {"selector_type": "xpath", "selector": "__WFM_STEP_3__"},
+    }
+    multi_dialog = EventEditorDialog(design, {
+        "name": "料金入力", "action": "fill", "selector_type": "path",
+        "selector": json.dumps(path_data, ensure_ascii=False), "value": "10000",
+        "fallback_selector_type": "none", "fallback_selector": "",
+    })
+    save(multi_dialog, "09_multi_path_editor_pyside6.png")
+    multi_dialog.close()
+
+    parameter_dialog = MultiPathParameterDialog(
+        design, path_data["parameters"], app.db.get_data_schema(),
+    )
+    save(parameter_dialog, "10_selector_parameters_pyside6.png")
+    parameter_dialog.close()
+    captured += 4
 
 app.window._force_close = True
 app.window.close()

@@ -13,13 +13,13 @@
 <h2>主なボタン</h2>
 <table class="control-table"><thead><tr><th>画面上の表示</th><th>操作内容</th></tr></thead><tbody>
 <tr><td><div class="control-ref"><img class="inline-icon" src="images/data-reference.svg" alt=""><span class="control-name">ファイルを選択</span></div></td><td>「操作」で「ファイル送信」を選ぶと、「入力値 / URL / キー」欄の右端に表示されます。送信する固定ファイルを選びます。</td></tr>
-<tr><td><div class="control-ref"><img class="inline-icon" src="images/data-reference.svg" alt=""><span class="control-name">データ参照</span></div></td><td>「入力値 / URL / キー」「検出内容」「予備検出内容」「移動先 URL」の各入力欄の右端にあります。カーソル位置へ <code>${data:項目パス}</code> を挿入し、固定文字とデータ値を一つの欄で組み合わせます。</td></tr>
+<tr><td><div class="control-ref"><img class="inline-icon" src="images/data-reference.svg" alt=""><span class="control-name">パラメーターを挿入</span></div></td><td>「入力値 / URL / キー」「検出内容」「予備検出内容」「移動先 URL」と、多段パス各段の右端にあります。未設定時はイベント共通パラメーター画面を開き、設定済みの場合は概要メニューから <code>$1</code> ～ <code>$99</code> をカーソル位置へ挿入します。</td></tr>
 <tr><td><div class="control-ref"><span class="button">条件を設定</span></div></td><td>左側の「実行制御」タブにある「実行条件」欄の右端にあります。このイベントを実行する条件を設定します。</td></tr>
 <tr><td><div class="control-ref"><span class="icon-button"><img src="images/page-pick.svg" alt="">操作対象を選択</span></div></td><td>「イベント・検出」タブでは操作対象を設定します。「実行制御」タブで要素による成功確認を選ぶと、表示が「成功確認対象を選択」に変わり、成功確認側の検出内容を設定します。</td></tr>
 <tr><td><div class="control-ref"><span class="icon-button"><img src="images/page-close.svg" alt="">テスト画面を閉じる</span></div></td><td>画面右上の「ページ操作」にあり、要素選択・テスト用 Chrome を閉じます。</td></tr>
 <tr><td><div class="control-ref"><span class="icon-button"><img src="images/page-try.svg" alt="">このイベントを試す</span></div></td><td>通常は編集中のイベントを現在ページ上で実行します。「実行制御」タブで要素による成功確認を設定している間は、イベントを実行せず、成功確認対象をブラウザー上で強調表示します。</td></tr>
 <tr><td><div class="control-ref"><span class="icon-button"><img src="images/page-until.svg" alt="">直前まで実行</span></div></td><td>画面右上の「ページ操作」にあり、先行イベントを実行して対象イベントの直前で停止します。テストデータは、実行データ一覧で最初に並ぶ有効な1件を使用します。</td></tr>
-<tr><td><div class="control-ref"><img class="inline-icon" src="images/data-reference.svg" alt=""><span class="control-name">データ構造から選択</span></div></td><td>左側「イベント設定」の「データ項目」欄の右端にあります。入力値または取得値を実行データの項目と結び付けます。同じ図柄の「データ参照」とは、配置されている欄で区別します。</td></tr>
+<tr><td><div class="control-ref"><img class="inline-icon" src="images/data-reference.svg" alt=""><span class="control-name">データ構造から選択</span></div></td><td>左側「イベント設定」の「データ項目」欄の右端にあります。入力値または取得値を実行データの単一項目と結び付けます。同じ図柄の「イベント共通パラメーター」とは、配置されている欄で区別します。</td></tr>
 <tr><td><div class="control-ref"><span class="control-pair"><img class="inline-icon" src="images/expand-all.svg" alt="すべて展開"><img class="inline-icon" src="images/collapse-all.svg" alt="すべて折りたたむ"></span><span class="control-name">すべて展開／折りたたむ</span></div></td><td>「データ構造から選択」画面で、配下を持つデータ項目を一括して展開または折りたたみます。＋は「すべて展開」、－は「すべて折りたたむ」を表し、次に実行される操作のアイコンが表示されます。</td></tr>
 <tr><td><div class="control-ref"><span class="button">保存</span><span class="button">キャンセル</span></div></td><td>設定を確定して閉じる／変更を保存せず閉じる操作です。</td></tr>
 </tbody></table>
@@ -29,18 +29,18 @@
 <p>「操作」を変更すると、不要な欄は自動的に非表示になり、同じ位置の入力欄やボタンが別の意味へ切り替わる場合があります。次の表で、画面に表示される項目を確認してください。</p>
 <table><thead><tr><th>操作</th><th>「イベント・検出」タブに表示される主な項目</th><th>右側ボタンと注意</th></tr></thead><tbody>
 <tr><td>未選択</td><td>イベント名と操作だけを入力します。</td><td><span class="icon-button"><img src="images/page-pick.svg" alt="">操作対象を選択</span> は使用できます。選んだ要素から「操作」が自動提案されます。<span class="icon-button"><img src="images/page-try.svg" alt="">このイベントを試す</span> は使用できません。</td></tr>
-<tr><td>ページへ移動</td><td>「入力値 / URL / キー」に移動先 URL を入力します。要素の検出設定と「データ項目」は表示されません。</td><td>通常の「操作対象を選択」は使用できません。入力欄右端の <img class="inline-icon" src="images/data-reference.svg" alt="データ参照"> は、URL の一部へデータ参照を挿入します。</td></tr>
+<tr><td>ページへ移動</td><td>「入力値 / URL / キー」に移動先 URL を入力します。要素の検出設定と「データ項目」は表示されません。</td><td>通常の「操作対象を選択」は使用できません。入力欄右端の <img class="inline-icon" src="images/data-reference.svg" alt="パラメーターを挿入"> から、URL の一部へ共通パラメーターを挿入できます。</td></tr>
 <tr><td>クリック</td><td>要素の検出設定を使用します。「入力値 / URL / キー」と「データ項目」は表示されません。</td><td>「操作対象を選択」でクリック対象を登録します。</td></tr>
-<tr><td>入力</td><td>要素の検出設定、「入力値 / URL / キー」、「データ項目」を使用します。</td><td>入力欄右端の <img class="inline-icon" src="images/data-reference.svg" alt="データ参照"> は文字列の一部への挿入、「データ項目」右端の同じ図柄は入力値全体とのリンクです。</td></tr>
+<tr><td>入力</td><td>要素の検出設定、「入力値 / URL / キー」、「データ項目」を使用します。</td><td>入力欄右端の <img class="inline-icon" src="images/data-reference.svg" alt="パラメーターを挿入"> は <code>$n</code> の挿入、「データ項目」右端の同じ図柄は入力値全体とのリンクです。</td></tr>
 <tr><td>選択</td><td>要素の検出設定、「入力値 / URL / キー」、「データ項目」を使用します。</td><td>固定値を使う場合は option の value、実行データを使う場合は「データ項目」を設定します。「入力値 / URL / キー」右端には追加ボタンを表示しません。</td></tr>
 <tr><td>待機</td><td>要素の検出設定を使用し、「入力値 / URL / キー」の代わりに「表示／非表示／操作可能」の待機条件が表示されます。</td><td>「操作対象を選択」で待機対象を登録します。固定時間の待機には「一時停止」を使用します。</td></tr>
-<tr><td>キー入力</td><td>要素の検出設定と「入力値 / URL / キー」を使用します。「データ項目」は表示されません。</td><td>入力欄右端の <img class="inline-icon" src="images/data-reference.svg" alt="データ参照"> から、キー文字列の一部へデータ参照を挿入できます。</td></tr>
+<tr><td>キー入力</td><td>要素の検出設定と「入力値 / URL / キー」を使用します。「データ項目」は表示されません。</td><td>入力欄右端の <img class="inline-icon" src="images/data-reference.svg" alt="パラメーターを挿入"> から、キー文字列の一部へ共通パラメーターを挿入できます。</td></tr>
 <tr><td>文字取得</td><td>要素の検出設定、「入力値 / URL / キー」、「データ項目」を使用します。</td><td>「入力値 / URL / キー」は後続イベントで使う変数名、「データ項目」は取得結果の保存先です。どちらか一方を設定します。</td></tr>
 <tr><td>スクリーンショット</td><td>要素の検出設定でスクリーンショット範囲を保持し、「入力値 / URL / キー」にファイル名を入力します。「データ項目」は表示されません。</td><td>「操作対象を選択」でスクリーンショット範囲を選び、続けて必要な場合だけスクロール領域を選びます。2回目は Esc で省略できます。</td></tr>
 <tr><td>一時停止</td><td>「入力値 / URL / キー」に待機時間（ms）を入力します。要素の検出設定と「データ項目」は表示されません。</td><td>「操作対象を選択」は使用できません。値を空欄にした場合は「タイムアウト」の値を待機時間として使用します。</td></tr>
 <tr><td>ファイル送信</td><td>要素の検出設定、「入力値 / URL / キー」、「データ項目」を使用します。</td><td>入力欄右端の <img class="inline-icon" src="images/data-reference.svg" alt="ファイルを選択"> は固定ファイルの選択、「データ項目」右端の同じ図柄はファイルパスとのリンクです。</td></tr>
 </tbody></table>
-<div class="note"><b>同じ図柄を見分ける方法：</b><img class="inline-icon" src="images/data-reference.svg" alt=""> の意味は配置場所と選択中の操作で決まります。「検出内容」などの右端はデータ参照、「データ項目」の右端はデータリンク、「ファイル送信」の「入力値 / URL / キー」右端はファイル選択です。マウスポインターを重ねると、現在の機能がツールチップに表示されます。</div>
+<div class="note"><b>同じ図柄を見分ける方法：</b><img class="inline-icon" src="images/data-reference.svg" alt=""> の意味は配置場所と選択中の操作で決まります。「検出内容」など文字列入力欄の右端はイベント共通パラメーター、「データ項目」の右端は単一項目リンク、「ファイル送信」の「入力値 / URL / キー」右端はファイル選択です。マウスポインターを重ねると、現在の機能がツールチップに表示されます。</div>
 
 <h2>タブを切り替えたときのボタン変化</h2>
 <table><thead><tr><th>現在の状態</th><th>対象選択ボタン</th><th>「このイベントを試す」の動作</th></tr></thead><tbody>
@@ -55,10 +55,25 @@
 <div class="step"><b>手順 1</b>　「イベント名」を入力し、「操作」を選びます。</div>
 <div class="step"><b>手順 2</b>　「対象 URL」に操作するページの URL を入力します。</div>
 <div class="step"><b>手順 3</b>　画面右上「ページ操作」の <span class="icon-button"><img src="images/page-pick.svg" alt="">操作対象を選択</span> を押します。Chrome が対象 URL を開いたら、必要に応じて目的の画面まで移動します。</div>
-<div class="step"><b>手順 4</b>　Chrome で F2 を押し、対象をクリックします。</div>
+<div class="step"><b>手順 4</b>　Chrome で対象へマウスを合わせ、F2 を押します。多段パスでは各範囲で F1 を押してから、最後の対象で F2 を押します。</div>
+<div class="note"><b>別テーブルの対応行：</b>共同範囲を F1 で選択した後、最後の F1 で基準行、F2 で別テーブルの対象を選択します。基準行と対象行の index が同じ場合、実行時にも基準行から動的に行番号を取得します。</div>
+<div class="note"><b>多段パスの編集：</b>文字列を結合できる入力欄のデータ連携ボタンからイベント共通パラメーターを開きます。保存時に選択中の <code>$1</code> 〜 <code>$99</code> が呼び出し元の入力欄へ挿入されます。「データ項目」は従来通り単一項目を選択します。<code>$$1</code> は文字列 <code>$1</code> として扱われます。</div>
+<div class="note"><b>パラメーター概要：</b>概要メニューは最大幅と最大高さを制限します。<code>$n</code> と取得元は常に表示し、長いパスだけを中央で省略します。省略された行へマウスポインターを重ねると完全なパスを確認できます。件数が多い場合はパラメーター一覧にスクロールバーを表示し、「イベントパラメーター設定」は一覧の下へ常時表示します。</div>
+<div class="note"><b>通常検出のパラメーター：</b>CSS・XPath・role などの「検出内容」と「予備検出内容」でも <code>$1</code> 〜 <code>$99</code> を使用できます。両方の右側ボタンから、同じイベントパラメーターを設定・挿入します。</div>
+<div class="note"><b>イベント試行：</b>固定値はそのまま使用します。データパラメーターが必要な場合は有効な先頭 PCL を使用し、存在しなければ実行前にエラーを表示します。展開後の検出パスはログで確認できます。</div>
+<div class="figure">
+  <img src="images/09_multi_path_editor_pyside6.png" alt="多段パスを編集しているイベント編集画面">
+  <div class="legend">各段は独立した入力欄で編集できます。右側のデータ連携ボタンは、全入力欄で共通する短縮パラメーターを設定・挿入します。</div>
+</div>
+<div class="figure">
+  <img src="images/10_selector_parameters_pyside6.png" alt="イベント共通パラメーター設定画面">
+  <div class="legend"><code>$1</code> ～ <code>$99</code> ごとに、PCL のデータ項目、実行時変数、固定値、空値時の扱い、最大文字数を設定します。</div>
+</div>
+<div class="note"><b>実行日時を埋め込む：</b>取得元を「実行変数」にして <code>yyyyMMdd_HHmm</code>（小文字の <code>yyyymmdd_hhmm</code> も可）を設定すると、実行時のローカル日時を <code>20260820_2154</code> の形式で生成します。<code>yyyyMMdd_HHmmss</code>、<code>yyyyMMdd</code>、<code>yyyy-MM-dd_HH:mm:ss</code>、<code>yyyy-MM-dd_HH:mm</code>、<code>yyyy-MM-dd</code> も使用できます。同名の実行変数がすでに存在する場合は、その変数値を優先します。</div>
+<div class="note"><b>設定一覧の列幅：</b>初回表示では左側一覧の可視幅に3列を収めます。横スクロールバーは常時表示し、各列はドラッグで調整できます。最大幅を制限しているため、長い設定値で画面全体が不自然に広がることはありません。</div>
 <div class="step"><b>手順 5</b>　選択後、「操作結果」と検出方法／検出内容を確認します。</div>
 <div class="step"><b>手順 6</b>　必要な入力値、タイムアウト、再実行回数、再実行間隔、実行条件、失敗時の操作を設定し、必要に応じて画面右上「ページ操作」の <span class="icon-button"><img src="images/page-try.svg" alt="">このイベントを試す</span> で単発確認します。</div>
-<div class="step"><b>手順 7</b>　実行データを欄全体の値として使う場合は「データ項目」欄右端の <img class="inline-icon" src="images/data-reference.svg" alt="データ構造から選択">、文字列の一部へ埋め込む場合は対象入力欄右端の <img class="inline-icon" src="images/data-reference.svg" alt="データ参照"> を使います。配置場所とツールチップで機能を確認し、最後に画面右下の <span class="button">保存</span> を押します。</div>
+<div class="step"><b>手順 7</b>　実行データを欄全体の値として使う場合は「データ項目」欄右端の <img class="inline-icon" src="images/data-reference.svg" alt="データ構造から選択">、文字列の一部へ埋め込む場合は対象入力欄右端の <img class="inline-icon" src="images/data-reference.svg" alt="パラメーターを挿入"> を使い、<code>$1</code> ～ <code>$99</code> を挿入します。最後に画面右下の <span class="button">保存</span> を押します。</div>
 <div class="success"><b>完了確認：</b>フロー設計画面のイベント一覧へ戻り、イベント名、操作、データ項目、有効状態を確認します。</div>
 <h2>操作ごとの登録方法</h2>
 <p>「操作」を選ぶと、その操作で必要な入力欄だけが有効になります。画面は「イベント・検出」「実行制御」のタブに分かれています。対象要素を操作するイベントでは、<span class="button">操作対象を選択</span> で対象を設定します。</p>
@@ -82,7 +97,7 @@
 <tr><td>再実行間隔</td><td>失敗してから次の再実行を始めるまでの待機時間を ms で指定します。</td><td><code>2000</code> は2秒です。</td></tr>
 <tr><td>実行条件</td><td>読取専用欄に現在の条件概要が表示されます。右端の <span class="button">条件を設定</span> から、実行データを使った条件を追加・編集します。</td><td>「常に実行」は条件なしです。条件を満たさないイベントはスキップされます。</td></tr>
 <tr><td>失敗時の操作</td><td>すべての再実行が失敗した後の処理を、「実行を停止」「次のイベントへ進む」「ページを再読み込み」「指定 URL へ移動」から選びます。</td><td>「指定 URL へ移動」を選んだ場合だけ「移動先 URL」が表示されます。</td></tr>
-<tr><td>移動先 URL</td><td>失敗後に開く URL を入力します。入力欄右端の <img class="inline-icon" src="images/data-reference.svg" alt="データ参照"> からデータ参照も挿入できます。</td><td>「失敗時の操作」が「指定 URL へ移動」の場合だけ表示されます。</td></tr>
+<tr><td>移動先 URL</td><td>失敗後に開く URL を入力します。入力欄右端の <img class="inline-icon" src="images/data-reference.svg" alt="パラメーターを挿入"> から共通パラメーターも挿入できます。</td><td>「失敗時の操作」が「指定 URL へ移動」の場合だけ表示されます。</td></tr>
 <tr><td>成功確認</td><td>操作完了後に確認する条件を選びます。</td><td>「クリック」「ページへ移動」「選択」「キー入力」で表示されます。</td></tr>
 <tr><td>成功検出方法</td><td>成功確認に使用する要素の検出方法を選びます。</td><td>「要素が表示」「要素が非表示」「要素が操作可能」を選んだ場合に表示されます。</td></tr>
 <tr><td>成功条件の内容</td><td>確認する要素の locator、または URL に含まれる文字列を入力します。</td><td>成功確認が「確認しない」以外の場合に表示されます。</td></tr>
@@ -102,7 +117,7 @@
 <div class="step"><b>手順 1</b>　左上の <span class="button">実行制御</span> タブを開きます。</div>
 <div class="step"><b>手順 2</b>　「成功確認」で「要素が表示」「要素が非表示」「要素が操作可能」のいずれかを選びます。</div>
 <div class="step"><b>手順 3</b>　右側「ページ操作」のボタンが <span class="icon-button"><img src="images/page-pick.svg" alt="">成功確認対象を選択</span> に切り替わったことを確認して押します。</div>
-<div class="step"><b>手順 4</b>　Chrome で F2 を押し、成功時に確認する要素をクリックします。</div>
+<div class="step"><b>手順 4</b>　Chrome で成功時に確認する要素へマウスを合わせ、F2 を押します。</div>
 <div class="step"><b>手順 5</b>　「成功検出方法」「成功条件の内容」と、対象が iframe 内の場合は「iframe パス」が設定されたことを確認します。</div>
 <div class="step"><b>手順 6</b>　必要に応じて <span class="icon-button"><img src="images/page-try.svg" alt="">このイベントを試す</span> を押します。「実行制御」タブで成功確認対象が設定されている場合は、その対象がブラウザー上で強調表示されます。</div>
 <div class="tip"><b>設定の目安：</b>画面遷移や保存処理を行うイベントでは、完了メッセージ、次画面の見出し、URL の変化など、処理完了を判断できる成功確認を設定すると安定します。</div>
@@ -115,12 +130,12 @@
 <div class="note"><b>処理順：</b>設定回数までイベントを再実行し、途中の失敗は実行ログへ記録します。最後の実行も失敗した場合だけ、エラー画像を保存して「失敗時の操作」を実行します。</div>
 <div class="warning"><b>更新系操作：</b>「クリック」や送信操作は、サーバー側では成功していても応答待ちだけが失敗する場合があります。同じ登録や送信が重複しても問題ないことを確認してから再実行を設定してください。</div>
 <div class="note"><b>Salesforce spinner の自動待機：</b>すべての通常イベントは、実行前と成功後に <code>.slds-spinner, lightning-spinner</code> を確認します。可視 spinner がある場合だけ、イベントのタイムアウトまで消えるのを待ちます。存在しない場合は待機せず、すぐに処理を続けます。</div>
-<h2>データ参照とデータリンクの違い</h2>
+<h2>イベント共通パラメーターとデータリンクの違い</h2>
 <table><thead><tr><th>機能</th><th>使用する場面</th><th>保存される内容</th></tr></thead><tbody>
-<tr><td><img class="inline-icon" src="images/data-reference.svg" alt="データ参照"> データ参照</td><td>各対象入力欄の右端で、URL、入力文字、キー、スクリーンショット名、locator などの一部分へデータ値を埋め込みます。</td><td><code>https://example.com/${data:PCL_NO}</code> のようなテンプレート文字列。</td></tr>
+<tr><td><img class="inline-icon" src="images/data-reference.svg" alt="パラメーターを挿入"> イベント共通パラメーター</td><td>URL、入力文字、キー、スクリーンショット名、locator、多段パスなどの一部分へ、PCL 項目・実行時変数・固定値を埋め込みます。</td><td><code>https://example.com/$1</code> のような短い文字列。実際の取得元は共通パラメーター画面で設定します。</td></tr>
 <tr><td><img class="inline-icon" src="images/data-reference.svg" alt="データ構造から選択"> データ構造から選択</td><td>「データ項目」欄の右端で、「入力」「選択」「ファイル送信」の入力値全体をデータ項目から取得する場合、または「文字取得」の結果をデータ項目へ保存する場合に使用します。</td><td>読み取りまたは書き込み対象となるデータ項目のパス。</td></tr>
 </tbody></table>
-<div class="note"><b>データ参照が有効になる場所：</b>「入力値 / URL / キー」側では「ページへ移動」「入力」「キー入力」「スクリーンショット」で使用できます。「検出内容」側では対象要素を使う操作で使用できます。ボタンが灰色の場合、その操作では使用できません。</div>
+<div class="note"><b>共通パラメーターが有効になる場所：</b>文字列を組み立てられる入力欄で使用できます。どの対応ボタンから開いても、そのイベント全体で同じパラメーター設定を編集します。「データ項目」のように単一項目だけを選ぶ欄では使用しません。</div>
 
 <h2>検出方法</h2>
 <table><thead><tr><th>検出方法</th><th>用途と入力例</th></tr></thead><tbody>
@@ -130,6 +145,7 @@
 <tr><td><code>text</code></td><td>ページに表示される文字列で検出します。</td></tr>
 <tr><td><code>css</code></td><td>CSS selector を直接指定します。</td></tr>
 <tr><td><code>xpath</code></td><td>XPath を直接指定します。</td></tr>
+<tr><td>多段パス</td><td>複雑な表や入れ子構造を、複数の範囲、必要に応じた基準行、最後の対象に分けて検出します。Chrome 上で各範囲を F1、最後の対象を F2 で選択します。各段は保存後も個別編集でき、多段パスでは予備検出を使用しません。</td></tr>
 <tr><td><code>none</code></td><td>対象要素を使用しない操作の内部値です。通常は「ページへ移動」「一時停止」「スクリーンショット」などで自動設定されます。</td></tr>
 </tbody></table>
 
@@ -167,14 +183,14 @@
 <div class="step"><b>手順 1</b>　対象画面へ到達する直前までのイベントを保存します。</div>
 <div class="step"><b>手順 2</b>　対象イベントで、画面右上「ページ操作」の <span class="icon-button"><img src="images/page-until.svg" alt="">直前まで実行</span> を押します。</div>
 <div class="note"><b>テストデータ：</b>実行データ一覧を表示順に確認し、最初の有効なデータ1件を使用します。無効なデータは読み飛ばします。使用したデータの名称と、有効件数に対する位置（例：<code>テストデータ: 申込データ001 (1 / 5)</code>）は「操作結果」とログに表示されます。</div>
-<div class="step"><b>手順 3</b>　直前で停止したら、同じ「ページ操作」の <span class="icon-button"><img src="images/page-pick.svg" alt="">操作対象を選択</span> を押し、F2 → 対象クリックの順に操作します。</div>
+<div class="step"><b>手順 3</b>　直前で停止したら、同じ「ページ操作」の <span class="icon-button"><img src="images/page-pick.svg" alt="">操作対象を選択</span> を押し、対象へマウスを合わせて F2 を押します。</div>
 <div class="warning"><b>検出数が2件以上の場合：</b>対象を誤る可能性があります。再選択し、検出数が1件になることを確認してください。</div>
 <div class="tip"><b>検出できない場合：</b>対象 URL、ログイン状態、ページの表示完了、iframe の有無を確認し、対象画面を表示した状態でもう一度選択してください。</div>
 <div class="note"><b>新しいタブ／ポップアップ：</b>リンクのクリックで新しいタブやポップアップページが開いた場合、後続イベントは新しく開いたページを自動的に操作します。URL が一時的に <code>about:blank</code> でも、ページの移動またはスクリプトによる内容生成を待って続行します。</div>
 <div class="note"><b>iframe 内の要素：</b>要素選択時に iframe の経路を自動保存します。操作対象と成功確認対象は別々の iframe パスを持つため、どちらも原則としてピッカーで選択してください。</div>
 <h2>スクリーンショット範囲とスクロール領域を登録する</h2>
 <div class="step"><b>手順 1</b>　「操作」で「スクリーンショット」を選び、必要に応じてファイル名を入力します。</div>
-<div class="step"><b>手順 2</b>　<span class="icon-button"><img src="images/page-pick.svg" alt="">操作対象を選択</span> を押し、Chrome で F2 を押してスクリーンショット範囲をクリックします。</div>
+<div class="step"><b>手順 2</b>　<span class="icon-button"><img src="images/page-pick.svg" alt="">操作対象を選択</span> を押し、Chrome でスクリーンショット範囲へマウスを合わせて F2 を押します。</div>
 <div class="step"><b>手順 3</b>　続けてスクロール領域の選択になります。スクリーンショット範囲自身をスクロールする場合は同じ要素、内側だけがスクロールする画面では内側のスクロール領域を選びます。</div>
 <div class="step"><b>手順 4</b>　独立したスクロール領域がない場合、またはスクリーンショット範囲自身をそのまま使用する場合は Esc で2回目を省略します。</div>
 <div class="step"><b>手順 5</b>　必要に応じて「直前まで実行」で対象画面まで進め、「このイベントを試す」で画像を確認します。</div>

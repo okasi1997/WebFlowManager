@@ -11,10 +11,37 @@ from core.excel_io import (
     normalize_record, read_records_excel, read_records_excel_with_schema, remap_data_for_schema_names, schema_name_path_map,
     strip_data_record_whitespace, strip_schema_name_whitespace, validate_schema, write_records_excel,
 )
-from core.data_templates import migrate_legacy_template_data, normalize_template_schema
+from core.data_templates import (
+    migrate_legacy_template_data, normalize_template_schema,
+    sync_template_instances_to_schema,
+)
 
 
 class ExcelStyleTests(unittest.TestCase):
+    def test_template_definition_changes_are_reflected_in_existing_instance(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object', 'children': [],
+            'templates': [{
+                'name': 'Product', 'type': 'object', 'template_id': 'product',
+                'children': [
+                    {'name': 'kept', 'type': 'text'},
+                    {'name': 'added', 'type': 'number'},
+                ],
+            }],
+        }
+        data = {'_template_instances': [{
+            'instance_id': 'one', 'template_id': 'product',
+            'template_name': 'Old name', 'name': 'Custom',
+            'data': {'kept': 'existing value', 'removed': 'old'},
+        }]}
+
+        self.assertTrue(sync_template_instances_to_schema(data, schema))
+        self.assertEqual(data['_template_instances'][0]['data'], {
+            'kept': 'existing value', 'added': 0,
+        })
+        self.assertEqual(data['_template_instances'][0]['template_name'], 'Product')
+        self.assertEqual(data['_template_instances'][0]['name'], 'Custom')
+
     def test_legacy_template_schema_and_data_are_migrated_without_wrapper_path(self) -> None:
         schema = {
             'name': 'Data', 'type': 'object', 'children': [{

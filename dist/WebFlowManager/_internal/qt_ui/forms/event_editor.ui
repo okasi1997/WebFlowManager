@@ -649,7 +649,55 @@
                 </layout>
                </widget>
               </item>
-              <item row="2" column="0">
+              <item row="2" column="0" colspan="2">
+               <widget class="QWidget" name="multiPathTitleHost" native="true">
+                <property name="formHost" stdset="0"><bool>true</bool></property>
+                <layout class="QHBoxLayout" name="multiPathTitleLayout">
+                 <property name="leftMargin"><number>0</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>0</number></property><property name="bottomMargin"><number>0</number></property>
+                 <item><widget class="QLabel" name="multiPathTitle"><property name="text"><string>多段パス</string></property><property name="cardTitle" stdset="0"><bool>true</bool></property></widget></item>
+                </layout>
+               </widget>
+              </item>
+              <item row="3" column="0" colspan="2">
+               <widget class="QWidget" name="multiPathHost" native="true">
+                <property name="minimumSize">
+                 <size>
+                  <width>0</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="formHost" stdset="0">
+                 <bool>true</bool>
+                </property>
+                <layout class="QFormLayout" name="multiPathForm">
+                 <property name="fieldGrowthPolicy">
+                  <enum>QFormLayout::AllNonFixedFieldsGrow</enum>
+                 </property>
+                 <property name="labelAlignment">
+                  <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+                 </property>
+                 <property name="horizontalSpacing">
+                  <number>8</number>
+                 </property>
+                 <property name="verticalSpacing">
+                  <number>6</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>0</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>0</number>
+                 </property>
+                </layout>
+               </widget>
+              </item>
+              <item row="4" column="0">
                <widget class="QLabel" name="fallbackTypeLabel">
                 <property name="minimumSize">
                  <size>
@@ -668,33 +716,31 @@
                 </property>
                </widget>
               </item>
-              <item row="2" column="1">
-               <layout class="QHBoxLayout" name="fallbackTypeHostLayout">
-                <property name="spacing">
-                 <number>0</number>
+              <item row="4" column="1">
+               <widget class="QWidget" name="fallbackTypeHost" native="true">
+                <property name="formHost" stdset="0">
+                 <bool>true</bool>
                 </property>
-                <item>
-                 <widget class="QComboBox" name="fallbackTypeCombo"/>
-                </item>
-                <item>
-                 <spacer name="fallbackTypeTrailing">
-                  <property name="orientation">
-                   <enum>Qt::Horizontal</enum>
-                  </property>
-                  <property name="sizeType">
-                   <enum>QSizePolicy::Fixed</enum>
-                  </property>
-                  <property name="sizeHint" stdset="0">
-                   <size>
-                    <width>50</width>
-                    <height>20</height>
-                   </size>
-                  </property>
-                 </spacer>
-                </item>
-               </layout>
+                <layout class="QHBoxLayout" name="fallbackTypeHostLayout">
+                 <property name="spacing">
+                  <number>0</number>
+                 </property>
+                 <property name="leftMargin"><number>0</number></property>
+                 <property name="topMargin"><number>0</number></property>
+                 <property name="rightMargin"><number>0</number></property>
+                 <property name="bottomMargin"><number>0</number></property>
+                 <item><widget class="QComboBox" name="fallbackTypeCombo"/></item>
+                 <item>
+                  <spacer name="fallbackTypeTrailing">
+                   <property name="orientation"><enum>Qt::Horizontal</enum></property>
+                   <property name="sizeType"><enum>QSizePolicy::Fixed</enum></property>
+                   <property name="sizeHint" stdset="0"><size><width>50</width><height>20</height></size></property>
+                  </spacer>
+                 </item>
+                </layout>
+               </widget>
               </item>
-              <item row="3" column="0">
+              <item row="5" column="0">
                <widget class="QLabel" name="fallbackSelectorLabel">
                 <property name="minimumSize">
                  <size>
@@ -713,7 +759,7 @@
                 </property>
                </widget>
               </item>
-              <item row="3" column="1">
+              <item row="5" column="1">
                <widget class="QWidget" name="fallbackSelectorHost" native="true">
                 <property name="formHost" stdset="0">
                  <bool>true</bool>
@@ -768,7 +814,7 @@
                 </layout>
                </widget>
               </item>
-              <item row="4" column="0">
+              <item row="6" column="0">
                <widget class="QLabel" name="iframeLabel">
                 <property name="minimumSize">
                  <size>
@@ -787,7 +833,7 @@
                 </property>
                </widget>
               </item>
-              <item row="4" column="1">
+              <item row="6" column="1">
                <layout class="QHBoxLayout" name="iframeHostLayout">
                 <property name="spacing">
                  <number>0</number>

@@ -270,8 +270,8 @@ class ExecutionOrderDialog(QDialog):
         move_up = require(self, QPushButton, 'moveUpButton')
         move_down = require(self, QPushButton, 'moveDownButton')
         configure_row_move_tooltips(move_up, move_down, '実行データ')
-        move_up.clicked.connect(lambda: self.tree.moveCurrent(-1))
-        move_down.clicked.connect(lambda: self.tree.moveCurrent(1))
+        move_up.clicked.connect(lambda: self.tree.moveSelected(-1))
+        move_down.clicked.connect(lambda: self.tree.moveSelected(1))
 
         buttons = require(self, QDialogButtonBox, 'buttonBox')
         localize_dialog_buttons(buttons)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import re
 from html.parser import HTMLParser
 from pathlib import Path
@@ -10,6 +11,13 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 MANUAL_ROOT = ROOT / "操作手順書_ja"
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--source-only", action="store_true",
+    help="再パッケージ前に dist 内の手順書との一致確認だけを省略する",
+)
+options = parser.parse_args()
 
 
 class ManualParser(HTMLParser):
@@ -65,6 +73,8 @@ for stale_text in (
     "現在のデータを保存", "全構造を同期", "画面から選択",
     "現在ページで検証", "このイベントまで実行",
     "共通データ", "正式実行", "本実行", "再試行",
+    "実行開始", "実行／スキップは一覧下のボタン",
+    "「実行ログ」タブ",
 ):
     assert stale_text not in combined_source, f"stale manual wording remains: {stale_text}"
 
@@ -85,7 +95,7 @@ for image in referenced_images:
     assert width >= 900 and height >= 600, f"manual image is too small: {image}"
 
 packaged_manual = ROOT / "dist" / "WebFlowManager" / "操作手順書_ja"
-if packaged_manual.exists():
+if packaged_manual.exists() and not options.source_only:
     for source in MANUAL_ROOT.rglob("*"):
         if source.is_file():
             packaged = packaged_manual / source.relative_to(MANUAL_ROOT)

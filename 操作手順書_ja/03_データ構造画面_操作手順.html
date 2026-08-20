@@ -15,19 +15,30 @@
 <tr><td>追加 → 子フィールド追加</td><td>選択中の object/list の末尾へ子項目を追加します。</td><td>text、number、boolean では使用できません。</td></tr>
 <tr><td>編集</td><td>項目名や型を変更します。</td><td>選択した項目が対象です。</td></tr>
 <tr class="danger-row"><td>フィールド削除</td><td>選択項目と配下の項目を削除します。</td><td>イベントで使用していないか確認します。</td></tr>
-<tr><td>上へ／下へ</td><td>同じ階層内では1項目ずつ移動し、親の先頭で上へ、末尾で下へ動かすと親構造の外へ移動します。</td><td>object/list は配下の項目を含む構造全体で移動します。</td></tr>
-<tr><td>ドラッグ</td><td>項目の順番や階層を変更します。</td><td>object/list の行中央へドロップすると配下へ移動し、行の上側／下側へドロップすると同じ階層の前／後へ移動します。</td></tr>
+<tr><td>上へ／下へ</td><td>単一選択では隣接位置へ移動します。Ctrl／Shift の複数選択では各選択ブロックの相対順を維持し、親の先頭／末尾に接する連続選択をまとめて親構造の外へ移動できます。</td><td>object/list は配下を含む構造全体で移動し、親子を同時選択した場合は親だけを処理します。</td></tr>
+<tr><td>Ctrl+C／Ctrl+V</td><td>選択した複数フィールドを表示順のまま、配下構造ごと複製します。</td><td>貼付け先の同一階層で重複しない名称が自動設定されます。</td></tr>
+<tr><td>ドラッグ</td><td>項目の順番や階層を変更します。Ctrl／Shift で選んだ複数項目も、相対順のまま一括移動できます。</td><td>object/list の行中央へドロップすると選択一式を配下へ移動し、行の上側／下側へドロップすると同じ階層の前／後へ移動します。</td></tr>
 <tr><td><img class="inline-icon" src="images/expand-all.svg" alt="すべて展開">／<img class="inline-icon" src="images/collapse-all.svg" alt="すべて折りたたむ"></td><td>object/list 配下の項目を一括して展開または折りたたみます。</td><td>配下を持つ項目がない場合は使用できません。＋は「すべて展開」、－は「すべて折りたたむ」です。ボタンは次に実行される操作のアイコンへ自動的に切り替わります。</td></tr>
 <tr><td>JSON 入出力 → JSON を出力</td><td>現在のデータ構造をバックアップします。</td><td>大きな変更の前に実行します。</td></tr>
 <tr><td>JSON 入出力 → JSON を読み込む</td><td>JSON の構造を編集中の画面へ読み込みます。</td><td>内容を確認して「保存」を押すまでデータベースには確定されません。</td></tr>
-<tr><td>保存</td><td>現在のデータ構造を保存します。</td><td>既存の実行データ自体は自動変換されないため、データ管理画面で値を確認します。</td></tr>
+<tr><td>Template 操作 → 新規</td><td>複数の PCL で再利用する object 構造を作成します。</td><td>Template は常に構造体です。Template 自体を list としては定義しません。</td></tr>
+<tr><td>Template 操作 → 編集／削除</td><td>選択した Template の名称変更または削除を行います。</td><td>PCL で使用中の Template は削除できません。</td></tr>
+<tr><td>保存</td><td>共通構造と Template 定義を保存します。</td><td>Template の変更は、その Template を追加済みの全 PCL に自動反映されます。</td></tr>
 </tbody></table>
+<div class="note"><b>一覧の状態：</b>階層表は初回だけ折りたたんで表示します。構造の編集、移動、再読込後は選択行と展開／折りたたみ状態を保持します。</div>
 <h2>項目を追加する</h2>
 <div class="step"><b>手順 1</b>　追加位置を選びます。通常項目を選ぶとその直後、object/list を選ぶとその配下、未選択では最上位の末尾が追加先になります。</div>
 <div class="step"><b>手順 2</b>　<span class="button">追加</span> から「フィールド追加」を選びます。選択した object/list の配下へ明示的に追加する場合は「子フィールド追加」を選びます。</div>
 <div class="step"><b>手順 3</b>　フィールド名とデータ型を設定し、<span class="button">OK</span> を押します。</div>
 <div class="step"><b>手順 4</b>　必要な項目を追加したら、<span class="button">保存</span> を押します。</div>
 <div class="success"><b>完了確認：</b>データ管理画面を開き、追加した項目と既存データの値を確認します。構造変更前のデータには新しい項目値が保存されていない場合があります。</div>
+<h2>Template を作成・更新する</h2>
+<div class="step"><b>手順 1</b>　左側の <span class="button">Template 操作</span> から「新規」を選び、Template 名を入力します。</div>
+<div class="step"><b>手順 2</b>　作成した Template を選び、右側で通常項目と同じように子フィールドを追加します。</div>
+<div class="step"><b>手順 3</b>　<span class="button">保存</span> を押します。</div>
+<div class="step"><b>手順 4</b>　定義を変更した場合は「データ管理」で追加済み PCL を確認します。</div>
+<div class="success"><b>自動同期：</b>同名フィールドの入力値は保持されます。追加フィールドは型ごとの既定値で作成され、定義から削除したフィールドは追加済み Template 実体からも削除されます。最上位と list 内のどちらの実体も同期対象です。</div>
+<div class="tip"><b>Template と list：</b>Template は常に1件分の object です。複数件を扱う場合は、データ管理画面で通常の list を選び、その list の中へ Template を必要な件数だけ追加します。</div>
 <h2>ドラッグで階層を変更する</h2>
 <div class="step"><b>手順 1</b>　移動する項目をドラッグします。</div>
 <div class="step"><b>手順 2</b>　object/list の中へ移す場合は対象行の中央へ、同じ階層で並べ替える場合は対象行の上側または下側へドロップします。</div>
@@ -42,6 +53,11 @@
 <tr><td>object</td><td>住所など、複数項目をまとめるグループ。</td></tr>
 <tr><td>list</td><td>商品明細など、0件以上繰り返す項目。</td></tr>
 </tbody></table>
+<h2>object を Excel の別シートへ出力する</h2>
+<div class="step"><b>手順 1</b>　別シートへ分ける object を選択し、<span class="button">編集</span> を押します。</div>
+<div class="step"><b>手順 2</b>　「Excel 別シート出力」を有効にします。データが空のときにシートを作らない場合は「空時省略」も有効にします。</div>
+<div class="step"><b>手順 3</b>　<span class="button">OK</span> を押し、構造画面で <span class="button">保存</span> を押します。</div>
+<div class="warning"><b>設定できる場所：</b>別シート出力は object だけに設定できます。すでに別シート出力される object の配下へ重ねて設定することはできません。</div>
 <div class="tip"><b>安全な作業順：</b>JSON を出力 → 構造を編集 → 保存 → 実行データを確認。</div>
 <p class="manual-nav"><a href="04_データ管理画面_操作手順.html">データ管理の手順へ</a>　｜　<a href="index.html">全体操作手順へ</a></p>
 </body></html>

@@ -26,6 +26,8 @@ _PICKER_SCRIPT = r"""
     #__sf-flow-highlight { position: fixed; z-index: 2147483646; box-sizing: border-box;
       border: 4px solid #ff2d8d; box-shadow: inset 0 0 0 1px white;
       pointer-events: none; }
+    .__sf-flow-path-anchor { outline: 3px solid #00a3ff !important;
+      outline-offset: -3px !important; }
     #__sf-flow-element-info { position: fixed; z-index: 2147483647;
       max-width: min(520px, calc(100vw - 32px)); padding: 10px 14px;
       background: rgba(23, 43, 77, .96); color: white; border-radius: 6px;
@@ -36,6 +38,7 @@ _PICKER_SCRIPT = r"""
   const banner = document.createElement('div');
   banner.id = '__sf-flow-banner';
   banner.textContent = __WAITING_TEXT__;
+  const activeText = __ACTIVE_TEXT__;
   document.body.appendChild(banner);
   const highlight = document.createElement('div');
   highlight.id = '__sf-flow-highlight';
@@ -47,6 +50,7 @@ _PICKER_SCRIPT = r"""
   document.body.appendChild(elementInfo);
 
   let hovered = null;
+  const pathAnchors = [];
   let pointerX = 0;
   let pointerY = 0;
   const actionableSelector = [
@@ -107,10 +111,9 @@ _PICKER_SCRIPT = r"""
 
   const clean = () => {
     if (hovered) hovered.classList.remove('__sf-flow-hover');
+    pathAnchors.forEach(element => element.classList.remove('__sf-flow-path-anchor'));
     document.removeEventListener('mouseover', over, true);
-    document.removeEventListener('click', click, true);
     document.removeEventListener('keydown', key, true);
-    document.removeEventListener('keydown', activate, true);
     document.removeEventListener('scroll', updateFeedback, true);
     banner.remove();
     highlight.remove();
@@ -354,42 +357,207 @@ _PICKER_SCRIPT = r"""
       stable_xpath: xpathCandidate(element, false)
     };
   };
-  const click = (event) => {
-    const element = eventElement(event);
-    if (!element) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
-    window.__sfFlowPicked = elementResult(element);
+  const displayName = (element) => {
+    const result = elementResult(element);
+    return result.label || result.name || result.text || `<${result.tag}>`;
+  };
+  const pathScope = (element) => element.closest(
+    'tr, li, section, article, fieldset, form, table'
+  ) || element;
+  const pathText = (element) => String(
+    element.innerText || element.textContent || element.value || ''
+  ).trim().replace(/\s+/g, ' ').slice(0, 120);
+  const pathFragment = (element, textSource = element) => {
+    const tag = element.tagName.toLowerCase();
+    const text = pathText(textSource);
+    if (text) return `${tag}[contains(normalize-space(.),${xpathLiteral(text)})]`;
+    const id = element.getAttribute('id');
+    if (id && !/\d{4,}/.test(id)) return `${tag}[@id=${xpathLiteral(id)}]`;
+    for (const name of ['data-testid', 'data-id', 'name', 'aria-label', 'role']) {
+      const value = element.getAttribute(name);
+      if (value) return `${tag}[@${name}=${xpathLiteral(value)}]`;
+    }
+    return tag;
+  };
+  const targetFragment = (element) => {
+    const tag = element.tagName.toLowerCase();
+    const id = element.getAttribute('id');
+    if (id && !/\d{4,}/.test(id)) return `${tag}[@id=${xpathLiteral(id)}]`;
+    for (const name of [
+      'data-target-selection-name', 'data-testid', 'data-id', 'name',
+      'aria-label', 'placeholder', 'type', 'role'
+    ]) {
+      const value = element.getAttribute(name);
+      if (value) return `${tag}[@${name}=${xpathLiteral(value)}]`;
+    }
+    const text = pathText(element);
+    return text ? `${tag}[contains(normalize-space(.),${xpathLiteral(text)})]` : tag;
+  };
+  const targetValue = (element) => {
+    const id = element.getAttribute('id');
+    if (id && !/\d{4,}/.test(id)) return id;
+    for (const name of [
+      'data-target-selection-name', 'data-testid', 'data-id', 'name',
+      'aria-label', 'placeholder', 'type', 'role'
+    ]) {
+      const value = element.getAttribute(name);
+      if (value) return value;
+    }
+    return pathText(element);
+  };
+  const scopeMatch = (element) => {
+    const text = pathText(element);
+    if (text) return {method: 'text_contains', attribute: '', value: text};
+    const id = element.getAttribute('id');
+    if (id && !/\d{4,}/.test(id)) {
+      return {method: 'attribute_equals', attribute: 'id', value: id};
+    }
+    for (const name of ['data-testid', 'data-id', 'name', 'aria-label', 'role']) {
+      const value = element.getAttribute(name);
+      if (value) return {method: 'attribute_equals', attribute: name, value};
+    }
+    return {method: 'tag', attribute: '', value: element.tagName.toLowerCase()};
+  };
+  const targetMatch = (element) => {
+    const value = targetValue(element);
+    const id = element.getAttribute('id');
+    if (id === value) return {method: 'attribute_equals', attribute: 'id', value};
+    for (const name of [
+      'data-target-selection-name', 'data-testid', 'data-id', 'name',
+      'aria-label', 'placeholder', 'type', 'role'
+    ]) {
+      if (element.getAttribute(name) === value) {
+        return {method: 'attribute_equals', attribute: name, value};
+      }
+    }
+    return {method: value ? 'text_contains' : 'tag', attribute: '', value};
+  };
+  const anchorXPath = (anchors) => {
+    if (!anchors.length) return '';
+    const scopes = anchors.map(pathScope);
+    let xpath = `//${pathFragment(scopes[0], anchors[0])}`;
+    for (let index = 1; index < scopes.length; index += 1) {
+      const previous = scopes[index - 1];
+      const current = scopes[index];
+      const fragment = pathFragment(current, anchors[index]);
+      if (!previous.contains(current)) return '';
+      xpath += `//${fragment}`;
+    }
+    return xpath;
+  };
+  const scopeXPath = (anchors, target) => {
+    if (!anchors.length) return xpathCandidate(target);
+    const scopes = anchors.map(pathScope);
+    const xpath = anchorXPath(anchors);
+    if (!xpath) return '';
+    const previous = scopes[scopes.length - 1];
+    return previous.contains(target) ? `${xpath}//${targetFragment(target)}` : '';
+  };
+  const rowIndex = (row) => [...row.parentElement.children]
+    .filter(element => element.tagName === 'TR').indexOf(row);
+  const tableXPathWithinRange = (rangeAnchors, table) => {
+    if (!rangeAnchors.length) return xpathCandidate(table, false);
+    const rangeElement = pathScope(rangeAnchors.at(-1));
+    const rangeXPath = anchorXPath(rangeAnchors);
+    const tables = [
+      ...(rangeElement.tagName === 'TABLE' ? [rangeElement] : []),
+      ...rangeElement.querySelectorAll('table')
+    ];
+    const index = tables.indexOf(table);
+    if (!rangeXPath || index < 0) return '';
+    return rangeElement === table
+      ? rangeXPath : `(${rangeXPath}//table)[${index + 1}]`;
+  };
+  const rowMapping = (anchors, target) => {
+    const source = anchors.at(-1);
+    const sourceRow = source?.closest('tr');
+    const targetRow = target.closest('tr');
+    const sourceTable = sourceRow?.closest('table');
+    const targetTable = targetRow?.closest('table');
+    if (!sourceRow || !targetRow || !sourceTable || !targetTable || sourceTable === targetTable) {
+      return null;
+    }
+    // 外側 table の行が対象 table 全体を内包する場合、その F1 は基準行ではなく
+    // 共通範囲である。偶然同じ index でも跨表対応行として扱わない。
+    if (sourceRow.contains(targetTable) || targetRow.contains(sourceTable)) return null;
+    // 選択時に対応行であることを確認する。保存するのは行番号ではなく、
+    // 実行時に基準行から番号を再計算するための検索情報だけとする。
+    if (rowIndex(sourceRow) < 0 || rowIndex(sourceRow) !== rowIndex(targetRow)) return null;
+    const rangeAnchors = anchors.slice(0, -1);
+    if (rangeAnchors.some(anchor => !pathScope(anchor).contains(targetTable))) return null;
+    const sourceXPath = scopeXPath(rangeAnchors, sourceRow);
+    const targetTableXPath = tableXPathWithinRange(rangeAnchors, targetTable);
+    if (!sourceXPath || xpathCount(sourceXPath) !== 1 ||
+        !targetTableXPath || xpathCount(targetTableXPath) !== 1) return null;
+    return {
+      operation: 'same_row_index',
+      source: {selector_type: 'xpath', selector: sourceXPath},
+      target_table: {selector_type: 'xpath', selector: targetTableXPath},
+      row_selector: ':scope > tbody > tr, :scope > tr',
+      target: {selector_type: 'xpath', selector: `.//${targetFragment(target)}`}
+    };
+  };
+  const updatePathBanner = () => {
+    const lines = pathAnchors.map(
+      (element, index) => `${index + 1}. ${displayName(element)}`
+    );
+    banner.textContent = [
+      activeText,
+      `(${pathAnchors.length})`,
+      ...lines,
+    ].join('\n');
+  };
+  const finish = (element) => {
+    const result = elementResult(element);
+    if (pathAnchors.length) {
+      const mapping = rowMapping(pathAnchors, element);
+      const resolvedXPath = mapping ? '' : scopeXPath(pathAnchors, element);
+      result.path_steps = [
+        ...pathAnchors.map(anchor => ({
+          ...elementResult(anchor), path_match: scopeMatch(anchor)
+        })),
+        {...result, path_match: targetMatch(element)}
+      ];
+      result.path_xpath = resolvedXPath && xpathCount(resolvedXPath) === 1
+        ? resolvedXPath : '';
+      result.row_mapping = mapping;
+    }
+    window.__sfFlowPicked = result;
     clean();
   };
   const key = (event) => {
     if (event.key === 'Escape') {
       window.__sfFlowPicked = {cancelled: true};
       clean();
+    } else if (event.key === 'F1' && hovered) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!pathAnchors.includes(hovered)) {
+        pathAnchors.push(hovered);
+        hovered.classList.add('__sf-flow-path-anchor');
+      }
+      updatePathBanner();
+    } else if (event.key === 'F2' && hovered) {
+      event.preventDefault();
+      event.stopPropagation();
+      finish(hovered);
+    } else if (event.key === 'Backspace' && pathAnchors.length) {
+      event.preventDefault();
+      event.stopPropagation();
+      pathAnchors.pop().classList.remove('__sf-flow-path-anchor');
+      updatePathBanner();
     } else if (event.key === 'Enter' && hovered) {
       event.preventDefault();
       event.stopPropagation();
-      window.__sfFlowPicked = elementResult(hovered);
-      clean();
+      finish(hovered);
     }
   };
-  const activate = (event) => {
-    if (event.key === 'Escape') {
-      window.__sfFlowPicked = {cancelled: true};
-      clean();
-      return;
-    }
-    if (event.key !== 'F2') return;
-    event.preventDefault();
-    banner.textContent = __ACTIVE_TEXT__;
-    document.removeEventListener('keydown', activate, true);
-    document.addEventListener('mouseover', over, true);
-    document.addEventListener('click', click, true);
-    document.addEventListener('keydown', key, true);
-    document.addEventListener('scroll', updateFeedback, true);
-  };
-  document.addEventListener('keydown', activate, true);
+  // 画面を開いた直後からホバー要素を追跡し、F1/F2 を一回押すだけで選択する。
+  // click は奪わないため、対象画面内の移動や展開操作は選択中も継続できる。
+  banner.textContent = activeText;
+  document.addEventListener('mouseover', over, true);
+  document.addEventListener('keydown', key, true);
+  document.addEventListener('scroll', updateFeedback, true);
 }
 """
 

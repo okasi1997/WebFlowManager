@@ -10,10 +10,26 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 from browser.page_runtime import active_page, bring_page_to_front, close_browser_context, launch_persistent_chrome, page_frames, restore_storage_state
-from browser.locators import actionable_matches, actionable_matches_across_frames, build_locator, matches_across_frames, visible_matches
+from browser.locators import actionable_matches, actionable_matches_across_frames, build_locator, matches_across_frames, visible_matches, xpath_literal
 from browser.picker_scripts import picker_script
 from browser.profile_runtime import acquire_profile_lease, persistent_profile_dir, profile_lock_error
 from i18n import tr
+
+
+def _replace_path_literal(value: Any, literal: str, token: str) -> Any:
+    """多段設定内の selector だけを再帰的にテンプレート化する。"""
+    if isinstance(value, dict):
+        return {
+            key: (
+                item.replace(literal, token)
+                if key == 'selector' and isinstance(item, str)
+                else _replace_path_literal(item, literal, token)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_replace_path_literal(item, literal, token) for item in value]
+    return value
 
 class ElementPicker:
     """F2 で選択モードへ入り、操作可能な要素だけを候補として返す。"""
@@ -41,9 +57,12 @@ class ElementPicker:
         return 'get_text'
 
     def _choose_unique_locator(
-            self, page: Any, info: dict[str, str], picked_frame: Any | None=None,
+            self, page: Any, info: dict[str, Any], picked_frame: Any | None=None,
             action: str='',
     ) -> dict[str, str]:
+        path_steps = info.get('path_steps')
+        if isinstance(path_steps, list):
+            return self._choose_multi_path(page, info, picked_frame, action)
         # 人が理解しやすい locator から順に試し、XPath は予備として保持する。
         suggested_action = self._suggest_action(info)
         display = info.get('label') or info.get('name') or info.get('text') or info.get('tag')
@@ -111,6 +130,71 @@ class ElementPicker:
             'iframe_path': self._iframe_path(picked_frame),
             'display': display,
             'suggested_action': suggested_action,
+            'match_count': '1',
+        }
+
+    def _choose_multi_path(
+            self, page: Any, info: dict[str, Any], picked_frame: Any | None,
+            action: str,
+    ) -> dict[str, str]:
+        """F1 で蓄積した範囲と F2 の対象を、構造化された多段パスへ変換する。"""
+        raw_steps = info.get('path_steps', [])
+        resolved_xpath = str(info.get('path_xpath', '')).strip()
+        row_mapping = info.get('row_mapping')
+        if len(raw_steps) < 2 or (not resolved_xpath and not isinstance(row_mapping, dict)):
+            raise RuntimeError('error.element_unique_locator_unavailable')
+        steps = []
+        for index, raw_step in enumerate(raw_steps):
+            if not isinstance(raw_step, dict):
+                continue
+            display = (
+                raw_step.get('label') or raw_step.get('name')
+                or raw_step.get('text') or raw_step.get('tag') or ''
+            )
+            if index == len(raw_steps) - 1:
+                kind = 'target'
+            elif isinstance(row_mapping, dict) and index == len(raw_steps) - 2:
+                kind = 'source_row'
+            else:
+                kind = 'scope'
+            match = raw_step.get('path_match', {})
+            if not isinstance(match, dict):
+                match = {}
+            steps.append({
+                'kind': kind,
+                'display': str(display),
+                'match_method': str(match.get('method', 'text_contains')),
+                'match_attribute': str(match.get('attribute', '')),
+                'value': str(match.get('value', display)),
+                'tag': str(raw_step.get('tag', '')),
+            })
+        path_data = {
+            'version': 1,
+            'steps': steps,
+        }
+        if isinstance(row_mapping, dict):
+            path_data['row_mapping'] = row_mapping
+        else:
+            path_data['resolved'] = {'selector_type': 'xpath', 'selector': resolved_xpath}
+        for index, step in enumerate(steps):
+            value = str(step.get('value', ''))
+            if value:
+                path_data = _replace_path_literal(
+                    path_data, xpath_literal(value), f'__WFM_STEP_{index}__'
+                )
+        selector = json.dumps(path_data, ensure_ascii=False, separators=(',', ':'))
+        locator = self._locator(picked_frame or page, 'path', selector)
+        if locator.count() != 1:
+            raise RuntimeError('error.element_unique_locator_unavailable')
+        target_info = dict(raw_steps[-1])
+        display = ' → '.join(step['display'] for step in steps)
+        return {
+            'selector_type': 'path', 'selector': selector,
+            # 多段パス自体が範囲と対象の組を保持するため、別の予備 XPath は保存しない。
+            'fallback_selector_type': 'none', 'fallback_selector': '',
+            'iframe_path': self._iframe_path(picked_frame),
+            'display': display,
+            'suggested_action': self._suggest_action(target_info),
             'match_count': '1',
         }
 
@@ -426,10 +510,10 @@ class DebugBrowserSession:
             bring_page_to_front(page)
             picker = ElementPicker()
             run_id = uuid.uuid4().hex
-            waiting_text = tr('スクロール領域を選択する画面を開き、F2 を押してください') if require_scroll else tr('selector.open_target_hint')
+            waiting_text = tr('スクロール領域を選択する画面を開き、F2 を押してください') if require_scroll else tr('要素へマウスを合わせ、F1 で範囲を追加、F2 で対象を確定します（Backspace: 一段戻す / Esc: キャンセル）')
             active_text = (
                 tr('スクロール領域を選択してください（Enter で確定、Esc で省略）')
-                if require_scroll else tr(selection_hint or 'selector.selection_mode_hint')
+                if require_scroll else tr(selection_hint or '要素へマウスを合わせ、F1 で範囲を追加、F2 で対象を確定します（Backspace: 一段戻す / Esc: キャンセル）')
             )
             script = picker_script(run_id, waiting_text, active_text)
             while True:
@@ -466,7 +550,12 @@ class DebugBrowserSession:
                         return picked
         return self._submit(task)
 
-    def execute_event(self, event: dict[str, Any], target_url: str='') -> None:
+    def execute_event(
+        self, event: dict[str, Any], target_url: str='', *,
+        variables: dict[str, str] | None = None,
+        root_data: dict[str, Any] | None = None,
+        logger: Callable[[str], None] | None = None,
+    ) -> None:
         """現在のページで編集中のイベントを一度だけ実行する。"""
         def task() -> None:
             from core.executor import WorkflowExecutor
@@ -476,10 +565,11 @@ class DebugBrowserSession:
             artifact_dir = self.project_dir / 'artifacts' / datetime.now().strftime('%Y%m%d_%H%M%S')
             executor = WorkflowExecutor(
                 self.project_dir,
-                lambda message: self._log_sink(message, 'WorkflowExecutor'),
+                logger or (lambda message: self._log_sink(message, 'WorkflowExecutor')),
                 self.action_stable_ms_getter(),
             )
-            executor._execute_event(page, event, {}, artifact_dir)
+            prepared = executor.prepare_event_data(event, root_data)
+            executor._execute_event(page, prepared, variables or {}, artifact_dir)
         self._submit(task)
 
     def highlight_element(self, event: dict[str, Any], target_url: str='') -> None:

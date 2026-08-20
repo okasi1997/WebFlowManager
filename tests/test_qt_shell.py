@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import copy
 import tempfile
 import unittest
 from datetime import datetime
@@ -14,7 +15,7 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtWidgets import (
     QApplication, QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHeaderView, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox,
     QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QStyle, QTableWidget,
-    QTabWidget, QVBoxLayout, QWidget,
+    QTabWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import QEvent, QModelIndex, QPoint, QSize, QTimer, Qt
 from PySide6.QtTest import QTest
@@ -27,6 +28,7 @@ from qt_ui.application import _ComboBoxWheelBlocker
 from qt_ui.pages.flow_design import (
     DataPathPickerDialog, EventEditorDialog, EventGroupEditorDialog, FlowEditorDialog,
     GuardConditionEditorDialog, GuardRuleEditorDialog, WorkflowGroupDialog,
+    MultiPathParameterDialog,
 )
 from qt_ui.pages.structured import FieldDialog, empty_record
 from qt_ui.pages.data import RecordMetadataDialog
@@ -34,10 +36,92 @@ from qt_ui.pages.execution import (
     ExecutionActionDelegate, ExecutionOrderDialog, STATUS_LABELS, natural_sort_key,
 )
 from qt_ui.ui_loader import ConfirmationDialog, DeletionConfirmDialog
-from qt_ui.table_view import TREE_LEVEL_INDENT, configure_table_view
+from qt_ui.table_view import (
+    TREE_LEVEL_INDENT, HierarchicalReorderTreeWidget, configure_table_view,
+    selected_outer_items,
+)
 
 
 class QtShellTests(unittest.TestCase):
+    def test_multi_selected_rows_move_as_ordered_blocks(self) -> None:
+        tree = HierarchicalReorderTreeWidget()
+        tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        items = [QTreeWidgetItem([name]) for name in ('A', 'B', 'C', 'D', 'E')]
+        tree.addTopLevelItems(items)
+        items[1].setSelected(True)
+        items[2].setSelected(True)
+
+        self.assertTrue(tree.moveSelected(1))
+        self.assertEqual(
+            [tree.topLevelItem(index).text(0) for index in range(tree.topLevelItemCount())],
+            ['A', 'D', 'B', 'C', 'E'],
+        )
+        self.assertEqual(set(tree.selectedItems()), {items[1], items[2]})
+
+    def test_multi_selected_boundary_block_moves_out_of_parent(self) -> None:
+        tree = HierarchicalReorderTreeWidget()
+        tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        parent = QTreeWidgetItem(['parent'])
+        first = QTreeWidgetItem(['first'])
+        second = QTreeWidgetItem(['second'])
+        parent.addChildren([first, second])
+        tail = QTreeWidgetItem(['tail'])
+        tree.addTopLevelItems([parent, tail])
+        first.setSelected(True)
+        second.setSelected(True)
+
+        self.assertTrue(tree.moveSelected(1))
+        self.assertEqual(parent.childCount(), 0)
+        self.assertEqual(
+            [tree.topLevelItem(index).text(0) for index in range(tree.topLevelItemCount())],
+            ['parent', 'first', 'second', 'tail'],
+        )
+        self.assertEqual(set(tree.selectedItems()), {first, second})
+
+        self.assertTrue(tree.moveSelected(-1))
+        self.assertEqual(
+            [tree.topLevelItem(index).text(0) for index in range(tree.topLevelItemCount())],
+            ['first', 'second', 'parent', 'tail'],
+        )
+
+    def test_multiple_selected_subtrees_drag_to_one_destination(self) -> None:
+        tree = HierarchicalReorderTreeWidget()
+        tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        group = QTreeWidgetItem(['group'])
+        first = QTreeWidgetItem(['first'])
+        second = QTreeWidgetItem(['second'])
+        tail = QTreeWidgetItem(['tail'])
+        tree.addTopLevelItems([group, first, second, tail])
+        first.setSelected(True)
+        second.setSelected(True)
+
+        self.assertTrue(tree._move_items([first, second], group, 0))
+        self.assertEqual(
+            [group.child(index).text(0) for index in range(group.childCount())],
+            ['first', 'second'],
+        )
+        self.assertEqual(set(tree.selectedItems()), {first, second})
+
+        root = tree.invisibleRootItem()
+        self.assertTrue(tree._move_items([first, second], root, 1))
+        self.assertEqual(
+            [tree.topLevelItem(index).text(0) for index in range(tree.topLevelItemCount())],
+            ['group', 'first', 'second', 'tail'],
+        )
+
+    def test_outer_selection_omits_children_of_selected_parent(self) -> None:
+        tree = HierarchicalReorderTreeWidget()
+        tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        parent = QTreeWidgetItem(['parent'])
+        child = QTreeWidgetItem(['child'])
+        sibling = QTreeWidgetItem(['sibling'])
+        parent.addChild(child)
+        tree.addTopLevelItems([parent, sibling])
+        for item in (parent, child, sibling):
+            item.setSelected(True)
+
+        self.assertEqual(selected_outer_items(tree), [parent, sibling])
+
     def test_tree_forms_do_not_expand_rows_on_double_click(self) -> None:
         """ダブルクリック操作と行の展開を競合させない。"""
         form_dir = Path(__file__).resolve().parents[1] / 'qt_ui' / 'forms'
@@ -107,7 +191,13 @@ class QtShellTests(unittest.TestCase):
         manager_toolbar = schema_page.findChild(QHBoxLayout, 'templateManagerToolbar')
         self.assertEqual(manager_toolbar.spacing(), 6)
         self.assertEqual(
-            manager_toolbar.indexOf(schema_page.findChild(QPushButton, 'exportSchemaButton')), 2,
+            manager_toolbar.indexOf(schema_page.findChild(QPushButton, 'moveTemplateUpButton')), 2,
+        )
+        self.assertEqual(
+            manager_toolbar.indexOf(schema_page.findChild(QPushButton, 'moveTemplateDownButton')), 3,
+        )
+        self.assertEqual(
+            manager_toolbar.indexOf(schema_page.findChild(QPushButton, 'exportSchemaButton')), 4,
         )
         schema_splitter = schema_page.findChild(QSplitter, 'schemaSplitter')
         self.assertGreaterEqual(
@@ -419,6 +509,7 @@ class QtShellTests(unittest.TestCase):
         expected = {
             'main_window.ui', 'flow_design.ui', 'flow_editor.ui', 'event_editor.ui', 'guard_dialog.ui',
             'guard_condition.ui', 'guard_rule.ui', 'data_path_picker.ui',
+            'multi_path_parameters.ui',
             'event_group.ui',
             'auth.ui', 'settings.ui', 'schema.ui', 'field_dialog.ui', 'data.ui',
             'record_dialog.ui', 'execution.ui', 'execution_order.ui', 'confirmation.ui',
@@ -673,6 +764,64 @@ class QtShellTests(unittest.TestCase):
         copied_events = [dict(row) for row in self.db.list_events(workflows[1]['id'])]
         self.assertEqual([(row['name'], row['action']) for row in copied_events], [('click event', 'click')])
 
+    def test_workflow_copy_paste_preserves_multiple_selection_order(self) -> None:
+        page = self.window.pages['design']
+        first_id = self.db.add_workflow('first flow')
+        self.db.add_workflow('second flow')
+        self.db.add_workflow('tail flow')
+        page.reload(first_id)
+        first = page.workflow_table.topLevelItem(0)
+        second = page.workflow_table.topLevelItem(1)
+        page.workflow_table.setCurrentItem(first)
+        second.setSelected(True)
+        copy_shortcut, paste_shortcut = page.workflow_table._structured_copy_paste_shortcuts
+        copy_shortcut.activated.emit()
+        paste_shortcut.activated.emit()
+
+        self.assertEqual([row['name'] for row in self.db.list_workflows()], [
+            'first flow', 'first flow - Copy', 'second flow - Copy',
+            'second flow', 'tail flow',
+        ])
+
+    def test_workflow_and_event_reorder_restore_multiple_selection(self) -> None:
+        page = self.window.pages['design']
+        first_id = self.db.add_workflow('first flow')
+        self.db.add_workflow('second flow')
+        self.db.add_workflow('tail flow')
+        page.reload(first_id)
+        first = page.workflow_table.topLevelItem(0)
+        second = page.workflow_table.topLevelItem(1)
+        page.workflow_table.setCurrentItem(first)
+        second.setSelected(True)
+
+        self.assertTrue(page.workflow_table.moveSelected(1))
+        self.app.processEvents()
+        self.assertEqual(
+            {item.text(0) for item in page.workflow_table.selectedItems()},
+            {'first flow', 'second flow'},
+        )
+
+        current_id = page.current_workflow_id
+        base = {
+            'selector_type': 'none', 'selector': '', 'value': '',
+            'timeout_ms': 10000, 'enabled': True, 'continue_on_error': False,
+            'guard': {'logic': 'all', 'rules': []},
+        }
+        for name in ('first event', 'second event', 'tail event'):
+            self.db.add_event(current_id, base | {'name': name, 'action': 'click'})
+        page.load_events()
+        first_event = page.event_tree.topLevelItem(0)
+        second_event = page.event_tree.topLevelItem(1)
+        page.event_tree.setCurrentItem(first_event)
+        second_event.setSelected(True)
+
+        self.assertTrue(page.event_tree.moveSelected(1))
+        self.app.processEvents()
+        self.assertEqual(
+            {item.text(0) for item in page.event_tree.selectedItems()},
+            {'first event', 'second event'},
+        )
+
     def test_workflow_groups_preserve_hierarchy_and_flat_execution_order(self) -> None:
         page = self.window.pages['design']
         first_id = self.db.add_workflow('group flow 1')
@@ -738,6 +887,22 @@ class QtShellTests(unittest.TestCase):
             (groups[0].child(index).data(0, page.WORKFLOW_DATA_ROLE) or {}).get('kind') == 'group'
             for index in range(groups[0].childCount())
         ))
+
+    def test_workflow_group_selection_and_expansion_survive_reload(self) -> None:
+        page = self.window.pages['design']
+        group_id = self.db.add_workflow_group('selected group')
+        self.db.add_workflow('child flow', parent_id=group_id)
+        page.reload(select_node_id=group_id)
+        group = page.workflow_table.currentItem()
+        self.assertIsNotNone(group)
+        self.assertFalse(group.isExpanded())
+
+        group.setExpanded(True)
+        page.reload()
+
+        selected = page.workflow_table.currentItem()
+        self.assertEqual(selected.data(0, page.WORKFLOW_NODE_ROLE), group_id)
+        self.assertTrue(selected.isExpanded())
 
     def test_workflow_names_are_unique_only_within_the_same_level(self) -> None:
         """Flow名は兄弟間だけ重複を禁止し、別Groupでは同名を許可する。"""
@@ -1516,6 +1681,9 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual([action.text() for action in add.menu().actions()], ['フィールド追加', '子フィールド追加'])
         self.assertEqual(io.text(), 'JSON 入出力')
         toggle = schema.findChild(QPushButton, 'toggleAllButton')
+        # 初回折りたたみを確認した後、従来の切替確認を続ける。
+        self.assertTrue(all(not item.isExpanded() for item in schema._expandable_items()))
+        toggle.click()
         self.assertEqual(toggle.text(), '')
         self.assertFalse(toggle.icon().isNull())
         self.assertEqual(toggle.toolTip(), 'すべて折りたたむ')
@@ -1567,6 +1735,25 @@ class QtShellTests(unittest.TestCase):
         records = self.db.list_data_records()
         self.assertEqual([record['id'] for record in records], [second_id, first_id])
         self.assertEqual(page.selected()['id'], first_id)
+
+    def test_multiple_data_records_are_copied_in_display_order(self) -> None:
+        first_id = self.db.add_data_record(0, 'first', {'value': '1'})
+        self.db.add_data_record(0, 'second', {'value': '2'})
+        page = self.window.pages['data']
+        page.reload(first_id)
+        first_item = page.tree.topLevelItem(0)
+        second_item = page.tree.topLevelItem(1)
+        page.tree.setCurrentItem(first_item)
+        second_item.setSelected(True)
+
+        payload = page._copy_record_payload()
+        self.assertEqual([record['name'] for record in payload], ['first', 'second'])
+        page._paste_record_payload(payload)
+
+        self.assertEqual(
+            [record['name'] for record in self.db.list_data_records()],
+            ['first', 'first - Copy', 'second - Copy', 'second'],
+        )
 
     def test_new_rows_follow_the_shared_insertion_rule(self) -> None:
         # 平坦な Flow / 実行データは選択行の直後へ挿入する。
@@ -1697,7 +1884,7 @@ class QtShellTests(unittest.TestCase):
             self.assertEqual((margins.left(), margins.top(), margins.right(), margins.bottom()), expected)
         dialog = FieldDialog(self.window, {'name': '案件名', 'type': 'text'})
         self.assertEqual(dialog.minimumSize(), dialog.maximumSize())
-        self.assertEqual((dialog.width(), dialog.height()), (560, 470))
+        self.assertEqual((dialog.width(), dialog.height()), (560, 380))
         self.assertTrue(dialog.findChild(QFrame, 'fieldCard').property('card'))
         self.assertTrue(dialog.findChild(QFrame, 'excelCard').property('card'))
         self.assertTrue(dialog.findChild(QLabel, 'basicTitle').property('cardTitle'))
@@ -1728,6 +1915,57 @@ class QtShellTests(unittest.TestCase):
         ])
         self.assertEqual(children[1]['children'], [{'name': 'child', 'type': 'text'}])
 
+    def test_schema_copy_paste_preserves_multiple_selection_order(self) -> None:
+        page = self.window.pages['schema']
+        page.schema = {
+            'name': 'Data', 'type': 'object', 'children': [
+                {'name': 'first', 'type': 'text'},
+                {'name': 'second', 'type': 'text'},
+                {'name': 'tail', 'type': 'text'},
+            ],
+        }
+        page.render()
+        first = page.tree.topLevelItem(0)
+        second = page.tree.topLevelItem(1)
+        page.tree.setCurrentItem(first)
+        second.setSelected(True)
+        copy_shortcut, paste_shortcut = page.tree._structured_copy_paste_shortcuts
+        copy_shortcut.activated.emit()
+        paste_shortcut.activated.emit()
+
+        self.assertEqual([node['name'] for node in page.schema['children']], [
+            'first', 'first - Copy', 'second - Copy', 'second', 'tail',
+        ])
+
+    def test_schema_multi_selection_moves_out_like_flow_and_event_lists(self) -> None:
+        page = self.window.pages['schema']
+        page.schema = {
+            'name': 'Data', 'type': 'object', 'children': [
+                {'name': '出力', 'type': 'object', 'children': [
+                    {'name': '契約ID', 'type': 'text'},
+                    {'name': 'サービス', 'type': 'list', 'children': []},
+                ]},
+                {'name': 'サービス', 'type': 'list', 'children': []},
+            ],
+        }
+        page.render()
+        output = page.tree.topLevelItem(0)
+        contract = output.child(0)
+        service = output.child(1)
+        page.tree.setCurrentItem(contract)
+        service.setSelected(True)
+
+        page.move(-1)
+        self.app.processEvents()
+
+        self.assertEqual([node['name'] for node in page.schema['children']], [
+            '契約ID', 'サービス', '出力', 'サービス',
+        ])
+        self.assertEqual(
+            {item.text(0) for item in page.tree.selectedItems()},
+            {'契約ID', 'サービス'},
+        )
+
     def test_schema_excel_sheet_setting_is_limited_to_objects_and_shown_in_tree(self) -> None:
         page = self.window.pages['schema']
         dialog = FieldDialog(self.window, {
@@ -1754,7 +1992,7 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(page.tree.columnCount(), 4)
         self.assertEqual(page.tree.topLevelItem(0).text(3), '別シート（空時省略）')
 
-    def test_same_template_can_be_added_multiple_times_to_one_record(self) -> None:
+    def test_top_level_template_can_only_be_added_once_as_object(self) -> None:
         schema = {
             'name': 'Data', 'type': 'object', 'children': [
                 {'name': '共通', 'type': 'text'},
@@ -1776,19 +2014,20 @@ class QtShellTests(unittest.TestCase):
         actions = page.template_menu.actions()
         self.assertEqual([action.text() for action in actions], ['仮想商材'])
         actions[0].trigger()
-        actions[0].trigger()
+        with patch('qt_ui.pages.data.show_information') as information:
+            actions[0].trigger()
+        information.assert_called_once()
         instances = page.current_data['_template_instances']
-        self.assertEqual([item['name'] for item in instances], ['仮想商材 1', '仮想商材 2'])
-        self.assertNotEqual(instances[0]['instance_id'], instances[1]['instance_id'])
+        self.assertEqual([item['name'] for item in instances], ['仮想商材 1'])
         self.assertEqual(instances[0]['data'], {'プラン名': ''})
-        self.assertEqual(page.values.topLevelItemCount(), 3)
+        self.assertEqual(page.values.topLevelItemCount(), 2)
 
         template_item = page.values.topLevelItem(1)
         page.values.setCurrentItem(template_item)
         self.assertTrue(page.delete_template_action.isEnabled())
         with patch('qt_ui.pages.data.confirm_deletion', return_value=True):
             page.delete_template_action.trigger()
-        self.assertEqual(len(page.current_data['_template_instances']), 1)
+        self.assertEqual(len(page.current_data['_template_instances']), 0)
 
     def test_template_can_be_added_while_a_list_row_is_selected(self) -> None:
         schema = {
@@ -1862,6 +2101,35 @@ class QtShellTests(unittest.TestCase):
             page.schema['templates'][2]['template_id'],
         )
 
+    def test_schema_save_updates_template_fields_in_existing_pcl(self) -> None:
+        old_schema = {
+            'name': 'Data', 'type': 'object', 'children': [],
+            'templates': [{
+                'name': 'Product', 'type': 'object', 'template_id': 'product',
+                'children': [{'name': 'old', 'type': 'text'}, {'name': 'kept', 'type': 'text'}],
+            }],
+        }
+        self.db.save_data_schema(0, old_schema)
+        record_id = self.db.add_data_record(0, 'PCL', {
+            '_template_instances': [{
+                'instance_id': 'one', 'template_id': 'product',
+                'template_name': 'Product', 'name': 'Product 1',
+                'data': {'old': 'remove me', 'kept': 'keep me'},
+            }],
+        })
+        page = self.window.pages['schema']
+        page.schema = copy.deepcopy(old_schema)
+        page.schema['templates'][0]['children'] = [
+            {'name': 'kept', 'type': 'text'}, {'name': 'new', 'type': 'number'},
+        ]
+
+        self.assertTrue(page.save(show_message=False))
+
+        record = next(row for row in self.db.list_data_records() if row['id'] == record_id)
+        self.assertEqual(record['data']['_template_instances'][0]['data'], {
+            'kept': 'keep me', 'new': 0,
+        })
+
     def test_schema_structure_selection_preserves_expansion_and_reorders_templates(self) -> None:
         page = self.window.pages['schema']
         page.schema = {
@@ -1896,6 +2164,11 @@ class QtShellTests(unittest.TestCase):
         common_parent.setExpanded(False)
 
         templates_root = page.structure_manager.topLevelItem(1)
+        self.assertFalse(templates_root.isExpanded())
+        templates_root.setExpanded(True)
+        page._render_structure_manager()
+        templates_root = page.structure_manager.topLevelItem(1)
+        self.assertTrue(templates_root.isExpanded())
         first_template = templates_root.child(0)
         page.structure_manager.setCurrentItem(first_template)
         page.tree.topLevelItem(0).setExpanded(True)
@@ -1915,8 +2188,14 @@ class QtShellTests(unittest.TestCase):
             bool(page.structure_manager.topLevelItem(0).flags() & Qt.ItemFlag.ItemIsDragEnabled),
         )
 
-        self.assertTrue(page.structure_manager._move_item(templates_root.child(1), templates_root, 0))
+        second_template = templates_root.child(1)
+        page.structure_manager.setCurrentItem(second_template)
+        second_template.setSelected(True)
+        move_template_up = page.findChild(QPushButton, 'moveTemplateUpButton')
+        self.assertEqual(move_template_up.toolTip(), '選択したテンプレートを上へ移動')
+        move_template_up.click()
         self.assertEqual([item['template_id'] for item in page.schema['templates']], ['b', 'a'])
+        self.assertEqual(page.structure_manager.currentItem().data(0, Qt.ItemDataRole.UserRole), 'b')
 
     def test_schema_template_row_double_click_renames_only_template(self) -> None:
         page = self.window.pages['schema']
@@ -1959,6 +2238,17 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(copied['execution_group'], '7')
         self.assertFalse(copied['enabled'])
         self.assertEqual(copied['data'], {'value': 'first'})
+
+    def test_data_record_selection_survives_reload_without_explicit_id(self) -> None:
+        page = self.window.pages['data']
+        first_id = self.db.add_data_record(0, 'first record', {})
+        second_id = self.db.add_data_record(0, 'second record', {})
+        page.reload(second_id)
+
+        page.reload()
+
+        self.assertEqual(page.selected()['id'], second_id)
+        self.assertNotEqual(page.selected()['id'], first_id)
 
     def test_data_records_ctrl_selection_is_used_for_bulk_delete_only(self) -> None:
         page = self.window.pages['data']
@@ -2337,6 +2627,8 @@ class QtShellTests(unittest.TestCase):
         ]}
         list_picker = DataPathPickerDialog(editor, list_schema, allowed_types={'list'})
         list_toggle = list_picker.findChild(QPushButton, 'toggleAllButton')
+        self.assertTrue(all(not item.isExpanded() for item in list_picker._container_items()))
+        list_toggle.click()
         self.assertEqual(list_toggle.toolTip(), 'すべて折りたたむ')
         list_toggle.click()
         self.assertEqual(list_toggle.toolTip(), 'すべて展開')
@@ -2359,6 +2651,39 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(template_item.child(0).text(2), '@template.仮想商材.電話番号')
         template_picker.close()
         editor.close()
+
+    def test_data_path_picker_restores_expansion_across_dialog_instances(self) -> None:
+        schema = {
+            'type': 'object',
+            'children': [{
+                'name': '出力', 'type': 'object', 'children': [
+                    {'name': 'サービス', 'type': 'list', 'children': [
+                        {'name': '名称', 'type': 'text'},
+                    ]},
+                ],
+            }],
+            'templates': [
+                {
+                    'name': f'仮想商材{index}', 'type': 'object',
+                    'template_id': f'template-{index}',
+                    'children': [{'name': '電話番号', 'type': 'text'}],
+                }
+                for index in range(1, 4)
+            ],
+        }
+        first = DataPathPickerDialog(self.window, schema)
+        template_three = first.tree.topLevelItem(3)
+        template_three.setExpanded(True)
+        first.reject()
+
+        second = DataPathPickerDialog(self.window, schema, '出力.サービス.名称')
+
+        output = second.tree.topLevelItem(0)
+        self.assertFalse(output.isExpanded())
+        self.assertFalse(second.tree.topLevelItem(1).isExpanded())
+        self.assertFalse(second.tree.topLevelItem(2).isExpanded())
+        self.assertTrue(second.tree.topLevelItem(3).isExpanded())
+        second.close()
 
     def test_database_rejects_duplicate_template_names_for_every_save_route(self) -> None:
         duplicate_schema = {
@@ -2501,6 +2826,272 @@ class QtShellTests(unittest.TestCase):
 
         self.assertEqual(dialog.result(), QDialog.DialogCode.Rejected)
         self.assertFalse(dialog.isVisible())
+
+    def test_multi_path_uses_editable_rows_and_hides_fallback(self) -> None:
+        path_data = {
+            'version': 1,
+            'steps': [
+                {'kind': 'scope', 'display': '契約', 'value': '契約', 'match_method': 'text_contains'},
+                {'kind': 'scope', 'display': '料金', 'value': '料金', 'match_method': 'text_contains'},
+                {'kind': 'source_row', 'display': '基準行', 'value': '基準行', 'match_method': 'text_contains'},
+                {'kind': 'target', 'display': '金額', 'value': 'amount', 'match_method': 'attribute_equals', 'match_attribute': 'id'},
+            ],
+            'resolved': {
+                'selector_type': 'xpath',
+                'selector': "//tr[contains(.,__WFM_STEP_0__)]//input[@name=__WFM_STEP_1__]",
+            },
+        }
+        editor = EventEditorDialog(self.window.pages['design'], {
+            'name': 'multi', 'action': 'click', 'selector_type': 'path',
+            'selector': json.dumps(path_data, ensure_ascii=False),
+            'fallback_selector_type': 'xpath', 'fallback_selector': '//*[@id="old"]',
+        })
+        editor.show()
+        self.app.processEvents()
+
+        self.assertEqual(len(editor.multi_path_inputs), 4)
+        self.assertFalse(editor.fallback_selector_type.isVisibleTo(editor))
+        self.assertFalse(editor.fallback_selector.isVisibleTo(editor))
+        self.assertFalse(editor.findChild(QLabel, 'fallbackTypeLabel').isVisibleTo(editor))
+        self.assertFalse(editor.findChild(QLabel, 'fallbackSelectorLabel').isVisibleTo(editor))
+        title = editor.findChild(QLabel, 'multiPathTitle')
+        self.assertTrue(title.isVisibleTo(editor))
+        self.assertEqual(title.text(), '多段パス（4段）')
+        self.assertLess(
+            title.mapTo(editor, QPoint()).x(),
+            editor.multi_path_inputs[0].mapTo(editor, QPoint()).x(),
+        )
+        buttons = editor.multi_path_host.findChildren(QPushButton)
+        self.assertEqual(len(buttons), 4)
+        self.assertTrue(all(button.property('dataReferenceButton') for button in buttons))
+        row_labels = [
+            label.text() for label in editor.multi_path_host.findChildren(QLabel)
+        ]
+        self.assertIn('1. 範囲 · 文字を含む', row_labels)
+        self.assertIn('4. 対象 · id と等しい', row_labels)
+        self.assertLessEqual(
+            abs(
+                editor.multi_path_inputs[0].mapTo(editor, QPoint()).x()
+                - editor.selector_type.mapTo(editor, QPoint()).x()
+            ),
+            2,
+        )
+        self.assertLessEqual(
+            editor.multi_path_inputs[-1].mapTo(editor, QPoint()).y()
+            + editor.multi_path_inputs[-1].height(),
+            editor.findChild(QFrame, 'locatorCard').mapTo(editor, QPoint()).y()
+            + editor.findChild(QFrame, 'locatorCard').height(),
+        )
+        editor.multi_path_inputs[0].setText('${data:contract_name}')
+        result = editor.result_data()
+        saved = json.loads(result['selector'])
+        self.assertEqual(saved['steps'][0]['value'], '${data:contract_name}')
+        self.assertEqual(result['fallback_selector_type'], 'none')
+        self.assertEqual(result['fallback_selector'], '')
+        editor.close()
+
+    def test_multi_path_parameter_dialog_keeps_numbers_and_migrates_old_reference(self) -> None:
+        dialog = MultiPathParameterDialog(
+            self.window, {
+                '1': {
+                    'source': 'fixed',
+                    'value': '@template.仮想商材3.オプション.カテゴリ.非常に長い設定値',
+                    'empty_action': 'error',
+                    'max_length': 120,
+                },
+                '3': {'source': 'variable', 'value': 'customer', 'empty_action': 'error', 'max_length': 120},
+            }, {'type': 'object', 'children': []},
+        )
+        self.assertEqual(
+            dialog.table.horizontalScrollBarPolicy(),
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOn,
+        )
+        self.assertEqual(
+            dialog.table.horizontalHeader().sectionResizeMode(2),
+            QHeaderView.ResizeMode.Interactive,
+        )
+        self.assertEqual(dialog.table.horizontalHeader().maximumSectionSize(), 320)
+        self.assertTrue(dialog.findChild(QFrame, 'parameterCard').property('card'))
+        self.assertTrue(dialog.findChild(QFrame, 'detailCard').property('card'))
+        self.assertEqual((dialog.width(), dialog.height()), (860, 480))
+        action_layout = dialog.findChild(QHBoxLayout, 'actionLayout')
+        self.assertEqual(
+            action_layout.indexOf(dialog.findChild(QPushButton, 'addButton')), 0,
+        )
+        self.assertEqual(action_layout.indexOf(dialog.findChild(QPushButton, 'deleteButton')), 1)
+        self.assertEqual(dialog.findChild(QFrame, 'parameterCard').minimumWidth(), 420)
+        dialog.show()
+        self.app.processEvents()
+        self.assertFalse(dialog.table.verticalHeader().isVisible())
+        self.assertEqual(dialog.table.textElideMode(), Qt.TextElideMode.ElideNone)
+        self.assertGreater(
+            sum(dialog.table.columnWidth(column) for column in range(3)),
+            dialog.table.viewport().width(),
+        )
+        dialog.table.setColumnWidth(2, 999)
+        self.assertEqual(dialog.table.columnWidth(2), 320)
+        dialog.table.selectRow(0)
+        dialog._delete()
+        dialog._add()
+        self.assertEqual(set(dialog.parameters), {'1', '3'})
+        self.assertEqual(dialog.parameters['3']['value'], 'customer')
+        dialog.close()
+
+        path_data = {
+            'steps': [
+                {'kind': 'scope', 'value': '${data:customer.name}'},
+                {'kind': 'target', 'value': '${data:customer.name}'},
+            ],
+            'resolved': {'selector_type': 'xpath', 'selector': '__WFM_STEP_1__'},
+        }
+        editor = EventEditorDialog(self.window.pages['design'], {
+            'name': 'migration', 'action': 'click', 'selector_type': 'path',
+            'selector': json.dumps(path_data),
+        })
+        editor.show()
+        self.app.processEvents()
+        migrated = json.loads(editor.selector.text())
+        self.assertEqual([step['value'] for step in migrated['steps']], ['$1', '$1'])
+        self.assertEqual(migrated['parameters']['1']['value'], 'customer.name')
+        self.assertIsNone(editor.findChild(QPushButton, 'multiPathParameterButton'))
+        editor.close()
+
+    def test_normal_selectors_share_event_parameters(self) -> None:
+        parameters = {
+            '1': {'source': 'fixed', 'value': 'customer', 'empty_action': 'error', 'max_length': 120},
+        }
+        editor = EventEditorDialog(self.window.pages['design'], {
+            'name': 'normal parameters', 'action': 'click', 'selector_type': 'css',
+            'selector': '#$1', 'fallback_selector_type': 'xpath',
+            'fallback_selector': "//*[@data-id='$1']",
+            'selector_parameters_json': json.dumps(parameters),
+        })
+        self.assertEqual(editor._selector_parameters, parameters)
+        self.assertTrue(editor.selector_reference_button.isEnabled())
+        self.assertTrue(editor.fallback_reference_button.isEnabled())
+        result = editor.result_data()
+        self.assertEqual(json.loads(result['selector_parameters_json']), parameters)
+        editor.close()
+
+    def test_try_event_uses_first_enabled_pcl_for_data_parameter(self) -> None:
+        self.db.add_data_record(0, 'disabled', {'customer': {'id': 'old'}})
+        disabled = self.db.list_data_records()[0]
+        self.db.set_data_record_enabled(disabled['id'], False)
+        self.db.add_data_record(0, 'first enabled', {'customer': {'id': 'A-01'}})
+        parameters = {
+            '1': {'source': 'data', 'value': 'customer.id', 'empty_action': 'error', 'max_length': 120},
+        }
+        editor = EventEditorDialog(self.window.pages['design'], {
+            'name': 'PCL preview', 'action': 'click', 'selector_type': 'css',
+            'selector': '#order-$1', 'fallback_selector_type': 'none',
+            'selector_parameters_json': json.dumps(parameters),
+        })
+        with (
+            patch.object(
+                editor, '_run_debug',
+                side_effect=lambda _status, task, _success, log_queue=None: task(),
+            ),
+            patch.object(self.window.pages['design'].debug_browser, 'execute_event') as execute,
+        ):
+            editor.try_event()
+
+        self.assertEqual(execute.call_args.kwargs['root_data']['customer']['id'], 'A-01')
+        editor.close()
+
+    def test_try_event_rejects_data_parameter_without_enabled_pcl(self) -> None:
+        parameters = {
+            '1': {'source': 'data', 'value': 'customer.id', 'empty_action': 'error', 'max_length': 120},
+        }
+        editor = EventEditorDialog(self.window.pages['design'], {
+            'name': 'PCL missing', 'action': 'click', 'selector_type': 'css',
+            'selector': '#order-$1', 'fallback_selector_type': 'none',
+            'selector_parameters_json': json.dumps(parameters),
+        })
+        with (
+            patch('qt_ui.pages.flow_design.show_warning') as warning,
+            patch.object(self.window.pages['design'].debug_browser, 'execute_event') as execute,
+        ):
+            editor.try_event()
+
+        warning.assert_called_once()
+        execute.assert_not_called()
+        editor.close()
+
+    def test_saved_path_parameters_are_restored_for_summary_menu(self) -> None:
+        workflow_id = self.db.add_workflow('parameter reopen')
+        path_data = {
+            'steps': [{'kind': 'target', 'value': 'target-$1'}],
+            'parameters': {},
+            'resolved': {'selector_type': 'xpath', 'selector': "//*[@id=__WFM_STEP_0__]"},
+        }
+        base = {
+            'name': 'reopen', 'action': 'click', 'selector_type': 'path',
+            'selector': json.dumps(path_data), 'fallback_selector_type': 'none',
+            'fallback_selector': '', 'value': '', 'timeout_ms': 1000,
+            'enabled': 1, 'continue_on_error': 0,
+        }
+        event_id = self.db.add_event(workflow_id, base)
+        first = EventEditorDialog(
+            self.window.pages['design'],
+            dict(self.db.list_events(workflow_id)[0]),
+        )
+        first._selector_parameters = {
+            '1': {'source': 'fixed', 'value': 'A', 'empty_action': 'error', 'max_length': 120},
+        }
+        first._multi_path_data['parameters'] = first._selector_parameters
+        first._sync_multi_path_values()
+        self.db.update_event(event_id, first.result_data())
+        first.close()
+
+        reopened = EventEditorDialog(
+            self.window.pages['design'],
+            dict(self.db.list_events(workflow_id)[0]),
+        )
+        self.assertEqual(reopened._selector_parameters['1']['value'], 'A')
+        self.assertEqual(
+            json.loads(dict(self.db.list_events(workflow_id)[0])['selector_parameters_json'])['1']['value'],
+            'A',
+        )
+        reopened.close()
+
+    def test_parameter_summary_menu_limits_size_and_keeps_full_tooltips(self) -> None:
+        editor = EventEditorDialog(self.window.pages['design'], {
+            'name': 'summary menu', 'action': 'click',
+            'selector_type': 'css', 'selector': '#target',
+        })
+        long_path = '@template.仮想商材2.' + '.'.join(
+            f'非常に長い階層{index}' for index in range(20)
+        ) + '.オプション.カテゴリ'
+        editor._selector_parameters = {
+            str(number): {
+                'source': 'data', 'value': long_path,
+                'empty_action': 'error', 'max_length': 500,
+            }
+            for number in range(1, 100)
+        }
+
+        menu, settings_action = editor._build_parameter_summary_menu()
+        parameter_list = menu._parameter_list
+        first = parameter_list.item(0)
+        self.assertEqual(menu.maximumWidth(), 560)
+        self.assertLessEqual(parameter_list.height(), 362)
+        self.assertEqual(parameter_list.count(), 99)
+        self.assertEqual(
+            parameter_list.verticalScrollBarPolicy(),
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded,
+        )
+        menu.show()
+        self.app.processEvents()
+        self.assertGreater(parameter_list.verticalScrollBar().maximum(), 0)
+        self.assertTrue(parameter_list.verticalScrollBar().isVisible())
+        self.assertTrue(first.text().startswith('$1  データ構造  |  '))
+        self.assertIn('…', first.text())
+        self.assertEqual(first.toolTip(), f'$1  データ構造  |  {long_path}')
+        self.assertEqual(settings_action.text(), 'イベントパラメーター設定')
+        self.assertIs(menu.actions()[-1], settings_action)
+        parameter_list.itemClicked.emit(first)
+        self.assertEqual(menu._selected_parameter_number, '1')
+        editor.close()
 
 
 if __name__ == '__main__':

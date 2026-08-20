@@ -15,13 +15,13 @@ from PySide6.QtWidgets import (
 from core.database import Database
 from core.data_templates import (
     migrate_legacy_template_data, normalize_template_schema, schema_templates,
-    sync_template_instance_names, validate_unique_template_names,
+    sync_template_instances_to_schema, validate_unique_template_names,
 )
 from i18n import tr
 from ..table_view import (
     HierarchicalReorderTreeWidget, bind_delete_key, bind_structured_copy_paste,
     bulk_view_update, configure_row_move_tooltips, configure_table_view,
-    set_tree_expanded, unique_copy_name,
+    selected_outer_items, set_tree_expanded, unique_copy_name,
 )
 from ..ui_loader import (
     confirm_deletion, confirm_import_overwrite, confirm_pending_changes, load_ui_into, localize_dialog_buttons, require,
@@ -149,6 +149,7 @@ class SchemaPage(QWidget):
         self.db = db
         self.schema: dict[str, Any] = {}
         self._schema_expanded_by_structure: dict[str, set[int]] = {}
+        self._structure_templates_expanded: bool | None = None
         load_ui_into(self, 'schema.ui')
         manager_placeholder = require(self, QTreeWidget, 'structureManagerTree')
         manager_layout = manager_placeholder.parentWidget().layout()
@@ -194,6 +195,11 @@ class SchemaPage(QWidget):
             tr('削除'), self.delete_template_definition,
         )
         template_button.setMenu(template_menu)
+        move_template_up = require(self, QPushButton, 'moveTemplateUpButton')
+        move_template_down = require(self, QPushButton, 'moveTemplateDownButton')
+        move_template_up.clicked.connect(lambda: self.structure_manager.moveSelected(-1))
+        move_template_down.clicked.connect(lambda: self.structure_manager.moveSelected(1))
+        configure_row_move_tooltips(move_template_up, move_template_down, 'テンプレート')
         splitter = require(self, QSplitter, 'schemaSplitter')
         splitter.setHandleWidth(8)
         splitter.setStretchFactor(0, 0)
@@ -217,12 +223,6 @@ class SchemaPage(QWidget):
         self.tree.setDefaultDropAction(Qt.DropAction.CopyAction)
         self.tree.setContainerTest(
             lambda item: str((item.data(0, Qt.ItemDataRole.UserRole) or {}).get('type', '')) in ('object', 'list')
-        )
-        self.tree.setMoveTest(
-            lambda source, parent: all(
-                parent.child(index) is source or parent.child(index).text(0) != source.text(0)
-                for index in range(parent.childCount())
-            )
         )
         for column, width in enumerate((220, 110, 340, 110)):
             self.tree.setColumnWidth(column, width)
@@ -271,7 +271,7 @@ class SchemaPage(QWidget):
             margins = card.layout().contentsMargins()
             card.setMinimumWidth(max(
                 card.minimumWidth(), toolbar.sizeHint().width()
-                + margins.left() + margins.right(),
+                + margins.left() + margins.right() + 16,
             ))
         splitter.setSizes([
             require(self, QFrame, 'structureManagerHost').minimumWidth(),
@@ -293,6 +293,9 @@ class SchemaPage(QWidget):
     def _render_structure_manager(self, selected_template_id: str | None = None) -> None:
         """共通構造とテンプレート定義を左側の管理ツリーへ表示する。"""
         current = self.structure_manager.currentItem()
+        old_templates_root = self.structure_manager.topLevelItem(1)
+        if old_templates_root is not None:
+            self._structure_templates_expanded = old_templates_root.isExpanded()
         if current is not None and hasattr(self, 'tree'):
             self._capture_schema_expansion(self._structure_key(current))
         if selected_template_id is None and current is not None:
@@ -328,7 +331,8 @@ class SchemaPage(QWidget):
             templates_root.addChild(item)
             if template_id == selected_template_id:
                 selected = item
-        templates_root.setExpanded(True)
+        # 初回は折りたたみ、再構築後は利用者が最後に選んだ状態へ戻す。
+        templates_root.setExpanded(bool(self._structure_templates_expanded))
         self.structure_manager.setCurrentItem(selected)
         self.structure_manager.blockSignals(previous_blocked)
         self._select_structure(selected, None)
@@ -519,6 +523,7 @@ class SchemaPage(QWidget):
     def render(
             self, selected_index_path: tuple[int, ...] | None = None,
             *, capture_current: bool = True,
+            selected_node_keys: set[int] | None = None,
     ) -> None:
         # Qt の UserRole に格納した dict は QVariant 変換時に複製される場合があるため、
         # 選択位置の特定には schema 内の安定したインデックス経路だけを使用する。
@@ -533,6 +538,7 @@ class SchemaPage(QWidget):
         expanded_keys = self._schema_expanded_by_structure.get(structure_key)
         roots: list[QTreeWidgetItem] = []
         selected_item: QTreeWidgetItem | None = None
+        selected_items: list[QTreeWidgetItem] = []
 
         def add(
             parent: QTreeWidgetItem | list[QTreeWidgetItem],
@@ -562,6 +568,8 @@ class SchemaPage(QWidget):
             parent.addChild(item) if isinstance(parent, QTreeWidgetItem) else parent.append(item)
             if index_path == selected_index_path:
                 selected_item = item
+            if selected_node_keys and id(node) in selected_node_keys:
+                selected_items.append(item)
             for child_index, child in enumerate(node.get('children', [])):
                 child_path = f'{path}.{child["name"]}' if path else child['name']
                 add(item, child, child_path, (*index_path, child_index))
@@ -578,9 +586,11 @@ class SchemaPage(QWidget):
                 for item in self._all_items():
                     item.setExpanded(item.data(0, SCHEMA_NODE_KEY_ROLE) in expanded_keys)
             elif active_root is not None:
-                self.tree.expandAll()
+                self.tree.collapseAll()
             if selected_item is not None:
                 self.tree.setCurrentItem(selected_item)
+            for item in selected_items:
+                item.setSelected(True)
             # setCurrentItem() による自動スクロールを打ち消し、操作前の表示位置を維持する。
             self.tree.verticalScrollBar().setValue(vertical_value)
             self.tree.horizontalScrollBar().setValue(horizontal_value)
@@ -677,8 +687,16 @@ class SchemaPage(QWidget):
             return
         self._schema_reorder_pending = False
         current_item = self.tree.currentItem()
+        selected_node_keys = {
+            int(item.data(0, SCHEMA_NODE_KEY_ROLE))
+            for item in self.tree.selectedItems()
+        }
         selected_key = self._reorder_selected_key
         self._reorder_selected_key = None
+        if selected_key is not None and selected_key not in selected_node_keys:
+            # Qt の単一行ドラッグ中に currentItem が移動先へ切り替わった場合は、
+            # 移動開始時に記録した行だけを選択対象として扱う。
+            selected_node_keys = {int(selected_key)}
         selected_index_path: tuple[int, ...] | None = None
 
         # UserRole の辞書は Qt 側で複製され得るため、安定キーから schema 本体を引き直す。
@@ -717,7 +735,9 @@ class SchemaPage(QWidget):
             return result
 
         active_root['children'] = collect(self.tree)
-        self.render(selected_index_path)
+        self.render(
+            selected_index_path, selected_node_keys=selected_node_keys,
+        )
 
     def selected(self) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
         item = self.tree.currentItem() if self.tree.selectedItems() else None
@@ -726,17 +746,24 @@ class SchemaPage(QWidget):
         location = self._schema_location(self._item_index_path(item))
         return (location[0], location[1]) if location else None
 
-    def _copy_field_payload(self) -> dict[str, Any] | None:
-        """選択フィールドと配下構造をまとめてコピーする。"""
+    def _copy_field_payload(self) -> list[dict[str, Any]] | None:
+        """選択フィールドを表示順で、配下構造ごとコピーする。"""
         if self._schema_reorder_pending:
             self._apply_schema_tree_order()
-        selected = self.selected()
-        return selected[0] if selected else None
+        payload: list[dict[str, Any]] = []
+        for item in selected_outer_items(self.tree):
+            location = self._schema_location(self._item_index_path(item))
+            if location is not None:
+                payload.append(location[0])
+        return payload or None
 
-    def _paste_field_payload(self, source: dict[str, Any]) -> None:
-        """選択行と同じ階層の直後へ貼り付ける。"""
+    def _paste_field_payload(self, source: dict[str, Any] | list[dict[str, Any]]) -> None:
+        """選択行と同じ階層の直後へ、コピー順を保って貼り付ける。"""
         active_root = self._active_root()
         if active_root is None:
+            return
+        sources = source if isinstance(source, list) else [source]
+        if not sources:
             return
         if self._schema_reorder_pending:
             self._apply_schema_tree_order()
@@ -751,11 +778,14 @@ class SchemaPage(QWidget):
             _selected_node, siblings, selected_index = location
             insert_at = selected_index + 1
             selected_path = (*index_path[:-1], insert_at)
-        node = copy.deepcopy(source)
-        node['name'] = unique_copy_name(
-            str(node['name']), (sibling['name'] for sibling in siblings),
-        )
-        siblings.insert(insert_at, node)
+        # 追加するたびに現在の兄弟名を参照し、複数貼付け内の名称衝突も回避する。
+        for offset, source_node in enumerate(sources):
+            node = copy.deepcopy(source_node)
+            node['name'] = unique_copy_name(
+                str(node['name']), (sibling['name'] for sibling in siblings),
+            )
+            siblings.insert(insert_at + offset, node)
+        selected_path = (*selected_path[:-1], insert_at + len(sources) - 1)
         self.render(selected_path)
 
     def _ask_field(self, node: dict[str, Any] | None = None) -> dict[str, Any] | None:
@@ -847,7 +877,7 @@ class SchemaPage(QWidget):
         if item is None:
             return
         self._reorder_selected_key = item.data(0, SCHEMA_NODE_KEY_ROLE)
-        if self.tree.moveCurrent(direction) and self._schema_reorder_pending:
+        if self.tree.moveSelected(direction) and self._schema_reorder_pending:
             # ボタン操作は直後の処理からも新順序を参照できるよう、その場で同期を完了する。
             self._apply_schema_tree_order()
 
@@ -860,17 +890,19 @@ class SchemaPage(QWidget):
                 validate_schema(template, f'{tr("テンプレート")}.{name}')
             old_schema = self.db.get_data_schema()
             self.db.save_data_schema(0, self.schema)
-            # 名称パスで実行できるよう、既存の全実体にも定義名を同期する。
+            has_legacy_template = any(
+                node.get('data_template', False) for node in _walk_schema_nodes(old_schema)
+            )
+            # 旧形式の移行後に最新定義を適用し、PCL ごとの DB 更新を1回に抑える。
             for record in self.db.list_data_records():
-                data = record.get('data', {})
-                if sync_template_instance_names(data, self.schema):
+                original = record.get('data', {})
+                data = (
+                    migrate_legacy_template_data(old_schema, original)
+                    if has_legacy_template else copy.deepcopy(original)
+                )
+                sync_template_instances_to_schema(data, self.schema)
+                if data != original:
                     self.db.update_data_record(record['id'], record['name'], data)
-            # 旧追加テンプレートを初めて保存する場合だけ、既存 PCL の値も同時に移行する。
-            if any(node.get('data_template', False) for node in _walk_schema_nodes(old_schema)):
-                for record in self.db.list_data_records():
-                    migrated = migrate_legacy_template_data(old_schema, record.get('data', {}))
-                    if migrated != record.get('data', {}):
-                        self.db.update_data_record(record['id'], record['name'], migrated)
         except ValueError as error:
             show_warning(self, '保存', str(error))
             return False

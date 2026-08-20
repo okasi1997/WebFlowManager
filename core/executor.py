@@ -12,7 +12,7 @@ from typing import Any, Callable
 from PySide6.QtCore import QRectF
 from PySide6.QtGui import QColor, QImage, QPainter
 from browser.page_runtime import active_page, browser_args, browser_context_options, close_browser_context, is_topmost, launch_persistent_chrome, open_pages, page_frames, restore_storage_state, settle_new_page
-from browser.locators import build_locator, locators_across_frames
+from browser.locators import build_locator, locators_across_frames, selector_preview
 from browser.profile_runtime import acquire_profile_lease, persistent_profile_dir, profile_lock_error
 from core.conditions import decode_guard, evaluate_guard
 from core.data_templates import iter_template_instances
@@ -24,6 +24,23 @@ SALESFORCE_SPINNER_SELECTOR = '.slds-spinner, lightning-spinner'
 SPINNER_TRIGGER_ACTIONS = {'click', 'select', 'goto', 'upload_file'}
 DEFAULT_ACTION_STABLE_MS = 250
 CLICK_STABLE_POLL_MS = 50
+
+# 利用者が入力しやすい Java 風表記と、従来画面で使われている小文字表記を受け付ける。
+# 月と分の曖昧さを避けるため、任意書式ではなく用途の明確な定型だけを提供する。
+RUNTIME_DATETIME_FORMATS = {
+    'yyyymmdd_hhmmss': '%Y%m%d_%H%M%S',
+    'yyyymmdd_hhmm': '%Y%m%d_%H%M',
+    'yyyymmdd': '%Y%m%d',
+    'yyyy-mm-dd_hh:mm:ss': '%Y-%m-%d_%H:%M:%S',
+    'yyyy-mm-dd_hh:mm': '%Y-%m-%d_%H:%M',
+    'yyyy-mm-dd': '%Y-%m-%d',
+}
+
+
+def _runtime_datetime_value(name: str) -> str | None:
+    """対応する日時書式名なら、実行時のローカル日時を文字列化する。"""
+    format_text = RUNTIME_DATETIME_FORMATS.get(name.strip().lower())
+    return datetime.now().strftime(format_text) if format_text else None
 
 
 class ExecutionStopped(RuntimeError):
@@ -37,22 +54,179 @@ def find_variables(events: list[dict[str, Any]]) -> list[str]:
     names: set[str] = set()
     produced: set[str] = set()
     for event in events:
+        short_references = set(re.findall(
+            r'(?<!\$)\$(\d{1,2})(?!\d)',
+            ' '.join(str(event.get(field, '')) for field in (
+                'selector', 'fallback_selector', 'value', 'failure_target',
+            )),
+        ))
         if event.get('action') == 'get_text':
             variable_name = str(event.get('value', '')).strip()
             if re.fullmatch('[A-Za-z_][A-Za-z0-9_]*', variable_name):
                 produced.add(variable_name)
         for field in ('selector', 'value'):
             names.update(VARIABLE_PATTERN.findall(str(event.get(field, ''))))
-    return sorted(names - produced)
+        if event.get('selector_type') == 'path':
+            try:
+                path_data = json.loads(str(event.get('selector', '')))
+                parameters = path_data.get('parameters', {}) if isinstance(path_data, dict) else {}
+                names.update(
+                    str(parameter.get('value', '')).strip()
+                    for number, parameter in parameters.items()
+                    if str(number) in short_references
+                    and isinstance(parameter, dict)
+                    and parameter.get('source') == 'variable'
+                    and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', str(parameter.get('value', '')).strip())
+                )
+            except (TypeError, ValueError):
+                # 不正なパス JSON は実行時の通常検証に任せる。
+                pass
+        try:
+            event_parameters = json.loads(str(event.get('selector_parameters_json', '') or '{}'))
+            names.update(
+                str(parameter.get('value', '')).strip()
+                for number, parameter in event_parameters.items()
+                if str(number) in short_references
+                and isinstance(parameter, dict)
+                and parameter.get('source') == 'variable'
+                and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', str(parameter.get('value', '')).strip())
+            )
+        except (TypeError, ValueError):
+            pass
+    return sorted(
+        name for name in names - produced
+        if name.strip().lower() not in RUNTIME_DATETIME_FORMATS
+    )
 
 def substitute(text: str, variables: dict[str, str]) -> str:
 
     def replace(match: re.Match[str]) -> str:
         name = match.group(1)
-        if name not in variables:
+        if name in variables:
+            return variables[name]
+        resolved_datetime = _runtime_datetime_value(name)
+        if resolved_datetime is None:
             raise ValueError(f'Variable has no value: {name}')
-        return variables[name]
+        return resolved_datetime
     return VARIABLE_PATTERN.sub(replace, text)
+
+
+def substitute_path_step_values(text: str, replace: Callable[[str], str]) -> str:
+    """多段パス JSON を壊さず、利用者が編集できる各段の値だけを置換する。"""
+    data = json.loads(text)
+    if not isinstance(data, dict) or not isinstance(data.get('steps'), list):
+        raise ValueError('Invalid multi-step path')
+    for step in data['steps']:
+        if isinstance(step, dict):
+            step['value'] = replace(str(step.get('value', '')))
+    return json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+
+
+def _resolve_short_parameters(
+        parameters: Any, variables: dict[str, str], used_numbers: set[str] | None = None,
+) -> dict[str, str]:
+    """$n 定義を解決し、通常検出と多段パスで共用する。"""
+    resolved_parameters: dict[str, str] = {}
+    for number, parameter in parameters.items() if isinstance(parameters, dict) else ():
+        if used_numbers is not None and str(number) not in used_numbers:
+            continue
+        if not isinstance(parameter, dict):
+            continue
+        source = str(parameter.get('source', 'fixed'))
+        if source == 'variable':
+            name = str(parameter.get('value', '')).strip()
+            if name in variables:
+                # 同名の実行変数がある場合は、日時書式より利用者の値を優先する。
+                resolved = str(variables[name])
+            else:
+                resolved_datetime = _runtime_datetime_value(name)
+                if resolved_datetime is None:
+                    raise ValueError(f'Variable has no value: {name}')
+                resolved = resolved_datetime
+        elif source == 'fixed':
+            resolved = str(parameter.get('value', ''))
+        else:
+            if 'resolved_value' not in parameter:
+                raise ValueError(f'Data parameter has no value: ${number}')
+            resolved = str(parameter['resolved_value'])
+        if not resolved and str(parameter.get('empty_action', 'error')) == 'error':
+            raise ValueError(f'Multi-path parameter is empty: ${number}')
+        maximum = int(parameter.get('max_length', 120))
+        if maximum > 0 and len(resolved) > maximum:
+            raise ValueError(f'Multi-path parameter is too long: ${number}')
+        resolved_parameters[str(number)] = resolved
+    return resolved_parameters
+
+
+def _expand_short_parameters(text: str, parameters: dict[str, str]) -> str:
+    """$$ をリテラルとして保護しながら $1〜$99 を置換する。"""
+    escaped = '\0WFM_DOLLAR\0'
+    text = text.replace('$$', escaped)
+
+    def replace(match: re.Match[str]) -> str:
+        number = match.group(1)
+        if number not in parameters:
+            raise ValueError(f'Undefined selector parameter: ${number}')
+        return parameters[number]
+
+    return re.sub(r'\$(\d{1,2})(?!\d)', replace, text).replace(escaped, '$')
+
+
+def substitute_event_selector_value(
+        event: dict[str, Any], field: str, variables: dict[str, str],
+) -> str:
+    """主検出・予備検出の変数と短縮パラメーターを共通解決する。"""
+    selector = str(event.get(field, ''))
+    if field == 'selector' and str(event.get('selector_type', '')) == 'path':
+        data = json.loads(substitute_path_step_values(
+            selector, lambda value: substitute(value, variables)
+        ))
+        parameters = data.get('parameters', {}) if isinstance(data, dict) else {}
+        used_numbers = set(re.findall(
+            r'(?<!\$)\$(\d{1,2})(?!\d)',
+            ' '.join(
+                str(step.get('value', ''))
+                for step in data.get('steps', []) if isinstance(step, dict)
+            ),
+        ))
+        for number, resolved in _resolve_short_parameters(
+                parameters, variables, used_numbers,
+        ).items():
+            parameters[number]['resolved_value'] = resolved
+        return json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+    substituted = substitute(selector, variables)
+    try:
+        parameters = json.loads(str(event.get('selector_parameters_json', '') or '{}'))
+    except (TypeError, ValueError) as error:
+        raise ValueError('Invalid selector parameters') from error
+    return _expand_short_parameters(
+        substituted, _resolve_short_parameters(
+            parameters, variables,
+            set(re.findall(r'(?<!\$)\$(\d{1,2})(?!\d)', substituted)),
+        ),
+    )
+
+
+def substitute_event_selector(event: dict[str, Any], variables: dict[str, str]) -> str:
+    """主 selector の後方互換入口。"""
+    return substitute_event_selector_value(event, 'selector', variables)
+
+
+def substitute_event_parameter_value(
+        event: dict[str, Any], text: str, variables: dict[str, str],
+) -> str:
+    """検出欄以外のイベント入力にも同じ $n 定義を適用する。"""
+    substituted = substitute(text, variables)
+    try:
+        parameters = json.loads(str(event.get('selector_parameters_json', '') or '{}'))
+    except (TypeError, ValueError) as error:
+        raise ValueError('Invalid selector parameters') from error
+    return _expand_short_parameters(
+        substituted, _resolve_short_parameters(
+            parameters, variables,
+            set(re.findall(r'(?<!\$)\$(\d{1,2})(?!\d)', substituted)),
+        ),
+    )
 
 class WorkflowExecutor:
     """一つのブラウザーセッション内でフロー群を実行する。"""
@@ -393,14 +567,7 @@ class WorkflowExecutor:
                 remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
                 effective['timeout_ms'] = min(int(effective.get('timeout_ms', 10000)), remaining_ms)
             data_path = str(event.get('data_path', ''))
-            if data_path and event.get('action') != 'get_text':
-                effective['value'] = str(self._resolve_data(root_data, data_path, loop_context))
-            for field in ('selector', 'fallback_selector', 'value', 'failure_target'):
-                effective[field] = self._substitute_data_references(
-                    str(effective.get(field, '')),
-                    root_data,
-                    loop_context,
-                )
+            effective = self.prepare_event_data(effective, root_data, loop_context)
             prefix = self._event_log_prefix(log_prefix, event, loop_progress)
             self._active_event_prefix = prefix
             try:
@@ -468,7 +635,9 @@ class WorkflowExecutor:
                     self.logger(f'{prefix}{tr("execution.failure_refresh")}')
                     page.reload(wait_until='domcontentloaded')
                 elif failure_action == 'goto':
-                    target = substitute(str(effective.get('failure_target', '')), variables)
+                    target = substitute_event_parameter_value(
+                        effective, str(effective.get('failure_target', '')), variables,
+                    )
                     self.logger(f'{prefix}{tr("execution.failure_goto_prefix")}{target}')
                     page.goto(target, wait_until='domcontentloaded')
                 if not event.get('continue_on_error', 0):
@@ -514,8 +683,8 @@ class WorkflowExecutor:
         """実際に使用する操作パラメーターを簡潔なログ文字列として返す。"""
         action = str(event.get('action', ''))
         selector_type = str(event.get('selector_type', 'none'))
-        selector = substitute(str(event.get('selector', '')), variables)
-        value = substitute(str(event.get('value', '')), variables)
+        selector = substitute_event_selector(event, variables)
+        value = substitute_event_parameter_value(event, str(event.get('value', '')), variables)
 
         def clean(text: str) -> str:
             return ' '.join(text.splitlines())
@@ -611,7 +780,18 @@ class WorkflowExecutor:
             if matches:
                 return matches[0] if len(matches) == 1 else matches
 
-        # ループ外では従来どおり、同じテンプレートの全実体を一覧として返す。
+        # PCL 直下のテンプレートは常に単一 object として扱う。
+        top_level = [
+            instance.get('data', {})
+            for instance in root_data.get('_template_instances', [])
+            if isinstance(instance, dict) and template_key in {
+                str(instance.get('template_id', '')),
+                str(instance.get('template_name', '')).strip(),
+            }
+        ]
+        if top_level:
+            return top_level[0]
+        # list 内に追加された場合だけ、ループ用の一覧として返す。
         return cls._matching_template_data(root_data, template_key)
 
     @staticmethod
@@ -682,6 +862,93 @@ class WorkflowExecutor:
             return '' if value is None else str(value)
 
         return DATA_REFERENCE_PATTERN.sub(replace, text)
+
+    @classmethod
+    def prepare_event_data(
+        cls, event: dict[str, Any], root_data: dict[str, Any] | None,
+        loop_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """正式実行と単体テストで共通の PCL データ解決を行う。"""
+        prepared = dict(event)
+        context = loop_context or {}
+        data_path = str(prepared.get('data_path', ''))
+        if data_path and prepared.get('action') != 'get_text':
+            prepared['value'] = str(cls._resolve_data(root_data, data_path, context))
+        prepared['selector_parameters_json'] = cls._resolve_selector_data_parameters(
+            str(prepared.get('selector_parameters_json', '')), root_data, context,
+            set(re.findall(
+                r'(?<!\$)\$(\d{1,2})(?!\d)',
+                ' '.join(str(prepared.get(field, '')) for field in (
+                    'selector', 'fallback_selector', 'value', 'failure_target',
+                )),
+            )),
+        )
+        for field in ('selector', 'fallback_selector', 'value', 'failure_target'):
+            raw_value = str(prepared.get(field, ''))
+            if field == 'selector' and str(prepared.get('selector_type', '')) == 'path':
+                prepared[field] = cls._resolve_path_data_parameters(
+                    raw_value, root_data, context,
+                )
+            else:
+                prepared[field] = cls._substitute_data_references(
+                    raw_value, root_data, context,
+                )
+        return prepared
+
+    @classmethod
+    def _resolve_path_data_parameters(
+        cls, text: str, root_data: dict[str, Any] | None,
+        loop_context: dict[str, Any],
+    ) -> str:
+        """多段パスの data パラメーターを単一値として一度だけ解決する。"""
+        data = json.loads(substitute_path_step_values(
+            text,
+            lambda value: cls._substitute_data_references(value, root_data, loop_context),
+        ))
+        parameters = data.get('parameters', {}) if isinstance(data, dict) else {}
+        used_numbers = set(re.findall(
+            r'(?<!\$)\$(\d{1,2})(?!\d)',
+            ' '.join(
+                str(step.get('value', ''))
+                for step in data.get('steps', []) if isinstance(step, dict)
+            ),
+        ))
+        for number, parameter in parameters.items():
+            if (
+                str(number) not in used_numbers or not isinstance(parameter, dict)
+                or parameter.get('source') != 'data'
+            ):
+                continue
+            path = str(parameter.get('value', '')).strip()
+            value = cls._resolve_data(root_data, path, loop_context)
+            if isinstance(value, (dict, list)):
+                raise ValueError(f'Data reference must point to a scalar value: {path}')
+            parameter['resolved_value'] = '' if value is None else str(value)
+        return json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+
+    @classmethod
+    def _resolve_selector_data_parameters(
+        cls, text: str, root_data: dict[str, Any] | None,
+        loop_context: dict[str, Any], used_numbers: set[str] | None = None,
+    ) -> str:
+        """通常検出用パラメーターのデータ参照を1度だけ解決する。"""
+        if not text:
+            return ''
+        parameters = json.loads(text)
+        if not isinstance(parameters, dict):
+            raise ValueError('Invalid selector parameters')
+        for number, parameter in parameters.items():
+            if (
+                used_numbers is not None and str(number) not in used_numbers
+                or not isinstance(parameter, dict) or parameter.get('source') != 'data'
+            ):
+                continue
+            path = str(parameter.get('value', '')).strip()
+            value = cls._resolve_data(root_data, path, loop_context)
+            if isinstance(value, (dict, list)):
+                raise ValueError(f'Data reference must point to a scalar value: {path}')
+            parameter['resolved_value'] = '' if value is None else str(value)
+        return json.dumps(parameters, ensure_ascii=False, separators=(',', ':'))
 
     @classmethod
     def _assign_data(cls, root_data: dict[str, Any] | None, path: str, loop_context: dict[str, Any], value: Any) -> None:
@@ -1192,9 +1459,22 @@ class WorkflowExecutor:
     def _execute_event(self, page: Any, event: dict[str, Any], variables: dict[str, str], artifact_dir: Path) -> Any:
         page = active_page(page)
         action = event['action']
-        selector = substitute(str(event.get('selector', '')), variables)
-        fallback_selector = substitute(str(event.get('fallback_selector', '')), variables)
-        value = substitute(str(event.get('value', '')), variables)
+        selector = substitute_event_selector(event, variables)
+        fallback_selector = substitute_event_selector_value(
+            event, 'fallback_selector', variables,
+        )
+        if str(event.get('selector_type', 'none')) != 'none' and selector:
+            self.logger(
+                f'{tr("Resolved selector [")}{event.get("selector_type", "none")}]: '
+                f'{selector_preview(str(event.get("selector_type", "none")), selector)}'
+            )
+        fallback_type = str(event.get('fallback_selector_type', 'none'))
+        if fallback_type != 'none' and fallback_selector:
+            self.logger(
+                f'{tr("Resolved fallback selector [")}{fallback_type}]: '
+                f'{selector_preview(fallback_type, fallback_selector)}'
+            )
+        value = substitute_event_parameter_value(event, str(event.get('value', '')), variables)
         timeout = int(event.get('timeout_ms', 10000))
         page.set_default_timeout(timeout)
         lightweight_action = (

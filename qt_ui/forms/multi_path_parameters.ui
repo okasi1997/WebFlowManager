@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MultiPathParametersForm</class>
+ <widget class="QDialog" name="MultiPathParametersForm">
+  <property name="geometry"><rect><x>0</x><y>0</y><width>860</width><height>480</height></rect></property>
+  <property name="minimumSize"><size><width>860</width><height>480</height></size></property>
+  <property name="windowTitle"><string>多段パスパラメーター設定</string></property>
+  <layout class="QVBoxLayout" name="rootLayout">
+   <property name="leftMargin"><number>18</number></property>
+   <property name="topMargin"><number>16</number></property>
+   <property name="rightMargin"><number>18</number></property>
+   <property name="bottomMargin"><number>14</number></property>
+   <item>
+    <layout class="QHBoxLayout" name="contentLayout" stretch="11,10">
+     <property name="spacing"><number>14</number></property>
+     <item>
+      <widget class="QFrame" name="parameterCard">
+       <property name="card" stdset="0"><bool>true</bool></property>
+       <property name="minimumSize"><size><width>420</width><height>0</height></size></property>
+       <layout class="QVBoxLayout" name="parameterCardLayout">
+        <property name="leftMargin"><number>12</number></property>
+        <property name="topMargin"><number>12</number></property>
+        <property name="rightMargin"><number>12</number></property>
+        <property name="bottomMargin"><number>12</number></property>
+        <property name="spacing"><number>10</number></property>
+        <item>
+         <widget class="QTableWidget" name="parameterTable">
+          <property name="horizontalScrollBarPolicy"><enum>Qt::ScrollBarAlwaysOn</enum></property>
+          <property name="horizontalScrollMode"><enum>QAbstractItemView::ScrollPerPixel</enum></property>
+          <property name="selectionBehavior"><enum>QAbstractItemView::SelectRows</enum></property>
+          <property name="selectionMode"><enum>QAbstractItemView::SingleSelection</enum></property>
+          <property name="editTriggers"><set>QAbstractItemView::NoEditTriggers</set></property>
+          <attribute name="verticalHeaderVisible"><bool>false</bool></attribute>
+          <column><property name="text"><string>パラメーター</string></property></column>
+          <column><property name="text"><string>取得元</string></property></column>
+          <column><property name="text"><string>設定値</string></property></column>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QFrame" name="detailCard">
+       <property name="card" stdset="0"><bool>true</bool></property>
+       <property name="minimumSize"><size><width>380</width><height>0</height></size></property>
+       <layout class="QVBoxLayout" name="detailLayout">
+        <property name="leftMargin"><number>16</number></property>
+        <property name="topMargin"><number>14</number></property>
+        <property name="rightMargin"><number>16</number></property>
+        <property name="bottomMargin"><number>14</number></property>
+        <property name="spacing"><number>10</number></property>
+        <item><widget class="QLabel" name="detailTitle"><property name="text"><string>パラメーター詳細</string></property><property name="cardTitle" stdset="0"><bool>true</bool></property></widget></item>
+        <item>
+         <layout class="QFormLayout" name="detailForm">
+          <property name="fieldGrowthPolicy"><enum>QFormLayout::AllNonFixedFieldsGrow</enum></property>
+          <item row="0" column="0"><widget class="QLabel" name="numberLabel"><property name="text"><string>パラメーター</string></property></widget></item>
+          <item row="0" column="1"><widget class="QLineEdit" name="numberEdit"><property name="readOnly"><bool>true</bool></property></widget></item>
+          <item row="1" column="0"><widget class="QLabel" name="sourceLabel"><property name="text"><string>取得元</string></property></widget></item>
+          <item row="1" column="1"><widget class="QComboBox" name="sourceCombo"/></item>
+          <item row="2" column="0"><widget class="QLabel" name="valueLabel"><property name="text"><string>設定値</string></property></widget></item>
+          <item row="2" column="1">
+           <widget class="QWidget" name="valueHost" native="true">
+            <property name="formHost" stdset="0"><bool>true</bool></property>
+            <layout class="QHBoxLayout" name="valueLayout">
+             <property name="spacing"><number>8</number></property>
+             <property name="leftMargin"><number>0</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>0</number></property><property name="bottomMargin"><number>0</number></property>
+             <item><widget class="QLineEdit" name="valueEdit"/></item>
+             <item><widget class="QPushButton" name="dataButton"><property name="text"><string/></property><property name="toolTip"><string>データ構造から選択</string></property><property name="dataReferenceButton" stdset="0"><bool>true</bool></property></widget></item>
+            </layout>
+           </widget>
+          </item>
+          <item row="3" column="0"><widget class="QLabel" name="emptyLabel"><property name="text"><string>空値処理</string></property></widget></item>
+          <item row="3" column="1"><widget class="QComboBox" name="emptyCombo"/></item>
+          <item row="4" column="0"><widget class="QLabel" name="lengthLabel"><property name="text"><string>最大長</string></property></widget></item>
+          <item row="4" column="1"><widget class="QSpinBox" name="lengthSpin"><property name="minimum"><number>1</number></property><property name="maximum"><number>10000</number></property><property name="value"><number>120</number></property></widget></item>
+         </layout>
+        </item>
+        <item><spacer name="detailStretch"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint" stdset="0"><size><width>20</width><height>40</height></size></property></spacer></item>
+       </layout>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+   <layout class="QHBoxLayout" name="actionLayout">
+     <property name="spacing"><number>8</number></property>
+     <item><widget class="QPushButton" name="addButton"><property name="text"><string>追加</string></property></widget></item>
+     <item><widget class="QPushButton" name="deleteButton"><property name="text"><string>削除</string></property></widget></item>
+     <item><spacer name="actionStretch"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+     <item><widget class="QDialogButtonBox" name="buttonBox"><property name="standardButtons"><set>QDialogButtonBox::Cancel|QDialogButtonBox::Save</set></property></widget></item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
