@@ -299,13 +299,8 @@ class WorkflowExecutor:
                     try:
                         record = step.get('record')
                         root_data = record.get('data') if record else None
-                        workflow_guards = step.get('guards') or [step.get('guard')]
-                        resolver = lambda path: self._resolve_guard_data(root_data, path, {})
                         # 外側 Group、内側 Group、Flow 自身の条件をすべて満たした場合だけ実行する。
-                        if all(
-                            evaluate_guard(decode_guard(guard), resolver)
-                            for guard in workflow_guards
-                        ):
+                        if self._workflow_guards_pass(step, root_data):
                             def event_started(event, current=step):
                                 if stop_requested and stop_requested():
                                     raise ExecutionStopped()
@@ -880,6 +875,17 @@ class WorkflowExecutor:
             return cls._resolve_data(root_data, path, loop_context)
         except (KeyError, TypeError, ValueError):
             return None
+
+    def _workflow_guards_pass(
+        self, step: dict[str, Any], root_data: dict[str, Any] | None,
+    ) -> bool:
+        """Evaluate inherited group guards and the workflow's own guard."""
+        guards = step.get('guards') or [step.get('guard')]
+        resolver = lambda path: self._resolve_guard_data(root_data, path, {})
+        return all(
+            evaluate_guard(decode_guard(guard), resolver)
+            for guard in guards
+        )
 
     @classmethod
     def _substitute_data_references(

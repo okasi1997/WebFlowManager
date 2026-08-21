@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from core.conditions import evaluate_guard
 from core.executor import WorkflowExecutor
@@ -23,6 +24,33 @@ class DataReferenceTests(unittest.TestCase):
             'logic': 'all',
             'rules': [{'path': '@template.未設定', 'operator': 'not_exists', 'value': ''}],
         }, resolver))
+
+    def test_workflow_guard_check_includes_inherited_group_guards(self) -> None:
+        executor = WorkflowExecutor(Path('.'), lambda _message: None)
+        requires_template = {
+            'logic': 'all',
+            'rules': [{
+                'path': '@template.試算基本情報',
+                'operator': 'exists',
+                'value': '',
+            }],
+        }
+        step = {
+            # The legacy direct guard is empty, while the inherited group guard
+            # is carried in guards. Debug execution must not ignore it.
+            'guard': None,
+            'guards': [requires_template, None],
+        }
+        configured = {
+            '_template_instances': [{
+                'template_id': 'estimate-basic',
+                'template_name': '試算基本情報',
+                'data': {},
+            }],
+        }
+
+        self.assertTrue(executor._workflow_guards_pass(step, configured))
+        self.assertFalse(executor._workflow_guards_pass(step, {}))
 
     def test_replaces_multiple_scalar_references(self) -> None:
         data = {

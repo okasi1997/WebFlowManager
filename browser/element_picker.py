@@ -754,7 +754,6 @@ class DebugBrowserSession:
     ) -> None:
         self.cancel_selection()
         def task() -> None:
-            from core.conditions import evaluate_guard
             from core.executor import WorkflowExecutor
             _context, page = self._ensure_page(target_url)
             page = active_page(page)
@@ -782,7 +781,7 @@ class DebugBrowserSession:
             try:
                 for index, job in enumerate(jobs, 1):
                     root_data = job.get('data')
-                    if evaluate_guard(job.get('guard'), lambda path: executor._resolve_guard_data(root_data, path, {})):
+                    if executor._workflow_guards_pass(job, root_data):
                         log_step = {
                             'phase': job.get('phase', 'once'),
                             'session': job.get('session', 1),
