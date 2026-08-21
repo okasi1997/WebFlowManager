@@ -14,7 +14,7 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from PySide6.QtWidgets import (
     QApplication, QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHeaderView, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox,
-    QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QStyle, QTableWidget,
+    QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QSplitter, QStyle, QTableWidget,
     QTabWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import QEvent, QModelIndex, QPoint, QSize, QTimer, Qt
@@ -2895,6 +2895,11 @@ class QtShellTests(unittest.TestCase):
         self.app.processEvents()
 
         self.assertEqual(len(editor.multi_path_inputs), 4)
+        self.assertIsInstance(editor.multi_path_scroll, QScrollArea)
+        self.assertEqual(
+            editor.multi_path_scroll.verticalScrollBarPolicy(),
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded,
+        )
         self.assertFalse(editor.fallback_selector_type.isVisibleTo(editor))
         self.assertFalse(editor.fallback_selector.isVisibleTo(editor))
         self.assertFalse(editor.findChild(QLabel, 'fallbackTypeLabel').isVisibleTo(editor))
@@ -2956,6 +2961,8 @@ class QtShellTests(unittest.TestCase):
             QHeaderView.ResizeMode.Stretch,
         )
         self.assertFalse(dialog.table.wordWrap())
+        self.assertEqual(dialog.save_insert_button.text(), '保存して挿入')
+        self.assertFalse(dialog.insert_selected)
         self.assertTrue(dialog.findChild(QFrame, 'parameterCard').property('card'))
         self.assertTrue(dialog.findChild(QFrame, 'detailCard').property('card'))
         self.assertEqual((dialog.width(), dialog.height()), (860, 480))
@@ -2981,6 +2988,26 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(set(dialog.parameters), {'1', '3'})
         self.assertEqual(dialog.parameters['3']['value'], 'customer')
         dialog.close()
+
+        save_dialog = MultiPathParameterDialog(
+            self.window,
+            {'1': {'source': 'fixed', 'value': 'A', 'empty_action': 'error', 'max_length': 120}},
+            {'type': 'object', 'children': []},
+        )
+        save_dialog._accept_if_valid()
+        self.assertFalse(save_dialog.insert_selected)
+        save_dialog.close()
+
+        insert_dialog = MultiPathParameterDialog(
+            self.window,
+            {'1': {'source': 'fixed', 'value': 'A', 'empty_action': 'error', 'max_length': 120}},
+            {'type': 'object', 'children': []},
+        )
+        insert_dialog.table.selectRow(0)
+        insert_dialog._accept_if_valid(insert_selected=True)
+        self.assertTrue(insert_dialog.insert_selected)
+        self.assertEqual(insert_dialog.selected_number, '1')
+        insert_dialog.close()
 
         path_data = {
             'steps': [

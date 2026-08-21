@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QFormLayout, QFrame, QHBoxLayout, QInputDialog,
     QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu,
     QPlainTextEdit, QPushButton, QSpinBox,
-    QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QTreeWidget,
+    QScrollArea, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QTreeWidget,
     QTreeWidgetItem, QWidget, QWidgetAction,
 )
 
@@ -199,6 +199,13 @@ class MultiPathParameterDialog(QDialog):
         set_button_icon(self.data_button, 'data-reference', 18)
         buttons = require(self, QDialogButtonBox, 'buttonBox')
         localize_dialog_buttons(buttons)
+        self.insert_selected = False
+        self.save_insert_button = buttons.addButton(
+            tr('保存して挿入'), QDialogButtonBox.ButtonRole.ActionRole,
+        )
+        self.save_insert_button.clicked.connect(
+            lambda: self._accept_if_valid(insert_selected=True),
+        )
         buttons.accepted.connect(self._accept_if_valid)
         buttons.rejected.connect(self.reject)
         self._refresh()
@@ -249,6 +256,7 @@ class MultiPathParameterDialog(QDialog):
         number = self._selected_number()
         enabled = number is not None
         require(self, QFrame, 'detailCard').setEnabled(enabled)
+        self.save_insert_button.setEnabled(enabled)
         if not enabled:
             self.number.clear()
             return
@@ -313,12 +321,13 @@ class MultiPathParameterDialog(QDialog):
             del self.parameters[number]
             self._refresh()
 
-    def _accept_if_valid(self) -> None:
+    def _accept_if_valid(self, *, insert_selected: bool = False) -> None:
         self._save_current()
         for number, parameter in self.parameters.items():
             if not str(parameter.get('value', '')).strip() and parameter.get('source') != 'fixed':
                 show_warning(self, 'パラメーター設定', f'${number} の設定値を入力してください。')
                 return
+        self.insert_selected = insert_selected
         self.accept()
 
     @property
@@ -452,6 +461,7 @@ class EventEditorDialog(QDialog):
         self.multi_path_title_host = require(self, QWidget, 'multiPathTitleHost')
         self.multi_path_title = require(self, QLabel, 'multiPathTitle')
         self.multi_path_host = require(self, QWidget, 'multiPathHost')
+        self.multi_path_scroll = require(self, QScrollArea, 'multiPathHost')
         self.multi_path_form = require(self, QFormLayout, 'multiPathForm')
         self.fallback_type_host = require(self, QWidget, 'fallbackTypeHost')
         self.multi_path_inputs: list[QLineEdit] = []
@@ -618,6 +628,14 @@ class EventEditorDialog(QDialog):
             row = _inline_host((value, 1), button, spacing=8)
             self.multi_path_form.addRow(label, row)
             self.multi_path_inputs.append(value)
+        if steps:
+            row_height = max(34, self.multi_path_inputs[0].sizeHint().height())
+            visible_rows = min(4, len(steps))
+            self.multi_path_scroll.setFixedHeight(
+                visible_rows * row_height
+                + max(0, visible_rows - 1) * self.multi_path_form.verticalSpacing()
+                + 4
+            )
 
     def _sync_multi_path_values(self) -> None:
         """入力値を内部 JSON へ戻し、イベント保存と試行で同じ値を使用する。"""
@@ -660,7 +678,7 @@ class EventEditorDialog(QDialog):
         if isinstance(self._multi_path_data.get('steps'), list):
             self._multi_path_data['parameters'] = self._selector_parameters
             self._sync_multi_path_values()
-        if dialog.selected_number:
+        if dialog.insert_selected and dialog.selected_number:
             target.insert(f'${dialog.selected_number}')
             target.setFocus()
 

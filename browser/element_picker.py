@@ -576,7 +576,7 @@ class DebugBrowserSession:
             waiting_text = tr('スクロール領域を選択する画面を開き、F2 を押してください') if require_scroll else tr('待機中：F1 または F2 で選択モードに入り、対象をクリックします')
             active_text = (
                 tr('スクロール領域を選択してください（Enter で確定、Esc で省略）')
-                if require_scroll else tr(selection_hint or '選択中：対象をクリックしてください（Esc: 待機へ戻る）')
+                if require_scroll else tr(selection_hint or '選択中：対象をクリックしてください（Esc: キャンセル）')
             )
             script = picker_script(run_id, waiting_text, active_text)
             while True:

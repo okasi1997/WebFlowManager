@@ -659,7 +659,7 @@
                </widget>
               </item>
               <item row="3" column="0" colspan="2">
-               <widget class="QWidget" name="multiPathHost" native="true">
+               <widget class="QScrollArea" name="multiPathHost">
                 <property name="minimumSize">
                  <size>
                   <width>0</width>
@@ -669,7 +669,12 @@
                 <property name="formHost" stdset="0">
                  <bool>true</bool>
                 </property>
-                <layout class="QFormLayout" name="multiPathForm">
+                <property name="frameShape"><enum>QFrame::NoFrame</enum></property>
+                <property name="horizontalScrollBarPolicy"><enum>Qt::ScrollBarAlwaysOff</enum></property>
+                <property name="verticalScrollBarPolicy"><enum>Qt::ScrollBarAsNeeded</enum></property>
+                <property name="widgetResizable"><bool>true</bool></property>
+                <widget class="QWidget" name="multiPathContent">
+                 <layout class="QFormLayout" name="multiPathForm">
                  <property name="fieldGrowthPolicy">
                   <enum>QFormLayout::AllNonFixedFieldsGrow</enum>
                  </property>
@@ -694,7 +699,8 @@
                  <property name="bottomMargin">
                   <number>0</number>
                  </property>
-                </layout>
+                 </layout>
+                </widget>
                </widget>
               </item>
               <item row="4" column="0">

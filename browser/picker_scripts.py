@@ -670,6 +670,15 @@ _PICKER_SCRIPT = r"""
       ...lines,
     ].join('\n');
   };
+  const updateWaitingBanner = () => {
+    const lines = pathAnchors.map(
+      (element, index) => `${index + 1}. ${displayName(element)}`
+    );
+    banner.textContent = [
+      __WAITING_TEXT__,
+      ...(lines.length ? [`(${lines.length})`, ...lines] : []),
+    ].join('\n');
+  };
   const enterSelectionMode = (keyName) => {
     selecting = true;
     selectionKey = keyName;
@@ -685,7 +694,7 @@ _PICKER_SCRIPT = r"""
     if (hovered) hovered.classList.remove('__sf-flow-hover');
     highlight.hidden = true;
     elementInfo.hidden = true;
-    banner.textContent = __WAITING_TEXT__;
+    updateWaitingBanner();
   };
   const finish = (element) => {
     const result = elementResult(element);
@@ -706,10 +715,11 @@ _PICKER_SCRIPT = r"""
     clean();
   };
   const key = (event) => {
-    if (event.key === 'Escape' && selecting) {
+    if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      leaveSelectionMode();
+      window.__sfFlowPicked = {cancelled: true};
+      clean();
     } else if (event.key === 'F1') {
       event.preventDefault();
       event.stopPropagation();
@@ -718,11 +728,12 @@ _PICKER_SCRIPT = r"""
       event.preventDefault();
       event.stopPropagation();
       enterSelectionMode('F2');
-    } else if (event.key === 'Backspace' && selecting && pathAnchors.length) {
+    } else if (event.key === 'Backspace' && pathAnchors.length) {
       event.preventDefault();
       event.stopPropagation();
       pathAnchors.pop().classList.remove('__sf-flow-path-anchor');
-      updatePathBanner();
+      if (selecting) updatePathBanner();
+      else updateWaitingBanner();
     } else if (event.key === 'Enter' && selecting && hovered) {
       event.preventDefault();
       event.stopPropagation();
@@ -731,7 +742,7 @@ _PICKER_SCRIPT = r"""
   };
   // 画面を開いた直後からホバー要素を追跡し、F1/F2 を一回押すだけで選択する。
   // click は奪わないため、対象画面内の移動や展開操作は選択中も継続できる。
-  banner.textContent = __WAITING_TEXT__;
+  updateWaitingBanner();
   document.addEventListener('mouseover', over, true);
   document.addEventListener('click', choose, true);
   document.addEventListener('keydown', key, true);
