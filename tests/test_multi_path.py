@@ -84,6 +84,30 @@ class MultiPathLocatorTests(unittest.TestCase):
             '(//input[@name="price"])[last()]',
         )
 
+    def test_edited_occurrence_replaces_a_stale_picker_suffix(self) -> None:
+        context = MagicMock()
+        locator = context.locator.return_value
+        locator.count.return_value = 3
+        selector = {
+            'steps': [{'value': 'price'}],
+            # Legacy metadata may disagree with the suffix after an older edit.
+            'occurrence': {'position': 'last', 'index': 3, 'count': 3},
+            'occurrence_rule': '2',
+            'resolved': {
+                'selector_type': 'xpath',
+                'selector': '(//input[@name="price"])[1]',
+            },
+        }
+
+        build_locator(context, 'path', json.dumps(selector))
+
+        context.locator.assert_called_once_with('xpath=//input[@name="price"]')
+        locator.nth.assert_called_once_with(1)
+        self.assertEqual(
+            selector_preview('path', json.dumps(selector)),
+            '(//input[@name="price"])[2]',
+        )
+
     def test_build_locator_renders_edited_step_values(self) -> None:
         context = MagicMock()
         selector = json.dumps({

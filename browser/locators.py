@@ -74,10 +74,11 @@ def _base_occurrence_xpath(selector: str, occurrence: Any) -> str:
     """Remove the picker-era fixed suffix before applying an editable rule."""
     if not isinstance(occurrence, dict):
         return selector
-    position = str(occurrence.get('position', '')).lower()
-    expected = 'last()' if position == 'last' else str(occurrence.get('index', ''))
+    # `occurrence` is only stored when the picker itself appended the outer
+    # positional predicate.  The editable occurrence rule replaces that
+    # predicate, even if legacy metadata no longer agrees with its value.
     match = re.fullmatch(r'\((.*)\)\[([^\]]+)\]', selector, flags=re.DOTALL)
-    if match and match.group(2).strip().lower() == expected.lower():
+    if match:
         return match.group(1)
     return selector
 
