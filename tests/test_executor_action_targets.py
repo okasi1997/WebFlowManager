@@ -104,16 +104,19 @@ class ExecutorActionTargetTests(unittest.TestCase):
         }
         variables: dict[str, str] = {}
 
+        messages: list[str] = []
+        executor = WorkflowExecutor(Path(self.temporary_dir.name), messages.append)
         with (
             patch('core.executor.active_page', return_value=page),
-            patch.object(self.executor, '_fast_event_locator', return_value=locator),
+            patch.object(executor, '_fast_event_locator', return_value=locator),
         ):
-            captured = self.executor._execute_event(
+            captured = executor._execute_event(
                 page, event, variables, Path(self.temporary_dir.name),
             )
 
         self.assertEqual(captured, 'EST20260821000000605')
         self.assertEqual(variables['estimate_id'], captured)
+        self.assertIn(f'取得文字: {captured}', messages)
 
     def test_screenshot_locator_searches_only_the_saved_main_frame(self) -> None:
         """iframe パスが空なら、同じ selector を持つ iframe を検索対象に含めない。"""

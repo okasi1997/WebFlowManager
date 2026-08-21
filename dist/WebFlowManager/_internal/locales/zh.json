@@ -38,6 +38,7 @@
   "抽出正規表現": "提取正则表达式",
   "正規表現が無効です": "正则表达式无效",
   "正規表現に一致する文字がありません": "没有文字匹配正则表达式",
+  "取得文字: ": "取得文字：",
   "例: EST[^\\r\\n]*": "例：EST[^\\r\\n]*",
   "error.goto_url_invalid": "跳转 URL 必须以 http:// 或 https:// 开头。",
   "error.guard_format_invalid": "Guard Condition 格式不正确。",

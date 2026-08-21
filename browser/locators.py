@@ -151,6 +151,25 @@ def selector_preview(selector_type: str, selector: str) -> str:
     return selector
 
 
+def selector_console_preview(selector_type: str, selector: str) -> str:
+    """Format XPath diagnostics as a command that Chrome Console can execute."""
+    preview = selector_preview(selector_type, selector)
+    effective_type = selector_type
+    if selector_type == 'path':
+        try:
+            data = json.loads(selector)
+            rendered = _render_path_values(data) if isinstance(data, dict) else {}
+            resolved = rendered.get('resolved', {}) if isinstance(rendered, dict) else {}
+            effective_type = str(resolved.get('selector_type', ''))
+        except (TypeError, ValueError):
+            effective_type = ''
+    if effective_type == 'xpath':
+        # ensure_ascii also exposes NBSP/full-width spaces as \uXXXX, avoiding
+        # clipboard normalization while remaining valid JavaScript.
+        return f'$x({json.dumps(preview, ensure_ascii=True)})'
+    return preview
+
+
 def build_locator(context: Any, selector_type: str, selector: str) -> Any:
     """指定された検索方式から Playwright Locator を生成する。"""
     if selector_type == 'path':

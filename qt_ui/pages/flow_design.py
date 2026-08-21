@@ -1431,6 +1431,11 @@ class EventEditorDialog(QDialog):
         failure_choice = str(self.failure_action.currentData())
         action = str(self.action.currentData())
         selector_type = _selector_type(self.selector_type)
+        # A trial run can start immediately after editing the occurrence field,
+        # before Qt has delivered the textChanged callback.  Serialize the
+        # visible multi-path fields synchronously for both trial and save.
+        if selector_type == 'path':
+            self._sync_multi_path_values()
         if action == 'wait':
             value = str(self.wait_condition.currentData())
         elif action == 'select' and self._select_first:

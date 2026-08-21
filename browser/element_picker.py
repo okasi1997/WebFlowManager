@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 from browser.page_runtime import active_page, bring_page_to_front, close_browser_context, launch_persistent_chrome, page_frames, restore_storage_state
-from browser.locators import actionable_matches, actionable_matches_across_frames, build_locator, matches_across_frames, selector_preview, visible_matches, xpath_literal
+from browser.locators import actionable_matches, actionable_matches_across_frames, build_locator, matches_across_frames, selector_console_preview, visible_matches, xpath_literal
 from browser.picker_scripts import picker_script
 from browser.profile_runtime import acquire_profile_lease, persistent_profile_dir, profile_lock_error
 from i18n import tr
@@ -268,7 +268,7 @@ class ElementPicker:
             lines.append(f'  step_{index}: {display}')
         if selector:
             try:
-                lines.append(f'  resolved: {selector_preview("path", selector)}')
+                lines.append(f'  resolved: {selector_console_preview("path", selector)}')
             except Exception as error:
                 lines.append(f'  resolved_error: {error}')
         else:

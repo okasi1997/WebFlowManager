@@ -8,7 +8,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from browser.element_picker import ElementPicker
-from browser.locators import build_locator, multi_path_steps, selector_preview
+from browser.locators import (
+    build_locator, multi_path_steps, selector_console_preview, selector_preview,
+)
 from browser.picker_scripts import picker_script
 from core.settings import SUPPORTED_SELECTOR_TYPES
 from core.database import Database
@@ -107,6 +109,15 @@ class MultiPathLocatorTests(unittest.TestCase):
             selector_preview('path', json.dumps(selector)),
             '(//input[@name="price"])[2]',
         )
+
+    def test_xpath_diagnostic_is_directly_pasteable_in_chrome_console(self) -> None:
+        xpath = "//div[contains(., '\u00a0\u3000') and @title=\"price\"]"
+
+        preview = selector_console_preview('xpath', xpath)
+
+        self.assertTrue(preview.startswith('$x("'))
+        self.assertIn(r'\u00a0\u3000', preview)
+        self.assertIn(r'\"price\"', preview)
 
     def test_build_locator_renders_edited_step_values(self) -> None:
         context = MagicMock()

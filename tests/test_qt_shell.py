@@ -1160,7 +1160,7 @@ class QtShellTests(unittest.TestCase):
             self.assertEqual(picker_button.toolTip(), tooltip)
             self.assertEqual(picker_button.width(), 42)
         self.assertIsNone(editor.findChild(QLabel, 'titleLabel'))
-        self.assertEqual((editor.width(), editor.height()), (1000, 620))
+        self.assertEqual((editor.width(), editor.height()), (1000, 660))
         self.assertEqual(editor.minimumSize(), editor.maximumSize())
         for name in ('pageCard', 'resultCard'):
             self.assertTrue(editor.findChild(QFrame, name).property('card'))
@@ -1517,6 +1517,34 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(editor.result_data()['text_extract_regex'], r'(?m)^EST.*$')
         editor.action.setCurrentIndex(editor.action.findData('click'))
         self.assertFalse(editor.text_extract_regex.isVisible())
+        editor.close()
+
+    def test_trial_event_data_syncs_the_visible_occurrence_rule(self) -> None:
+        selector = json.dumps({
+            'version': 1,
+            'steps': [
+                {'kind': 'scope', 'value': 'service'},
+                {'kind': 'target', 'value': 'price'},
+            ],
+            'occurrence': {'position': 'first', 'index': 1, 'count': 3},
+            'occurrence_rule': 'first',
+            'resolved': {
+                'selector_type': 'xpath',
+                'selector': '(//input[@name="price"])[1]',
+            },
+        })
+        editor = EventEditorDialog(self.window.pages['design'], {
+            'name': 'price', 'action': 'click', 'selector_type': 'path',
+            'selector': selector,
+        })
+        self.assertIsNotNone(editor.multi_path_occurrence)
+        signals_blocked = editor.multi_path_occurrence.blockSignals(True)
+        editor.multi_path_occurrence.setText('2')
+        editor.multi_path_occurrence.blockSignals(signals_blocked)
+
+        result = editor.result_data()
+
+        self.assertEqual(json.loads(result['selector'])['occurrence_rule'], '2')
         editor.close()
 
     def test_screenshot_picker_saves_explicit_scroll_target(self) -> None:

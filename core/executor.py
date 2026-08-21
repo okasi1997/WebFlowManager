@@ -12,7 +12,7 @@ from typing import Any, Callable
 from PySide6.QtCore import QRectF
 from PySide6.QtGui import QColor, QImage, QPainter
 from browser.page_runtime import active_page, browser_args, browser_context_options, close_browser_context, is_topmost, launch_persistent_chrome, open_pages, page_frames, restore_storage_state, settle_new_page
-from browser.locators import build_locator, locators_across_frames, selector_preview
+from browser.locators import build_locator, locators_across_frames, selector_console_preview
 from browser.profile_runtime import acquire_profile_lease, persistent_profile_dir, profile_lock_error
 from core.conditions import decode_guard, evaluate_guard
 from core.data_templates import iter_template_instances
@@ -1492,13 +1492,13 @@ class WorkflowExecutor:
         if str(event.get('selector_type', 'none')) != 'none' and selector:
             self.logger(
                 f'{tr("Resolved selector [")}{event.get("selector_type", "none")}]: '
-                f'{selector_preview(str(event.get("selector_type", "none")), selector)}'
+                f'{selector_console_preview(str(event.get("selector_type", "none")), selector)}'
             )
         fallback_type = str(event.get('fallback_selector_type', 'none'))
         if fallback_type != 'none' and fallback_selector:
             self.logger(
                 f'{tr("Resolved fallback selector [")}{fallback_type}]: '
-                f'{selector_preview(fallback_type, fallback_selector)}'
+                f'{selector_console_preview(fallback_type, fallback_selector)}'
             )
         value = substitute_event_parameter_value(event, str(event.get('value', '')), variables)
         timeout = int(event.get('timeout_ms', 10000))
@@ -1601,6 +1601,7 @@ class WorkflowExecutor:
                 if match is None:
                     raise ValueError(tr('正規表現に一致する文字がありません'))
                 captured = match.group(0)
+            self.logger(f'{tr("取得文字: ")}{captured}')
             if variable_name:
                 variables[variable_name] = captured
             return captured
