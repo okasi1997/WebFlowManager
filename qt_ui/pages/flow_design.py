@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QFrame, QHBoxLayout, QInputDialog,
     QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu,
-    QPlainTextEdit, QPushButton, QSpinBox,
+    QPlainTextEdit, QPushButton, QSizePolicy, QSpinBox,
     QScrollArea, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget, QWidgetAction,
 )
@@ -503,16 +503,20 @@ class EventEditorDialog(QDialog):
         self.multi_path_host = require(self, QWidget, 'multiPathHost')
         self.multi_path_scroll = require(self, QScrollArea, 'multiPathHost')
         self.multi_path_content = require(self, QWidget, 'multiPathContent')
-        # タイトルを枠線上へ重ね、独立した見出し行を使わないグループ表示にする。
-        self.multi_path_title.setParent(self.multi_path_scroll)
-        self.multi_path_title.setStyleSheet(
-            'background: white; padding: 0 6px; font-weight: 600;'
+        # Keep the heading outside the scrolling viewport. This prevents the
+        # scrollbar thumb and scrolling rows from crowding an overlaid legend.
+        self.multi_path_title.setParent(self.multi_path_title_host)
+        require(self, QHBoxLayout, 'multiPathTitleLayout').addWidget(
+            self.multi_path_title
         )
-        self.multi_path_title.move(12, 0)
-        self.multi_path_title.raise_()
-        self.multi_path_title_host.setFixedHeight(12)
+        self.multi_path_title.setStyleSheet(
+            'background: transparent; padding: 0; font-weight: 600;'
+        )
+        title_layout = require(self, QHBoxLayout, 'multiPathTitleLayout')
+        title_layout.setContentsMargins(10, 8, 0, 0)
+        self.multi_path_title_host.setFixedHeight(32)
         self.multi_path_title_host.setVisible(False)
-        self.multi_path_scroll.setViewportMargins(0, 13, 0, 0)
+        self.multi_path_scroll.setViewportMargins(0, 0, 0, 0)
         self.multi_path_scroll.setStyleSheet(
             'QScrollArea#multiPathHost {'
             ' background: transparent; border: 1px solid #d5e1eb; border-radius: 6px;'
@@ -527,8 +531,13 @@ class EventEditorDialog(QDialog):
         self.multi_path_form.setContentsMargins(10, 8, 6, 8)
         self.fallback_type_host = require(self, QWidget, 'fallbackTypeHost')
         self.multi_path_inputs: list[QLineEdit] = []
+        self.multi_path_occurrence: QLineEdit | None = None
         self._multi_path_data: dict[str, Any] = {}
-        self._multi_path_resize_pending = False
+        self._multi_path_resize_timer = QTimer(self)
+        self._multi_path_resize_timer.setSingleShot(True)
+        self._multi_path_resize_timer.timeout.connect(
+            self._run_scheduled_multi_path_resize
+        )
         try:
             decoded_parameters = json.loads(str(event.get('selector_parameters_json', '') or '{}'))
             self._selector_parameters = decoded_parameters if isinstance(decoded_parameters, dict) else {}
@@ -677,9 +686,16 @@ class EventEditorDialog(QDialog):
             else:
                 match_label = tr('文字を含む')
             label = QLabel(f'{index}. {tr(kind)} · {match_label}')
+            label.setSizePolicy(
+                QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+            )
+            label.setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            )
             # 外側フォームと同じラベル幅にし、すべての入力欄の開始位置を揃える。
             label.setFixedWidth(108)
             value = QLineEdit(str(step.get('value', step.get('display', ''))))
+            label.setFixedHeight(value.sizeHint().height())
             value.setToolTip(str(step.get('display', '')))
             button = QPushButton()
             button.setFixedWidth(42)
@@ -692,8 +708,47 @@ class EventEditorDialog(QDialog):
             row = _inline_host((value, 1), button, spacing=8)
             self.multi_path_form.addRow(label, row)
             self.multi_path_inputs.append(value)
+        occurrence = self._multi_path_data.get('occurrence')
+        if steps:
+            occurrence = occurrence if isinstance(occurrence, dict) else {}
+            position = str(occurrence.get('position', '')).lower()
+            default_rule = (
+                position if position in {'first', 'last'}
+                else str(occurrence.get('index', ''))
+            )
+            occurrence_label = QLabel(tr('重複時の選択'))
+            occurrence_label.setFixedWidth(108)
+            occurrence_label.setSizePolicy(
+                QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+            )
+            occurrence_label.setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.multi_path_occurrence = QLineEdit(
+                str(self._multi_path_data.get('occurrence_rule', default_rule))
+            )
+            occurrence_label.setFixedHeight(
+                self.multi_path_occurrence.sizeHint().height()
+            )
+            occurrence_button = QPushButton()
+            occurrence_button.setFixedWidth(42)
+            occurrence_button.setProperty('formAction', True)
+            occurrence_button.setProperty('dataReferenceButton', True)
+            occurrence_button.setToolTip(tr('パラメーターを挿入'))
+            set_button_icon(occurrence_button, 'data-reference', 18)
+            occurrence_button.clicked.connect(
+                lambda _checked=False: self._configure_event_parameter(
+                    self.multi_path_occurrence
+                )
+            )
+            self.multi_path_occurrence.textChanged.connect(self._sync_multi_path_values)
+            self.multi_path_form.addRow(
+                occurrence_label,
+                _inline_host((self.multi_path_occurrence, 1), occurrence_button, spacing=8),
+            )
         if steps:
             self.multi_path_form.activate()
+            display_row_count = len(steps) + (1 if self.multi_path_occurrence is not None else 0)
             spacing = self.multi_path_form.verticalSpacing()
             margins = self.multi_path_form.contentsMargins()
             vertical_margins = margins.top() + margins.bottom()
@@ -702,27 +757,32 @@ class EventEditorDialog(QDialog):
                 self.multi_path_content.sizeHint().height(),
             )
             rows_space = max(
-                0, content_height - vertical_margins - (len(steps) - 1) * spacing,
+                0, content_height - vertical_margins - (display_row_count - 1) * spacing,
             )
-            row_height = max(38, (rows_space + len(steps) - 1) // len(steps))
+            row_height = max(38, (rows_space + display_row_count - 1) // display_row_count)
             # widgetResizable でも内容を viewport 高まで潰さず、超過分を確実にスクロールさせる。
             self.multi_path_content.setMinimumHeight(content_height)
             self._multi_path_row_height = row_height
             self._multi_path_content_height = content_height
             self._multi_path_spacing = spacing
             self._multi_path_vertical_margins = vertical_margins
+            # Picker results can rebuild this form while the dialog is already
+            # visible. Recalculate once after that live layout change; initial
+            # opening is sized synchronously in showEvent to avoid flicker.
+            if self.isVisible():
+                self._schedule_multi_path_resize()
 
     def _schedule_multi_path_resize(self) -> None:
         """Coalesce geometry changes so one settled layout produces one resize."""
-        if self._multi_path_resize_pending:
-            return
-        self._multi_path_resize_pending = True
+        # Restarting an active single-shot timer makes this a true debounce:
+        # picker write-back triggers several layout requests, and only the last
+        # settled geometry should decide the scroll area's height.
+        self._multi_path_resize_timer.start(0)
 
-        def resize_once() -> None:
-            self._multi_path_resize_pending = False
+    def _run_scheduled_multi_path_resize(self) -> None:
+        """Run only while the dialog-owned timer and widgets are still alive."""
+        if self.isVisible():
             self._resize_multi_path_area()
-
-        QTimer.singleShot(0, resize_once)
 
     def _resize_multi_path_area(self) -> None:
         """左カードの残り高さを使い、3～7行の範囲で Path 領域を伸縮する。"""
@@ -731,14 +791,23 @@ class EventEditorDialog(QDialog):
         left_tab = self.findChild(QFrame, 'eventLocatorTab')
         if left_tab is None:
             return
+        locator_card = require(self, QFrame, 'locatorCard')
+        locator_card.setMinimumHeight(0)
         row_height = self._multi_path_row_height
         spacing = self._multi_path_spacing
         margins = self._multi_path_vertical_margins
         title_space = self.multi_path_scroll.viewportMargins().top()
+        self.multi_path_form.activate()
+        # Keep a small scrollable tail below the final row. In particular, the
+        # optional occurrence row can otherwise land exactly on the viewport
+        # edge and be clipped while Qt still reports that no scrollbar is needed.
+        self._multi_path_content_height = self.multi_path_form.sizeHint().height() + 6
+        self.multi_path_content.setMinimumHeight(self._multi_path_content_height)
         minimum = row_height + margins + title_space + 2
         maximum = 7 * row_height + 6 * spacing + margins + title_space + 2
         top = self.multi_path_scroll.mapTo(left_tab, QPoint()).y()
-        available = max(minimum, left_tab.contentsRect().bottom() - top - 18)
+        # Preserve the locator card's bottom padding and both frame borders.
+        available = max(minimum, left_tab.contentsRect().bottom() - top - 14)
         target_height = min(maximum, available)
         self.multi_path_scroll.setFixedHeight(target_height)
         visible_content_height = max(0, target_height - title_space - 2)
@@ -747,6 +816,10 @@ class EventEditorDialog(QDialog):
             if self._multi_path_content_height > visible_content_height
             else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
+        if locator_card.layout() is not None:
+            locator_card.layout().activate()
+            locator_card.setMinimumHeight(locator_card.layout().sizeHint().height())
+        require(self, QVBoxLayout, 'eventLocatorTabLayout').activate()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -761,6 +834,8 @@ class EventEditorDialog(QDialog):
         for step, field in zip(steps, self.multi_path_inputs):
             if isinstance(step, dict):
                 step['value'] = field.text()
+        if self.multi_path_occurrence is not None:
+            self._multi_path_data['occurrence_rule'] = self.multi_path_occurrence.text()
         self.selector.setText(json.dumps(
             self._multi_path_data, ensure_ascii=False, separators=(',', ':')
         ))
@@ -898,7 +973,10 @@ class EventEditorDialog(QDialog):
                 values = [
                     str(step.get('value', ''))
                     for step in self._multi_path_data.get('steps', []) if isinstance(step, dict)
-                ] + [self.value.text(), self.failure_target.text()]
+                ] + [
+                    str(self._multi_path_data.get('occurrence_rule', '')),
+                    self.value.text(), self.failure_target.text(),
+                ]
             else:
                 parameters = self._selector_parameters
                 values = [
@@ -1273,7 +1351,7 @@ class EventEditorDialog(QDialog):
         except (TypeError, ValueError):
             parameters = {}
         parent_group_data_paths = self._parent_group_data_paths()
-        needs_pcl = bool(parent_group_data_paths) or bool(event.get('data_path')) or '${data:' in ' '.join(
+        needs_pcl = bool(event.get('data_path')) or '${data:' in ' '.join(
             str(event.get(field, ''))
             for field in ('selector', 'fallback_selector', 'value', 'failure_target')
         ) or any(
@@ -1292,7 +1370,7 @@ class EventEditorDialog(QDialog):
         from core.executor import WorkflowExecutor
         try:
             loop_context = WorkflowExecutor.first_item_loop_context(
-                root_data, parent_group_data_paths,
+                root_data, parent_group_data_paths if needs_pcl else [],
             )
         except (KeyError, TypeError, ValueError) as exc:
             show_warning(self, tr('イベント試行'), str(exc))

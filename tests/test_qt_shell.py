@@ -2886,6 +2886,8 @@ class QtShellTests(unittest.TestCase):
                 'selector_type': 'xpath',
                 'selector': "//tr[contains(.,__WFM_STEP_0__)]//input[@name=__WFM_STEP_1__]",
             },
+            'occurrence': {'position': 'last', 'index': 2, 'count': 2},
+            'occurrence_rule': 'last',
         }
         editor = EventEditorDialog(self.window.pages['design'], {
             'name': 'multi', 'action': 'click', 'selector_type': 'path',
@@ -2897,6 +2899,12 @@ class QtShellTests(unittest.TestCase):
 
         self.assertEqual(len(editor.multi_path_inputs), 4)
         self.assertIsInstance(editor.multi_path_scroll, QScrollArea)
+        self.assertTrue(editor._multi_path_resize_timer.isSingleShot())
+        self.assertIs(editor._multi_path_resize_timer.parent(), editor)
+        editor._schedule_multi_path_resize()
+        self.assertTrue(editor._multi_path_resize_timer.isActive())
+        editor._schedule_multi_path_resize()
+        self.assertTrue(editor._multi_path_resize_timer.isActive())
         self.assertEqual(
             editor.multi_path_scroll.verticalScrollBarPolicy(),
             Qt.ScrollBarPolicy.ScrollBarAlwaysOn
@@ -2920,9 +2928,22 @@ class QtShellTests(unittest.TestCase):
             editor.iframe_path.mapTo(editor, QPoint()).y(),
             title.mapTo(editor, QPoint()).y(),
         )
-        self.assertIs(title.parentWidget(), editor.multi_path_scroll)
-        self.assertEqual(editor.multi_path_scroll.viewportMargins().top(), 13)
-        self.assertEqual(editor.multi_path_title_host.height(), 12)
+        self.assertIs(title.parentWidget(), editor.multi_path_title_host)
+        self.assertEqual(editor.multi_path_scroll.viewportMargins().top(), 0)
+        self.assertEqual(editor.multi_path_title_host.height(), 32)
+        locator_card = editor.findChild(QFrame, 'locatorCard')
+        scroll_bottom = (
+            editor.multi_path_scroll.mapTo(locator_card, QPoint()).y()
+            + editor.multi_path_scroll.height()
+        )
+        self.assertLessEqual(scroll_bottom, locator_card.contentsRect().bottom())
+        self.assertEqual(
+            editor.multi_path_content.minimumHeight(),
+            editor.multi_path_form.sizeHint().height() + 6,
+        )
+        title_layout = editor.findChild(QHBoxLayout, 'multiPathTitleLayout')
+        self.assertEqual(title_layout.contentsMargins().top(), 8)
+        self.assertEqual(title_layout.contentsMargins().bottom(), 0)
         self.assertEqual(
             editor.findChild(QFrame, 'locatorCard').sizePolicy().verticalPolicy(),
             QSizePolicy.Policy.Maximum,
@@ -2935,13 +2956,32 @@ class QtShellTests(unittest.TestCase):
             editor.multi_path_inputs[0].mapTo(editor, QPoint()).x(),
         )
         buttons = editor.multi_path_host.findChildren(QPushButton)
-        self.assertEqual(len(buttons), 4)
+        self.assertEqual(len(buttons), 5)
         self.assertTrue(all(button.property('dataReferenceButton') for button in buttons))
+        self.assertIsNotNone(editor.multi_path_occurrence)
+        self.assertEqual(editor.multi_path_occurrence.text(), 'last')
         row_labels = [
             label.text() for label in editor.multi_path_host.findChildren(QLabel)
         ]
         self.assertIn('1. 範囲 · 文字を含む', row_labels)
         self.assertIn('4. 対象 · id と等しい', row_labels)
+        path_labels = [
+            label for label in editor.multi_path_host.findChildren(QLabel)
+            if label.text()[:1].isdigit()
+        ]
+        self.assertTrue(path_labels)
+        self.assertTrue(all(
+            label.alignment() & Qt.AlignmentFlag.AlignVCenter
+            for label in path_labels
+        ))
+        self.assertTrue(all(
+            label.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Fixed
+            for label in path_labels
+        ))
+        self.assertTrue(all(
+            label.height() == editor.multi_path_inputs[index].sizeHint().height()
+            for index, label in enumerate(path_labels)
+        ))
         self.assertLessEqual(
             abs(
                 editor.multi_path_inputs[0].mapTo(editor, QPoint()).x()
@@ -2960,11 +3000,16 @@ class QtShellTests(unittest.TestCase):
             )
             self.assertGreater(editor.multi_path_scroll.verticalScrollBar().maximum(), 0)
         editor.multi_path_inputs[0].setText('${data:contract_name}')
+        editor.multi_path_occurrence.setText('FIRST')
         result = editor.result_data()
         saved = json.loads(result['selector'])
         self.assertEqual(saved['steps'][0]['value'], '${data:contract_name}')
+        self.assertEqual(saved['occurrence_rule'], 'FIRST')
         self.assertEqual(result['fallback_selector_type'], 'none')
         self.assertEqual(result['fallback_selector'], '')
+        with patch.object(editor, '_schedule_multi_path_resize') as resize:
+            editor._load_multi_path_fields()
+        resize.assert_called_once()
         editor.close()
 
     def test_multi_path_parameter_dialog_keeps_numbers_and_migrates_old_reference(self) -> None:
@@ -3065,6 +3110,8 @@ class QtShellTests(unittest.TestCase):
         migrated = json.loads(editor.selector.text())
         self.assertEqual([step['value'] for step in migrated['steps']], ['$1', '$1'])
         self.assertEqual(migrated['parameters']['1']['value'], 'customer.name')
+        self.assertIsNotNone(editor.multi_path_occurrence)
+        self.assertEqual(editor.multi_path_occurrence.text(), '')
         self.assertIsNone(editor.findChild(QPushButton, 'multiPathParameterButton'))
         editor.close()
 
@@ -3127,6 +3174,28 @@ class QtShellTests(unittest.TestCase):
 
         warning.assert_called_once()
         execute.assert_not_called()
+        editor.close()
+
+    def test_try_event_inside_data_group_does_not_require_pcl_without_reference(self) -> None:
+        editor = EventEditorDialog(self.window.pages['design'], {
+            'name': 'plain preview', 'action': 'click', 'selector_type': 'css',
+            'selector': '#save', 'fallback_selector_type': 'none',
+        })
+        with (
+            patch.object(editor, '_parent_group_data_paths', return_value=['orders']),
+            patch('qt_ui.pages.flow_design.show_warning') as warning,
+            patch.object(
+                editor, '_run_debug',
+                side_effect=lambda _status, task, _success, log_queue=None: task(),
+            ),
+            patch.object(self.window.pages['design'].debug_browser, 'execute_event') as execute,
+        ):
+            editor.try_event()
+
+        warning.assert_not_called()
+        execute.assert_called_once()
+        self.assertIsNone(execute.call_args.kwargs['root_data'])
+        self.assertEqual(execute.call_args.kwargs['loop_context'], {})
         editor.close()
 
     def test_saved_path_parameters_are_restored_for_summary_menu(self) -> None:

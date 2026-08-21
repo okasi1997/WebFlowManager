@@ -62,7 +62,43 @@ def _render_path_values(data: dict[str, Any]) -> dict[str, Any]:
                 value = value.replace(token, literal)
         return value
 
-    return render(data)
+    rendered = render(data)
+    if isinstance(rendered, dict) and 'occurrence_rule' in rendered:
+        rendered['occurrence_rule'] = expand_parameters(
+            str(rendered.get('occurrence_rule', ''))
+        )
+    return rendered
+
+
+def _base_occurrence_xpath(selector: str, occurrence: Any) -> str:
+    """Remove the picker-era fixed suffix before applying an editable rule."""
+    if not isinstance(occurrence, dict):
+        return selector
+    position = str(occurrence.get('position', '')).lower()
+    expected = 'last()' if position == 'last' else str(occurrence.get('index', ''))
+    match = re.fullmatch(r'\((.*)\)\[([^\]]+)\]', selector, flags=re.DOTALL)
+    if match and match.group(2).strip().lower() == expected.lower():
+        return match.group(1)
+    return selector
+
+
+def _apply_occurrence_rule(locator: Any, rule: str) -> Any:
+    normalized = str(rule).strip().lower()
+    if not normalized:
+        return locator
+    count = locator.count()
+    if count < 1:
+        return locator
+    if normalized == 'first':
+        return locator.nth(0)
+    if normalized == 'last':
+        return locator.nth(count - 1)
+    if normalized.isdigit() and int(normalized) >= 1:
+        index = int(normalized) - 1
+        if index >= count:
+            raise ValueError('Multi-path occurrence is out of range')
+        return locator.nth(index)
+    raise ValueError('Multi-path occurrence must be first, last, or a positive number')
 
 
 def selector_preview(selector_type: str, selector: str) -> str:
@@ -93,8 +129,11 @@ def build_locator(context: Any, selector_type: str, selector: str) -> Any:
         data = json.loads(selector)
         if isinstance(data, dict):
             data = _render_path_values(data)
+        occurrence_rule = str(data.get('occurrence_rule', '')) if isinstance(data, dict) else ''
         if isinstance(data, dict) and isinstance(data.get('row_mapping'), dict):
-            return _build_row_mapping_locator(context, data['row_mapping'])
+            return _build_row_mapping_locator(
+                context, data['row_mapping'], occurrence_rule, data.get('occurrence'),
+            )
         # 通常の範囲パスも最終的には既存 locator へ変換し、実行・強調表示・
         # 待機で同じ検索処理を共有する。
         resolved = data.get('resolved', {}) if isinstance(data, dict) else {}
@@ -102,7 +141,12 @@ def build_locator(context: Any, selector_type: str, selector: str) -> Any:
         resolved_selector = str(resolved.get('selector', ''))
         if resolved_type == 'path' or not resolved_type or not resolved_selector:
             raise ValueError('Invalid multi-step path')
-        return build_locator(context, resolved_type, resolved_selector)
+        if occurrence_rule and resolved_type == 'xpath':
+            resolved_selector = _base_occurrence_xpath(
+                resolved_selector, data.get('occurrence'),
+            )
+        locator = build_locator(context, resolved_type, resolved_selector)
+        return _apply_occurrence_rule(locator, occurrence_rule)
     if selector_type == 'role':
         role, separator, name = selector.partition('|')
         return context.get_by_role(role.strip(), name=name.strip() if separator else None)
@@ -119,14 +163,19 @@ def build_locator(context: Any, selector_type: str, selector: str) -> Any:
     raise ValueError(f'Action requires a selector: {selector_type}')
 
 
-def _build_row_mapping_locator(context: Any, mapping: dict[str, Any]) -> Any:
+def _build_row_mapping_locator(
+        context: Any, mapping: dict[str, Any], occurrence_rule: str='', occurrence: Any=None,
+) -> Any:
     """基準行の現在 index を、同じ外側範囲にある対象表へ動的に適用する。"""
     source = mapping.get('source', {})
     target_table = mapping.get('target_table', {})
     target = mapping.get('target', {})
-    source_locator = build_locator(
-        context, str(source.get('selector_type', '')), str(source.get('selector', '')),
-    )
+    source_type = str(source.get('selector_type', ''))
+    source_selector = str(source.get('selector', ''))
+    if occurrence_rule and source_type == 'xpath':
+        source_selector = _base_occurrence_xpath(source_selector, occurrence)
+    source_locator = build_locator(context, source_type, source_selector)
+    source_locator = _apply_occurrence_rule(source_locator, occurrence_rule)
     table_locator = build_locator(
         context, str(target_table.get('selector_type', '')),
         str(target_table.get('selector', '')),

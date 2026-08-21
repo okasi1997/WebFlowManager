@@ -212,6 +212,11 @@ class ElementPicker:
         }
         if isinstance(occurrence, dict):
             path_data['occurrence'] = occurrence
+            position = str(occurrence.get('position', '')).lower()
+            path_data['occurrence_rule'] = (
+                position if position in {'first', 'last'}
+                else str(occurrence.get('index', ''))
+            )
         if isinstance(row_mapping, dict):
             path_data['row_mapping'] = row_mapping
         else:

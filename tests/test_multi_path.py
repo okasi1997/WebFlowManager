@@ -34,6 +34,30 @@ class MultiPathLocatorTests(unittest.TestCase):
         context.locator.assert_called_once_with('xpath=//tr//input')
         self.assertIs(result, context.locator.return_value)
 
+    def test_occurrence_rule_selects_first_or_last_case_insensitively(self) -> None:
+        context = MagicMock()
+        locator = context.locator.return_value
+        locator.count.return_value = 3
+        selector = {
+            'steps': [{'value': 'target'}],
+            'occurrence': {'position': 'last', 'index': 3, 'count': 3},
+            'resolved': {
+                'selector_type': 'xpath',
+                'selector': '(//button)[last()]',
+            },
+        }
+
+        selector['occurrence_rule'] = 'FIRST'
+        result = build_locator(context, 'path', json.dumps(selector))
+        context.locator.assert_called_with('xpath=//button')
+        locator.nth.assert_called_with(0)
+        self.assertIs(result, locator.nth.return_value)
+
+        locator.nth.reset_mock()
+        selector['occurrence_rule'] = 'Last'
+        build_locator(context, 'path', json.dumps(selector))
+        locator.nth.assert_called_with(2)
+
     def test_build_locator_renders_edited_step_values(self) -> None:
         context = MagicMock()
         selector = json.dumps({
@@ -146,6 +170,7 @@ class MultiPathLocatorTests(unittest.TestCase):
         ])
         self.assertEqual(saved['resolved']['selector_type'], 'xpath')
         self.assertEqual(saved['occurrence']['position'], 'last')
+        self.assertEqual(saved['occurrence_rule'], 'last')
         self.assertIn('同一条件の最後', saved['steps'][-1]['display'])
         self.assertIn('Path diagnostics:', result['path_diagnostics'])
         self.assertIn('resolved:', result['path_diagnostics'])
@@ -382,6 +407,25 @@ class MultiPathLocatorTests(unittest.TestCase):
             WorkflowExecutor._resolve_path_data_parameters(
                 selector, {'customer': {'name': ['invalid']}}, {},
             )
+
+    def test_occurrence_rule_accepts_a_data_parameter(self) -> None:
+        selector = json.dumps({
+            'steps': [{'value': 'target'}],
+            'occurrence_rule': '$1',
+            'parameters': {
+                '1': {'source': 'data', 'value': 'selection', 'max_length': 10},
+            },
+            'resolved': {'selector_type': 'xpath', 'selector': '//button'},
+        })
+        resolved = WorkflowExecutor._resolve_path_data_parameters(
+            selector, {'selection': 'LAST'}, {},
+        )
+        context = MagicMock()
+        context.locator.return_value.count.return_value = 2
+
+        build_locator(context, 'path', resolved)
+
+        context.locator.return_value.nth.assert_called_once_with(1)
 
     def test_normal_and_fallback_selectors_share_short_parameters(self) -> None:
         event = {

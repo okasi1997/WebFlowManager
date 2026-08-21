@@ -181,13 +181,17 @@ def substitute_event_selector_value(
         data = json.loads(substitute_path_step_values(
             selector, lambda value: substitute(value, variables)
         ))
+        if isinstance(data, dict) and 'occurrence_rule' in data:
+            data['occurrence_rule'] = substitute(
+                str(data.get('occurrence_rule', '')), variables,
+            )
         parameters = data.get('parameters', {}) if isinstance(data, dict) else {}
         used_numbers = set(re.findall(
             r'(?<!\$)\$(\d{1,2})(?!\d)',
-            ' '.join(
+            ' '.join([
                 str(step.get('value', ''))
                 for step in data.get('steps', []) if isinstance(step, dict)
-            ),
+            ] + [str(data.get('occurrence_rule', ''))]),
         ))
         for number, resolved in _resolve_short_parameters(
                 parameters, variables, used_numbers,
@@ -923,13 +927,17 @@ class WorkflowExecutor:
             text,
             lambda value: cls._substitute_data_references(value, root_data, loop_context),
         ))
+        if isinstance(data, dict) and 'occurrence_rule' in data:
+            data['occurrence_rule'] = cls._substitute_data_references(
+                str(data.get('occurrence_rule', '')), root_data, loop_context,
+            )
         parameters = data.get('parameters', {}) if isinstance(data, dict) else {}
         used_numbers = set(re.findall(
             r'(?<!\$)\$(\d{1,2})(?!\d)',
-            ' '.join(
+            ' '.join([
                 str(step.get('value', ''))
                 for step in data.get('steps', []) if isinstance(step, dict)
-            ),
+            ] + [str(data.get('occurrence_rule', ''))]),
         ))
         for number, parameter in parameters.items():
             if (
