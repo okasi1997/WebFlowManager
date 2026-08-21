@@ -150,12 +150,61 @@ class MultiPathLocatorTests(unittest.TestCase):
         self.assertEqual(saved['row_mapping']['operation'], 'same_row_index')
         self.assertNotIn('resolved', saved)
 
+    def test_picker_saves_multiple_and_conditions_as_source_row_steps(self) -> None:
+        picker = ElementPicker()
+        locator = MagicMock()
+        locator.count.return_value = 1
+        mapping = {
+            'operation': 'same_row_index', 'source_step_count': 3,
+            'source': {
+                'selector_type': 'xpath',
+                'selector': "//tr[contains(.,'plan') and contains(.,'annual') and contains(.,'base')]",
+            },
+            'target_table': {'selector_type': 'xpath', 'selector': '//table[2]'},
+            'target': {'selector_type': 'xpath', 'selector': ".//button[contains(.,'OP')]"},
+        }
+        info = {
+            'path_xpath': '', 'row_mapping': mapping,
+            'path_steps': [
+                {'tag': 'td', 'text': 'plan'},
+                {'tag': 'td', 'text': 'annual'},
+                {'tag': 'td', 'text': 'base'},
+                {'tag': 'button', 'text': 'OP'},
+            ],
+        }
+        with (
+            patch.object(picker, '_locator', return_value=locator),
+            patch.object(picker, '_iframe_path', return_value=''),
+        ):
+            result = picker._choose_multi_path(MagicMock(), info, MagicMock(), 'click')
+
+        saved = json.loads(result['selector'])
+        self.assertEqual(
+            [step['kind'] for step in saved['steps']],
+            ['source_row', 'source_row', 'source_row', 'target'],
+        )
+        self.assertEqual(saved['row_mapping']['source_step_count'], 3)
+
     def test_picker_script_contains_shortcut_controls(self) -> None:
         script = picker_script('run', 'wait', 'active')
         self.assertIn("event.key === 'F1'", script)
         self.assertIn("event.key === 'F2'", script)
         self.assertIn("event.key === 'Backspace'", script)
+        self.assertIn('const enterSelectionMode = (keyName) =>', script)
+        self.assertIn('const leaveSelectionMode = () =>', script)
+        self.assertIn("enterSelectionMode('F1')", script)
+        self.assertIn("enterSelectionMode('F2')", script)
+        self.assertIn("selectionKey === 'F1'", script)
+        self.assertIn("document.addEventListener('click', choose, true)", script)
+        self.assertIn('leaveSelectionMode();', script)
+        self.assertNotIn("window.__sfFlowPicked = {cancelled: true}", script)
         self.assertIn("operation: 'same_row_index'", script)
+        self.assertIn("conditions.join(' and ')", script)
+        self.assertIn('const siblingScopeXPath = (anchors, target) =>', script)
+        self.assertIn("uniqueConditions.join(' and ')", script)
+        self.assertIn('sharedOuterRow?.contains(target)', script)
+        self.assertIn('matches.snapshotLength === 1', script)
+        self.assertIn('const sourceAnchors = anchors.slice(sourceStart)', script)
         self.assertIn('sourceRow.contains(targetTable)', script)
         self.assertNotIn('const siblingStep', script)
 

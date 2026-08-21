@@ -72,6 +72,8 @@ class DataPage(QWidget):
         self.db = db
         self.current_record: dict[str, Any] | None = None
         self.current_data: dict[str, Any] = {}
+        self._value_tree_record_id: int | None = None
+        self._value_display_states: dict[int, tuple[Any, ...]] = {}
         self._pending_record_data: dict[int, dict[str, Any]] = {}
         self._record_switch_in_progress = False
         load_ui_into(self, 'data.ui')
@@ -354,9 +356,23 @@ class DataPage(QWidget):
         self._pending_record_data.clear()
 
     def render_values(self) -> None:
-        display_state = capture_tree_display_state(
+        current_display_state = capture_tree_display_state(
             self.values,
             lambda item: tuple(item.data(0, self.PATH_ROLE) or ()),
+        )
+        if self._value_tree_record_id is not None:
+            self._value_display_states[self._value_tree_record_id] = current_display_state
+        record_id = (
+            int(self.current_record['id']) if self.current_record is not None else None
+        )
+        display_state = (
+            self._value_display_states.get(
+                record_id,
+                current_display_state
+                if self._value_tree_record_id == record_id
+                else ((0, 0), False, set()),
+            )
+            if record_id is not None else current_display_state
         )
         schema = normalize_template_schema(self.db.get_data_schema())
         roots: list[QTreeWidgetItem] = []
@@ -471,6 +487,12 @@ class DataPage(QWidget):
             self.values.addTopLevelItems(roots)
             restore_tree_display_state(
                 self.values, display_state,
+                lambda item: tuple(item.data(0, self.PATH_ROLE) or ()),
+            )
+        self._value_tree_record_id = record_id
+        if record_id is not None:
+            self._value_display_states[record_id] = capture_tree_display_state(
+                self.values,
                 lambda item: tuple(item.data(0, self.PATH_ROLE) or ()),
             )
         self._sync_template_buttons()

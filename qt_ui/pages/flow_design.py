@@ -1740,6 +1740,8 @@ class FlowDesignPage(QWidget):
         self.project_dir = project_dir
         self.db = db
         self.current_workflow_id: int | None = None
+        self._event_tree_workflow_id: int | None = None
+        self._event_display_states: dict[int, tuple[Any, ...]] = {}
         self.debug_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='qt-event-debug')
         self.file_log = DailyLogWriter(project_dir)
         self.debug_browser = DebugBrowserSession(
@@ -1959,6 +1961,13 @@ class FlowDesignPage(QWidget):
         self._update_workflow_group_toggle()
 
     def _workflow_selected(self) -> None:
+        if self._event_tree_workflow_id is not None:
+            self._event_display_states[self._event_tree_workflow_id] = (
+                capture_tree_display_state(
+                    self.event_tree,
+                    lambda event_item: event_item.data(0, Qt.ItemDataRole.UserRole),
+                )
+            )
         item = self.workflow_table.currentItem()
         if item is None:
             return
@@ -1967,6 +1976,7 @@ class FlowDesignPage(QWidget):
             self.current_workflow_id = None
             self.event_title.setText(str(data.get('name', '')))
             self.event_tree.clear()
+            self._event_tree_workflow_id = None
             return
         self.current_workflow_id = int(data['id'])
         self.event_title.setText(str(data['name']))
@@ -2107,13 +2117,22 @@ class FlowDesignPage(QWidget):
     def load_events(
         self, select_id: int | None=None, *, selected_ids: set[int] | None=None,
     ) -> None:
-        display_state = capture_tree_display_state(
+        current_display_state = capture_tree_display_state(
             self.event_tree,
             lambda item: item.data(0, Qt.ItemDataRole.UserRole),
         )
+        if self._event_tree_workflow_id is not None:
+            self._event_display_states[self._event_tree_workflow_id] = current_display_state
         if self.current_workflow_id is None:
             self.event_tree.clear()
+            self._event_tree_workflow_id = None
             return
+        display_state = self._event_display_states.get(
+            self.current_workflow_id,
+            current_display_state
+            if self._event_tree_workflow_id == self.current_workflow_id
+            else ((0, 0), False, set()),
+        )
         rows = [dict(row) for row in self.db.list_events(self.current_workflow_id)]
         parent_stack: list[QTreeWidgetItem] = []
         roots: list[QTreeWidgetItem] = []
@@ -2163,6 +2182,10 @@ class FlowDesignPage(QWidget):
                 self.event_tree, display_state,
                 lambda item: item.data(0, Qt.ItemDataRole.UserRole),
             )
+        self._event_tree_workflow_id = self.current_workflow_id
+        self._event_display_states[self.current_workflow_id] = capture_tree_display_state(
+            self.event_tree, lambda item: item.data(0, Qt.ItemDataRole.UserRole),
+        )
         self._update_group_toggle_button()
 
     def _group_items(self) -> list[QTreeWidgetItem]:

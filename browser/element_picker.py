@@ -144,6 +144,11 @@ class ElementPicker:
         if len(raw_steps) < 2 or (not resolved_xpath and not isinstance(row_mapping, dict)):
             raise RuntimeError('error.element_unique_locator_unavailable')
         steps = []
+        source_step_count = (
+            int(row_mapping.get('source_step_count', 1))
+            if isinstance(row_mapping, dict) else 0
+        )
+        source_start = len(raw_steps) - 1 - source_step_count
         for index, raw_step in enumerate(raw_steps):
             if not isinstance(raw_step, dict):
                 continue
@@ -153,7 +158,7 @@ class ElementPicker:
             )
             if index == len(raw_steps) - 1:
                 kind = 'target'
-            elif isinstance(row_mapping, dict) and index == len(raw_steps) - 2:
+            elif isinstance(row_mapping, dict) and index >= source_start:
                 kind = 'source_row'
             else:
                 kind = 'scope'
@@ -510,10 +515,10 @@ class DebugBrowserSession:
             bring_page_to_front(page)
             picker = ElementPicker()
             run_id = uuid.uuid4().hex
-            waiting_text = tr('スクロール領域を選択する画面を開き、F2 を押してください') if require_scroll else tr('要素へマウスを合わせ、F1 で範囲を追加、F2 で対象を確定します（Backspace: 一段戻す / Esc: キャンセル）')
+            waiting_text = tr('スクロール領域を選択する画面を開き、F2 を押してください') if require_scroll else tr('待機中：F1 または F2 で選択モードに入り、対象をクリックします')
             active_text = (
                 tr('スクロール領域を選択してください（Enter で確定、Esc で省略）')
-                if require_scroll else tr(selection_hint or '要素へマウスを合わせ、F1 で範囲を追加、F2 で対象を確定します（Backspace: 一段戻す / Esc: キャンセル）')
+                if require_scroll else tr(selection_hint or '選択中：対象をクリックしてください（Esc: 待機へ戻る）')
             )
             script = picker_script(run_id, waiting_text, active_text)
             while True:

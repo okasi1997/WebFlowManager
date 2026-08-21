@@ -1029,6 +1029,51 @@ class QtShellTests(unittest.TestCase):
         self.assertFalse(page.event_tree.topLevelItem(0).isExpanded())
         self.assertEqual(scrollbar.value(), scroll_before)
 
+    def test_each_workflow_keeps_its_own_event_expansion_state(self) -> None:
+        page = self.window.pages['design']
+        base = {
+            'selector_type': 'none', 'selector': '', 'value': '',
+            'timeout_ms': 10000, 'enabled': True, 'continue_on_error': False,
+            'guard': {'logic': 'all', 'rules': []},
+        }
+        workflow_ids = [self.db.add_workflow(name) for name in ('state A', 'state B')]
+        for workflow_id in workflow_ids:
+            self.db.add_event(workflow_id, base | {'name': 'group', 'action': 'group_start'})
+            self.db.add_event(workflow_id, base | {'name': 'child', 'action': 'click'})
+            self.db.add_event(workflow_id, base | {'name': 'group', 'action': 'group_end'})
+
+        page.reload(workflow_ids[0])
+        page.event_tree.topLevelItem(0).setExpanded(False)
+        page.reload(workflow_ids[1])
+        page.event_tree.topLevelItem(0).setExpanded(True)
+        page.reload(workflow_ids[0])
+        self.assertFalse(page.event_tree.topLevelItem(0).isExpanded())
+        page.reload(workflow_ids[1])
+        self.assertTrue(page.event_tree.topLevelItem(0).isExpanded())
+
+    def test_each_data_record_keeps_its_own_value_expansion_state(self) -> None:
+        schema = {
+            'name': 'Data', 'type': 'object', 'children': [{
+                'name': 'details', 'type': 'object', 'children': [
+                    {'name': 'value', 'type': 'text'},
+                ],
+            }],
+        }
+        self.db.save_data_schema(0, schema)
+        record_ids = [
+            self.db.add_data_record(0, name, {'details': {'value': name}})
+            for name in ('record A', 'record B')
+        ]
+        page = self.window.pages['data']
+        page.reload(record_ids[0])
+        page.values.topLevelItem(0).setExpanded(False)
+        page.reload(record_ids[1])
+        page.values.topLevelItem(0).setExpanded(True)
+        page.reload(record_ids[0])
+        self.assertFalse(page.values.topLevelItem(0).isExpanded())
+        page.reload(record_ids[1])
+        self.assertTrue(page.values.topLevelItem(0).isExpanded())
+
     def test_flow_editor_uses_localized_structured_guard_dialog(self) -> None:
         schema = {'type': 'object', 'children': [{'name': 'case_no', 'type': 'text'}]}
         guard = {'logic': 'all', 'rules': [{'path': 'case_no', 'operator': 'eq', 'value': 'A001'}]}
