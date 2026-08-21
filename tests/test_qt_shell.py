@@ -14,10 +14,11 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from PySide6.QtWidgets import (
     QApplication, QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHeaderView, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox,
-    QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QSplitter, QStyle, QTableWidget,
+    QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QStyle, QTableWidget,
     QTabWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import QEvent, QModelIndex, QPoint, QSize, QTimer, Qt
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtTest import QTest
 
 from core.database import Database
@@ -2898,8 +2899,16 @@ class QtShellTests(unittest.TestCase):
         self.assertIsInstance(editor.multi_path_scroll, QScrollArea)
         self.assertEqual(
             editor.multi_path_scroll.verticalScrollBarPolicy(),
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded,
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+            if editor.multi_path_content.minimumHeight()
+                > editor.multi_path_scroll.viewport().height()
+            else Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
         )
+        self.assertFalse(editor.multi_path_scroll.viewport().autoFillBackground())
+        self.assertIn(
+            'border: 1px solid #d5e1eb', editor.multi_path_scroll.styleSheet(),
+        )
+        self.assertEqual(editor.multi_path_form.contentsMargins().left(), 10)
         self.assertFalse(editor.fallback_selector_type.isVisibleTo(editor))
         self.assertFalse(editor.fallback_selector.isVisibleTo(editor))
         self.assertFalse(editor.findChild(QLabel, 'fallbackTypeLabel').isVisibleTo(editor))
@@ -2907,6 +2916,20 @@ class QtShellTests(unittest.TestCase):
         title = editor.findChild(QLabel, 'multiPathTitle')
         self.assertTrue(title.isVisibleTo(editor))
         self.assertEqual(title.text(), '多段パス（4段）')
+        self.assertLess(
+            editor.iframe_path.mapTo(editor, QPoint()).y(),
+            title.mapTo(editor, QPoint()).y(),
+        )
+        self.assertIs(title.parentWidget(), editor.multi_path_scroll)
+        self.assertEqual(editor.multi_path_scroll.viewportMargins().top(), 13)
+        self.assertEqual(editor.multi_path_title_host.height(), 12)
+        self.assertEqual(
+            editor.findChild(QFrame, 'locatorCard').sizePolicy().verticalPolicy(),
+            QSizePolicy.Policy.Maximum,
+        )
+        locator_tab_layout = editor.findChild(QVBoxLayout, 'eventLocatorTabLayout')
+        self.assertIsNotNone(locator_tab_layout)
+        self.assertTrue(locator_tab_layout.alignment() & Qt.AlignmentFlag.AlignTop)
         self.assertLess(
             title.mapTo(editor, QPoint()).x(),
             editor.multi_path_inputs[0].mapTo(editor, QPoint()).x(),
@@ -2924,14 +2947,18 @@ class QtShellTests(unittest.TestCase):
                 editor.multi_path_inputs[0].mapTo(editor, QPoint()).x()
                 - editor.selector_type.mapTo(editor, QPoint()).x()
             ),
-            2,
+            12,
         )
-        self.assertLessEqual(
-            editor.multi_path_inputs[-1].mapTo(editor, QPoint()).y()
-            + editor.multi_path_inputs[-1].height(),
-            editor.findChild(QFrame, 'locatorCard').mapTo(editor, QPoint()).y()
-            + editor.findChild(QFrame, 'locatorCard').height(),
-        )
+        fill_index = editor.action.findData('fill')
+        self.assertGreaterEqual(fill_index, 0)
+        editor.action.setCurrentIndex(fill_index)
+        self.app.processEvents()
+        if editor.multi_path_content.minimumHeight() > editor.multi_path_scroll.viewport().height():
+            self.assertEqual(
+                editor.multi_path_scroll.verticalScrollBarPolicy(),
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOn,
+            )
+            self.assertGreater(editor.multi_path_scroll.verticalScrollBar().maximum(), 0)
         editor.multi_path_inputs[0].setText('${data:contract_name}')
         result = editor.result_data()
         saved = json.loads(result['selector'])
@@ -2958,7 +2985,7 @@ class QtShellTests(unittest.TestCase):
         )
         self.assertEqual(
             dialog.table.horizontalHeader().sectionResizeMode(2),
-            QHeaderView.ResizeMode.Stretch,
+            QHeaderView.ResizeMode.Interactive,
         )
         self.assertFalse(dialog.table.wordWrap())
         self.assertEqual(dialog.save_insert_button.text(), '保存して挿入')
@@ -2976,12 +3003,25 @@ class QtShellTests(unittest.TestCase):
         self.app.processEvents()
         self.assertFalse(dialog.table.verticalHeader().isVisible())
         self.assertEqual(dialog.table.textElideMode(), Qt.TextElideMode.ElideNone)
-        self.assertGreaterEqual(dialog.table.columnWidth(2), 200)
-        self.assertLessEqual(
-            abs(sum(dialog.table.columnWidth(column) for column in range(3))
-                - dialog.table.viewport().width()),
-            2,
+        self.assertGreater(
+            sum(dialog.table.columnWidth(column) for column in range(3)),
+            dialog.table.viewport().width(),
         )
+        self.assertGreater(dialog.table.horizontalScrollBar().maximum(), 0)
+        self.assertGreaterEqual(
+            dialog.table.columnWidth(2),
+            max(
+                QFontMetrics(dialog.table.item(row, 2).font()).horizontalAdvance(
+                    dialog.table.item(row, 2).text()
+                )
+                for row in range(dialog.table.rowCount())
+            ) + 128,
+        )
+        self.assertEqual(dialog.value.cursorPosition(), 0)
+        original_value_width = dialog.table.columnWidth(2)
+        dialog.value.setText('非常に長い新規設定値' * 20)
+        dialog._save_current()
+        self.assertGreater(dialog.table.columnWidth(2), original_value_width)
         dialog.table.selectRow(0)
         dialog._delete()
         dialog._add()

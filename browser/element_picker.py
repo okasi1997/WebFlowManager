@@ -165,6 +165,7 @@ class ElementPicker:
                 f'{tr("error.element_unique_locator_unavailable")}\n{diagnostics}'
             )
         steps = []
+        occurrence = info.get('path_occurrence')
         source_step_count = (
             int(row_mapping.get('source_step_count', 1))
             if isinstance(row_mapping, dict) else 0
@@ -179,6 +180,17 @@ class ElementPicker:
             )
             if index == len(raw_steps) - 1:
                 kind = 'target'
+                if isinstance(occurrence, dict):
+                    position = str(occurrence.get('position', ''))
+                    if position == 'last':
+                        display = f'{display}{tr("（同一条件の最後）")}'
+                    elif position == 'first':
+                        display = f'{display}{tr("（同一条件の最初）")}'
+                    elif position == 'nth':
+                        display = (
+                            f'{display}{tr("（同一条件の第")}'
+                            f'{occurrence.get("index", "")}{tr("件）")}'
+                        )
             elif isinstance(row_mapping, dict) and index >= source_start:
                 kind = 'source_row'
             else:
@@ -198,6 +210,8 @@ class ElementPicker:
             'version': 1,
             'steps': steps,
         }
+        if isinstance(occurrence, dict):
+            path_data['occurrence'] = occurrence
         if isinstance(row_mapping, dict):
             path_data['row_mapping'] = row_mapping
         else:
@@ -258,6 +272,11 @@ class ElementPicker:
             lines.append(
                 '  row_mapping: '
                 + (json.dumps(mapping, ensure_ascii=False) if isinstance(mapping, dict) else '<empty>')
+            )
+        occurrence = info.get('path_occurrence')
+        if isinstance(occurrence, dict):
+            lines.append(
+                '  occurrence: ' + json.dumps(occurrence, ensure_ascii=False)
             )
         return '\n'.join(lines)
 

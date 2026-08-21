@@ -177,6 +177,29 @@ _PICKER_SCRIPT = r"""
   const xpathCount = (xpath) => document.evaluate(
     xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
   ).snapshotLength;
+  const qualifyXPathOccurrence = (xpath, target) => {
+    if (!xpath) return null;
+    const matches = document.evaluate(
+      xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
+    );
+    let index = -1;
+    for (let current = 0; current < matches.snapshotLength; current += 1) {
+      if (matches.snapshotItem(current) === target) {
+        index = current;
+        break;
+      }
+    }
+    if (index < 0) return null;
+    if (matches.snapshotLength === 1) return {xpath, occurrence: null};
+    const position = index === 0 ? 'first'
+      : index === matches.snapshotLength - 1 ? 'last' : 'nth';
+    const qualified = position === 'last'
+      ? `(${xpath})[last()]` : `(${xpath})[${index + 1}]`;
+    return {
+      xpath: qualified,
+      occurrence: {position, index: index + 1, count: matches.snapshotLength},
+    };
+  };
   const mutableValueControl = (element) => [
     'input', 'textarea', 'select', 'option'
   ].includes(element.tagName.toLowerCase());
@@ -595,6 +618,7 @@ _PICKER_SCRIPT = r"""
     return rangeElement === table
       ? rangeXPath : `(${rangeXPath}//table)[${index + 1}]`;
   };
+  let resolvedOccurrence = null;
   const rowMapping = (anchors, target) => {
     const targetRow = target.closest('tr');
     const targetTable = targetRow?.closest('table');
@@ -645,16 +669,18 @@ _PICKER_SCRIPT = r"""
     const sourceAnchors = anchors.slice(sourceStart);
     const rangeAnchors = anchors.slice(0, sourceStart);
     if (rangeAnchors.some(anchor => !pathScope(anchor).contains(targetTable))) return null;
-    const sourceXPath = rangeAnchors.length
+    const rawSourceXPath = rangeAnchors.length
       ? anchorXPath(anchors) : commonAnchorXPath(sourceAnchors, sourceRow);
     const targetTableXPath = tableXPathWithinRange(rangeAnchors, targetTable);
-    if (!sourceXPath || xpathCount(sourceXPath) !== 1 ||
+    const qualifiedSource = qualifyXPathOccurrence(rawSourceXPath, sourceRow);
+    if (!qualifiedSource || xpathCount(qualifiedSource.xpath) !== 1 ||
         !targetTableXPath || xpathCount(targetTableXPath) !== 1) return null;
+    resolvedOccurrence = qualifiedSource.occurrence;
     return {
       operation: 'same_row_index',
       target_row_mode: rowCount(targetRow) === 1 ? 'only_row' : 'same_index',
       source_step_count: sourceAnchors.length,
-      source: {selector_type: 'xpath', selector: sourceXPath},
+      source: {selector_type: 'xpath', selector: qualifiedSource.xpath},
       target_table: {selector_type: 'xpath', selector: targetTableXPath},
       row_selector: ':scope > tbody > tr, :scope > tr',
       target: {selector_type: 'xpath', selector: `.//${targetFragment(target)}`}
@@ -699,17 +725,21 @@ _PICKER_SCRIPT = r"""
   const finish = (element) => {
     const result = elementResult(element);
     if (pathAnchors.length) {
+      resolvedOccurrence = null;
       const mapping = rowMapping(pathAnchors, element);
       const resolvedXPath = mapping ? '' : scopeXPath(pathAnchors, element);
+      const qualifiedTarget = mapping
+        ? null : qualifyXPathOccurrence(resolvedXPath, element);
       result.path_steps = [
         ...pathAnchors.map(anchor => ({
           ...elementResult(anchor), path_match: scopeMatch(anchor)
         })),
         {...result, path_match: targetMatch(element)}
       ];
-      result.path_xpath = resolvedXPath && xpathCount(resolvedXPath) === 1
-        ? resolvedXPath : '';
+      result.path_xpath = qualifiedTarget && xpathCount(qualifiedTarget.xpath) === 1
+        ? qualifiedTarget.xpath : '';
       result.row_mapping = mapping;
+      result.path_occurrence = resolvedOccurrence || qualifiedTarget?.occurrence || null;
     }
     window.__sfFlowPicked = result;
     clean();

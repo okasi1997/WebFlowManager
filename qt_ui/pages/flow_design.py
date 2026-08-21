@@ -10,7 +10,7 @@ import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
-from PySide6.QtCore import QEvent, QTimer, Qt
+from PySide6.QtCore import QEvent, QPoint, QTimer, Qt
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu,
     QPlainTextEdit, QPushButton, QSpinBox,
     QScrollArea, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QTreeWidget,
-    QTreeWidgetItem, QWidget, QWidgetAction,
+    QTreeWidgetItem, QVBoxLayout, QWidget, QWidgetAction,
 )
 
 from core.conditions import OPERATORS, decode_guard, summarize_guard
@@ -182,8 +182,8 @@ class MultiPathParameterDialog(QDialog):
         parameter_header = self.table.horizontalHeader()
         parameter_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         parameter_header.setMinimumSectionSize(90)
-        # 設定値は残り幅をすべて使い、短い先頭データでも表の右側を空けない。
-        parameter_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        # 短い値では残り幅を使い、長い値では列自体を広げて横スクロール可能にする。
+        parameter_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
         self.table.setWordWrap(False)
         self.table.setTextElideMode(Qt.TextElideMode.ElideNone)
         # Designer 読込直後は viewport が未確定のため、表示レイアウト確定後に再調整する。
@@ -213,7 +213,7 @@ class MultiPathParameterDialog(QDialog):
     def _fit_parameter_columns_to_contents(self) -> None:
         """各列を内容に合わせて広げ、上限を超えた分は横スクロールで表示する。"""
         header = self.table.horizontalHeader()
-        # 最後の「設定値」列は Stretch に任せ、識別用の2列だけ内容幅に合わせる。
+        # 識別用の2列を内容幅に合わせる。
         for column in range(max(0, self.table.columnCount() - 1)):
             self.table.resizeColumnToContents(column)
             width = max(
@@ -221,6 +221,29 @@ class MultiPathParameterDialog(QDialog):
                 min(220, self.table.columnWidth(column)),
             )
             self.table.setColumnWidth(column, width)
+        if self.table.columnCount() < 3:
+            return
+        # 内容幅と現在の viewport 残り幅の大きい方を採用する。これにより短い値では
+        # 余白を埋め、長い値では table 全体が viewport を越えてスクロールできる。
+        value_end_padding = max(
+            128, self.table.verticalScrollBar().sizeHint().width() + 96,
+        )
+        content_width = max(
+            [header.sectionSizeHint(2)] + [
+                QFontMetrics(self.table.item(row, 2).font()).horizontalAdvance(
+                    self.table.item(row, 2).text()
+                )
+                + value_end_padding
+                for row in range(self.table.rowCount())
+                if self.table.item(row, 2) is not None
+            ]
+        )
+        remaining_width = max(
+            header.minimumSectionSize(),
+            self.table.viewport().width()
+            - self.table.columnWidth(0) - self.table.columnWidth(1),
+        )
+        self.table.setColumnWidth(2, max(content_width, remaining_width))
 
     @staticmethod
     def _sort_key(number: str) -> int:
@@ -268,6 +291,7 @@ class MultiPathParameterDialog(QDialog):
             combo.blockSignals(False)
         self.value.blockSignals(True)
         self.value.setText(str(parameter.get('value', '')))
+        self.value.setCursorPosition(0)
         self.value.blockSignals(False)
         self.maximum.blockSignals(True)
         self.maximum.setValue(int(parameter.get('max_length', 120)))
@@ -287,6 +311,7 @@ class MultiPathParameterDialog(QDialog):
         if row >= 0:
             self.table.item(row, 1).setText(tr(self.SOURCE_LABELS[str(self.source.currentData())]))
             self.table.item(row, 2).setText(self.value.text())
+            self._fit_parameter_columns_to_contents()
 
     def _source_changed(self, *_args) -> None:
         is_data = self.source.currentData() == 'data'
@@ -450,9 +475,24 @@ class EventEditorDialog(QDialog):
         self.guard_data = decode_guard(event.get('guard_json', event.get('guard', '')))
         self.left_tabs = require(self, QTabWidget, 'eventEditorTabs')
         self._tab_layouts_prepared = False
+        # Keep compact selector forms anchored to the top. Multi-path height is
+        # calculated separately, so spare height must not be spread between cards.
+        require(self, QVBoxLayout, 'eventLocatorTabLayout').setAlignment(
+            Qt.AlignmentFlag.AlignTop
+        )
+        locator_form = require(self, QFormLayout, 'locatorForm')
+        iframe_label = require(self, QLabel, 'iframeLabel')
+        iframe_row, _iframe_role = locator_form.getWidgetPosition(iframe_label)
+        if iframe_row >= 0 and iframe_row != 2:
+            iframe_items = locator_form.takeRow(iframe_row)
+            if iframe_items.labelItem is not None and iframe_items.fieldItem is not None:
+                label_widget = iframe_items.labelItem.widget()
+                field_layout = iframe_items.fieldItem.layout()
+                if label_widget is not None and field_layout is not None:
+                    locator_form.insertRow(2, label_widget, field_layout)
         optically_align_form_labels(
             require(self, QFormLayout, 'eventFormBasic'),
-            require(self, QFormLayout, 'locatorForm'),
+            locator_form,
             require(self, QFormLayout, 'executionForm'),
         )
         # QTabBar の expanding は Designer から保存できないため、実行時に補完する。
@@ -462,10 +502,33 @@ class EventEditorDialog(QDialog):
         self.multi_path_title = require(self, QLabel, 'multiPathTitle')
         self.multi_path_host = require(self, QWidget, 'multiPathHost')
         self.multi_path_scroll = require(self, QScrollArea, 'multiPathHost')
+        self.multi_path_content = require(self, QWidget, 'multiPathContent')
+        # タイトルを枠線上へ重ね、独立した見出し行を使わないグループ表示にする。
+        self.multi_path_title.setParent(self.multi_path_scroll)
+        self.multi_path_title.setStyleSheet(
+            'background: white; padding: 0 6px; font-weight: 600;'
+        )
+        self.multi_path_title.move(12, 0)
+        self.multi_path_title.raise_()
+        self.multi_path_title_host.setFixedHeight(12)
+        self.multi_path_title_host.setVisible(False)
+        self.multi_path_scroll.setViewportMargins(0, 13, 0, 0)
+        self.multi_path_scroll.setStyleSheet(
+            'QScrollArea#multiPathHost {'
+            ' background: transparent; border: 1px solid #d5e1eb; border-radius: 6px;'
+            '}'
+            'QScrollArea#multiPathHost > QWidget > QWidget {'
+            ' background: transparent; border: none;'
+            '}'
+        )
+        self.multi_path_scroll.viewport().setAutoFillBackground(False)
+        self.multi_path_content.setAutoFillBackground(False)
         self.multi_path_form = require(self, QFormLayout, 'multiPathForm')
+        self.multi_path_form.setContentsMargins(10, 8, 6, 8)
         self.fallback_type_host = require(self, QWidget, 'fallbackTypeHost')
         self.multi_path_inputs: list[QLineEdit] = []
         self._multi_path_data: dict[str, Any] = {}
+        self._multi_path_resize_pending = False
         try:
             decoded_parameters = json.loads(str(event.get('selector_parameters_json', '') or '{}'))
             self._selector_parameters = decoded_parameters if isinstance(decoded_parameters, dict) else {}
@@ -600,6 +663,7 @@ class EventEditorDialog(QDialog):
         self.multi_path_inputs = []
         steps = multi_path_steps(self.selector.text())
         self.multi_path_title.setText(f'{tr("多段パス")}（{len(steps)}{tr("段")}）')
+        self.multi_path_title.adjustSize()
         for index, step in enumerate(steps, start=1):
             kind = {
                 'target': '対象', 'source_row': '基準行', 'scope': '範囲',
@@ -629,13 +693,65 @@ class EventEditorDialog(QDialog):
             self.multi_path_form.addRow(label, row)
             self.multi_path_inputs.append(value)
         if steps:
-            row_height = max(34, self.multi_path_inputs[0].sizeHint().height())
-            visible_rows = min(4, len(steps))
-            self.multi_path_scroll.setFixedHeight(
-                visible_rows * row_height
-                + max(0, visible_rows - 1) * self.multi_path_form.verticalSpacing()
-                + 4
+            self.multi_path_form.activate()
+            spacing = self.multi_path_form.verticalSpacing()
+            margins = self.multi_path_form.contentsMargins()
+            vertical_margins = margins.top() + margins.bottom()
+            content_height = max(
+                self.multi_path_form.sizeHint().height(),
+                self.multi_path_content.sizeHint().height(),
             )
+            rows_space = max(
+                0, content_height - vertical_margins - (len(steps) - 1) * spacing,
+            )
+            row_height = max(38, (rows_space + len(steps) - 1) // len(steps))
+            # widgetResizable でも内容を viewport 高まで潰さず、超過分を確実にスクロールさせる。
+            self.multi_path_content.setMinimumHeight(content_height)
+            self._multi_path_row_height = row_height
+            self._multi_path_content_height = content_height
+            self._multi_path_spacing = spacing
+            self._multi_path_vertical_margins = vertical_margins
+
+    def _schedule_multi_path_resize(self) -> None:
+        """Coalesce geometry changes so one settled layout produces one resize."""
+        if self._multi_path_resize_pending:
+            return
+        self._multi_path_resize_pending = True
+
+        def resize_once() -> None:
+            self._multi_path_resize_pending = False
+            self._resize_multi_path_area()
+
+        QTimer.singleShot(0, resize_once)
+
+    def _resize_multi_path_area(self) -> None:
+        """左カードの残り高さを使い、3～7行の範囲で Path 領域を伸縮する。"""
+        if not getattr(self, 'multi_path_inputs', None):
+            return
+        left_tab = self.findChild(QFrame, 'eventLocatorTab')
+        if left_tab is None:
+            return
+        row_height = self._multi_path_row_height
+        spacing = self._multi_path_spacing
+        margins = self._multi_path_vertical_margins
+        title_space = self.multi_path_scroll.viewportMargins().top()
+        minimum = row_height + margins + title_space + 2
+        maximum = 7 * row_height + 6 * spacing + margins + title_space + 2
+        top = self.multi_path_scroll.mapTo(left_tab, QPoint()).y()
+        available = max(minimum, left_tab.contentsRect().bottom() - top - 18)
+        target_height = min(maximum, available)
+        self.multi_path_scroll.setFixedHeight(target_height)
+        visible_content_height = max(0, target_height - title_space - 2)
+        self.multi_path_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+            if self._multi_path_content_height > visible_content_height
+            else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, 'multi_path_scroll'):
+            self._schedule_multi_path_resize()
 
     def _sync_multi_path_values(self) -> None:
         """入力値を内部 JSON へ戻し、イベント保存と試行で同じ値を使用する。"""
@@ -757,6 +873,8 @@ class EventEditorDialog(QDialog):
                 if page.layout() is not None:
                     page.layout().activate()
             self.left_tabs.setCurrentIndex(current)
+            # Finalize the initial multi-path geometry before painting resumes.
+            self._resize_multi_path_area()
         finally:
             self.left_tabs.blockSignals(signals_blocked)
             self.setUpdatesEnabled(updates_enabled)
@@ -864,6 +982,7 @@ class EventEditorDialog(QDialog):
         show_row(locator_form, self.selector_type, selector_enabled)
         show_row(locator_form, self.selector_host, selector_enabled and not path_enabled)
         self.multi_path_title_host.setVisible(path_enabled)
+        self.multi_path_title.setVisible(path_enabled)
         show_row(locator_form, self.multi_path_host, path_enabled)
         show_row(locator_form, self.fallback_type_host, selector_enabled and not path_enabled)
         show_row(locator_form, self.fallback_selector_host, selector_enabled and not path_enabled)
@@ -919,6 +1038,9 @@ class EventEditorDialog(QDialog):
         # 表示行を切り替えた直後でも、未表示の編集画面で座標と高さを確定させる。
         locator_form.activate()
         execution_form.activate()
+        require(self, QVBoxLayout, 'eventLocatorTabLayout').activate()
+        if path_enabled:
+            self._schedule_multi_path_resize()
         self._update_picker_destination()
 
     def _update_picker_destination(self, _index: int=-1) -> None:

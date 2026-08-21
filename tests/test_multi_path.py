@@ -123,6 +123,7 @@ class MultiPathLocatorTests(unittest.TestCase):
         locator.count.return_value = 1
         info = {
             'path_xpath': "//tr[contains(.,'サービス')]//input",
+            'path_occurrence': {'position': 'last', 'index': 2, 'count': 2},
             'path_steps': [
                 {'tag': 'tr', 'text': 'サービス'},
                 {'tag': 'tr', 'text': '料金行'},
@@ -144,6 +145,8 @@ class MultiPathLocatorTests(unittest.TestCase):
             'scope', 'scope', 'target',
         ])
         self.assertEqual(saved['resolved']['selector_type'], 'xpath')
+        self.assertEqual(saved['occurrence']['position'], 'last')
+        self.assertIn('同一条件の最後', saved['steps'][-1]['display'])
         self.assertIn('Path diagnostics:', result['path_diagnostics'])
         self.assertIn('resolved:', result['path_diagnostics'])
         self.assertIn('match_count: 1', result['path_diagnostics'])
@@ -244,6 +247,9 @@ class MultiPathLocatorTests(unittest.TestCase):
         self.assertIn('matches.snapshotLength === 1', script)
         self.assertIn('const sourceAnchors = anchors.slice(sourceStart)', script)
         self.assertIn('sourceRow.contains(targetTable)', script)
+        self.assertIn('const qualifyXPathOccurrence = (xpath, target)', script)
+        self.assertIn("? `(${xpath})[last()]`", script)
+        self.assertIn('qualifiedSource.xpath', script)
         self.assertIn('normalize-space(translate(', script)
         self.assertIn("xpathLiteral('\\u00a0\\u3000')", script)
         self.assertIn('const mutableValueControl = (element)', script)
