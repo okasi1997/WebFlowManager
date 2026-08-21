@@ -452,9 +452,26 @@ class DebugBrowserSession:
         self.storage_state_getter = storage_state_getter or (lambda: self.project_dir / 'data' / 'browser_state.json')
         self.action_stable_ms_getter = action_stable_ms_getter or (lambda: 250)
         self._tasks: queue.Queue[tuple[Callable[[], Any] | None, Future[Any]]] = queue.Queue()
-        self._cancel_requested = threading.Event()
+        # Give each long-running picker its own cancellation token. A shared
+        # Event could be cleared by the next request before the worker saw it.
+        self._selection_lock = threading.Lock()
+        self._active_selection_cancel: threading.Event | None = None
         self._thread: threading.Thread | None = None
         self._thread_lock = threading.Lock()
+
+    def _begin_selection(self) -> threading.Event:
+        cancel_requested = threading.Event()
+        with self._selection_lock:
+            previous = self._active_selection_cancel
+            self._active_selection_cancel = cancel_requested
+            if previous is not None:
+                previous.set()
+        return cancel_requested
+
+    def _finish_selection(self, cancel_requested: threading.Event) -> None:
+        with self._selection_lock:
+            if self._active_selection_cancel is cancel_requested:
+                self._active_selection_cancel = None
 
     def _ensure_worker(self) -> None:
         """初回のブラウザー操作まで Playwright の初期化を遅延する。"""
@@ -580,7 +597,7 @@ class DebugBrowserSession:
         return future.result(timeout=timeout)
 
     def open(self, target_url: str='') -> None:
-        self._cancel_requested.clear()
+        self.cancel_selection()
         def task() -> None:
             _context, page = self._ensure_page(target_url)
             bring_page_to_front(page)
@@ -590,7 +607,7 @@ class DebugBrowserSession:
         self, target_url: str='', action: str='', require_scroll: bool=False,
         selection_hint: str='',
     ) -> dict[str, Any]:
-        self._cancel_requested.clear()
+        cancel_requested = self._begin_selection()
 
         def task() -> dict[str, str]:
             _context, page = self._ensure_page(target_url)
@@ -616,7 +633,7 @@ class DebugBrowserSession:
                 screenshot_mode=action == 'screenshot' and not require_scroll,
             )
             while True:
-                if self._cancel_requested.is_set():
+                if cancel_requested.is_set():
                     raise RuntimeError('event.element_selection_cancelled')
                 page = active_page(page)
                 page.wait_for_timeout(100)
@@ -664,7 +681,10 @@ class DebugBrowserSession:
                                 f'{size["width"]}x{size["height"]})'
                             )
                         return picked
-        return self._submit(task)
+        try:
+            return self._submit(task)
+        finally:
+            self._finish_selection(cancel_requested)
 
     def execute_event(
         self, event: dict[str, Any], target_url: str='', *,
@@ -674,6 +694,7 @@ class DebugBrowserSession:
         logger: Callable[[str], None] | None = None,
     ) -> None:
         """現在のページで編集中のイベントを一度だけ実行する。"""
+        self.cancel_selection()
         def task() -> None:
             from core.executor import WorkflowExecutor
             _context, page = self._ensure_page(target_url)
@@ -691,6 +712,7 @@ class DebugBrowserSession:
 
     def highlight_element(self, event: dict[str, Any], target_url: str='') -> None:
         """Chrome を前面へ移動し、設定された要素を短時間強調表示する。"""
+        self.cancel_selection()
         def task() -> None:
             from core.executor import WorkflowExecutor
             _context, page = self._ensure_page(target_url)
@@ -730,6 +752,7 @@ class DebugBrowserSession:
         variables: dict[str, str], target_url: str='',
         logger: Callable[[str], None] | None=None,
     ) -> None:
+        self.cancel_selection()
         def task() -> None:
             from core.conditions import evaluate_guard
             from core.executor import WorkflowExecutor
@@ -790,7 +813,7 @@ class DebugBrowserSession:
         self._submit(task)
 
     def close_browser(self) -> None:
-        self._cancel_requested.set()
+        self.cancel_selection()
         if self._thread is None:
             return
         # ワーカー初期化前に _dispose を参照すると競合するため実行時に解決する。
@@ -801,10 +824,13 @@ class DebugBrowserSession:
 
     def cancel_selection(self) -> None:
         """ブラウザーを閉じず、待機中の要素選択だけを解除する。"""
-        self._cancel_requested.set()
+        with self._selection_lock:
+            cancel_requested = self._active_selection_cancel
+        if cancel_requested is not None:
+            cancel_requested.set()
 
     def shutdown(self) -> None:
-        self._cancel_requested.set()
+        self.cancel_selection()
         if self._thread is None:
             return
         future: Future[Any] = Future()

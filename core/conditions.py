@@ -5,7 +5,10 @@ import json
 from typing import Any, Callable
 
 
-OPERATORS = ('eq', 'ne', 'contains', 'not_contains', 'gt', 'ge', 'lt', 'le', 'empty', 'not_empty', 'true', 'false')
+OPERATORS = (
+    'eq', 'ne', 'contains', 'not_contains', 'gt', 'ge', 'lt', 'le',
+    'empty', 'not_empty', 'exists', 'not_exists', 'true', 'false',
+)
 
 
 def decode_guard(value: Any) -> dict[str, Any]:
@@ -56,12 +59,18 @@ def summarize_guard(guard: dict[str, Any] | None, operator_labels: dict[str, str
     parts = []
     for rule in normalized['rules']:
         operator = labels.get(rule['operator'], rule['operator'])
-        suffix = '' if rule['operator'] in {'empty', 'not_empty', 'true', 'false'} else f" {rule['value']}"
+        suffix = '' if rule['operator'] in {
+            'empty', 'not_empty', 'exists', 'not_exists', 'true', 'false',
+        } else f" {rule['value']}"
         parts.append(f"{rule['path']} {operator}{suffix}")
     return joiner.join(parts)
 
 
 def _evaluate_rule(actual: Any, operator: str, expected: str) -> bool:
+    if operator == 'exists':
+        return actual is not None
+    if operator == 'not_exists':
+        return actual is None
     if operator == 'empty':
         return actual is None or actual == '' or actual == [] or actual == {}
     if operator == 'not_empty':

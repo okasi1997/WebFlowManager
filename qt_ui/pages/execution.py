@@ -937,6 +937,7 @@ class ExecutionPage(QWidget):
         try:
             WorkflowExecutor(
                 self.project_dir, self.append_log, self.db.get_action_stable_ms(),
+                close_source_tabs=True,
             ).run_batch(
                 steps, {}, on_step_start=step_start, on_step_success=step_success,
                 on_step_failure=step_failure, on_event_start=event_start,

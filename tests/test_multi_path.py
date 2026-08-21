@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from browser.element_picker import ElementPicker
+from browser.element_picker import DebugBrowserSession, ElementPicker
 from browser.locators import (
     build_locator, multi_path_steps, selector_console_preview, selector_preview,
 )
@@ -23,6 +23,19 @@ from core.executor import WorkflowExecutor
 
 
 class MultiPathLocatorTests(unittest.TestCase):
+    def test_debug_browser_new_selection_cancels_only_previous_selection(self) -> None:
+        session = DebugBrowserSession(Path('.'), '', lambda *_args: None)
+
+        first = session._begin_selection()
+        second = session._begin_selection()
+
+        self.assertTrue(first.is_set())
+        self.assertFalse(second.is_set())
+        # Finishing the old request must not detach the newer request's token.
+        session._finish_selection(first)
+        session.cancel_selection()
+        self.assertTrue(second.is_set())
+
     def test_build_locator_reuses_resolved_xpath(self) -> None:
         context = MagicMock()
         selector = json.dumps({

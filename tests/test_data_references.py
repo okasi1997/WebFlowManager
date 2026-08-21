@@ -1,9 +1,29 @@
 import unittest
 
+from core.conditions import evaluate_guard
 from core.executor import WorkflowExecutor
 
 
 class DataReferenceTests(unittest.TestCase):
+    def test_template_presence_guard_distinguishes_empty_instance_from_missing(self) -> None:
+        root_data = {
+            '_template_instances': [{
+                'template_id': 'product',
+                'template_name': '商品',
+                'data': {},
+            }],
+        }
+        resolver = lambda path: WorkflowExecutor._resolve_guard_data(root_data, path, {})
+
+        self.assertTrue(evaluate_guard({
+            'logic': 'all',
+            'rules': [{'path': '@template.商品', 'operator': 'exists', 'value': ''}],
+        }, resolver))
+        self.assertTrue(evaluate_guard({
+            'logic': 'all',
+            'rules': [{'path': '@template.未設定', 'operator': 'not_exists', 'value': ''}],
+        }, resolver))
+
     def test_replaces_multiple_scalar_references(self) -> None:
         data = {
             'PCL_NO': 'PCL_001',

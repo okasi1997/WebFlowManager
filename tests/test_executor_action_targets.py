@@ -90,6 +90,66 @@ class ExecutorActionTargetTests(unittest.TestCase):
         locator.fill.assert_called_once_with('text')
         locator.press.assert_called_once_with('Enter')
 
+    def test_formal_execution_closes_source_tab_after_new_tab_is_adopted(self) -> None:
+        source_page = Mock()
+        source_page.is_closed.return_value = False
+        source_page.context = Mock()
+        new_page = Mock()
+        locator = Mock()
+        event = {
+            'action': 'click', 'selector_type': 'css', 'selector': '#open',
+            'fallback_selector_type': 'none', 'fallback_selector': '',
+            'timeout_ms': 1000, 'success_json': '',
+        }
+        executor = WorkflowExecutor(
+            Path(self.temporary_dir.name), lambda _message: None,
+            close_source_tabs=True,
+        )
+
+        with (
+            patch('core.executor.active_page', return_value=source_page),
+            patch('core.executor.open_pages', return_value=[source_page]),
+            patch('core.executor.settle_new_page', return_value=new_page),
+            patch.object(executor, '_event_locator', return_value=locator),
+            patch.object(executor, '_wait_for_stable_action_target'),
+            patch.object(executor, '_arm_click_receipt', return_value=('token', 'handle')),
+            patch.object(executor, '_click_was_received', return_value=True),
+            patch.object(executor, '_wait_for_event_success'),
+        ):
+            executor._execute_event(
+                source_page, event, {}, Path(self.temporary_dir.name),
+            )
+
+        source_page.close.assert_called_once_with()
+
+    def test_debug_execution_keeps_source_tab_after_new_tab_is_adopted(self) -> None:
+        source_page = Mock()
+        source_page.is_closed.return_value = False
+        source_page.context = Mock()
+        new_page = Mock()
+        locator = Mock()
+        event = {
+            'action': 'click', 'selector_type': 'css', 'selector': '#open',
+            'fallback_selector_type': 'none', 'fallback_selector': '',
+            'timeout_ms': 1000, 'success_json': '',
+        }
+
+        with (
+            patch('core.executor.active_page', return_value=source_page),
+            patch('core.executor.open_pages', return_value=[source_page]),
+            patch('core.executor.settle_new_page', return_value=new_page),
+            patch.object(self.executor, '_event_locator', return_value=locator),
+            patch.object(self.executor, '_wait_for_stable_action_target'),
+            patch.object(self.executor, '_arm_click_receipt', return_value=('token', 'handle')),
+            patch.object(self.executor, '_click_was_received', return_value=True),
+            patch.object(self.executor, '_wait_for_event_success'),
+        ):
+            self.executor._execute_event(
+                source_page, event, {}, Path(self.temporary_dir.name),
+            )
+
+        source_page.close.assert_not_called()
+
     def test_get_text_can_extract_only_the_regex_match(self) -> None:
         page = Mock()
         page.is_closed.return_value = False

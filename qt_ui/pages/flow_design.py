@@ -1605,9 +1605,10 @@ GUARD_OPERATOR_LABELS = {
     'eq': '等しい', 'ne': '等しくない', 'contains': '含む',
     'not_contains': '含まない', 'gt': 'より大きい', 'ge': '以上',
     'lt': 'より小さい', 'le': '以下', 'empty': '空',
-    'not_empty': '空ではない', 'true': '真', 'false': '偽',
+    'not_empty': '空ではない', 'exists': '設定済み', 'not_exists': '未設定',
+    'true': '真', 'false': '偽',
 }
-UNARY_GUARD_OPERATORS = {'empty', 'not_empty', 'true', 'false'}
+UNARY_GUARD_OPERATORS = {'empty', 'not_empty', 'exists', 'not_exists', 'true', 'false'}
 
 
 def _schema_condition_paths(schema: dict[str, Any]) -> list[str]:
@@ -1622,6 +1623,7 @@ def _schema_condition_paths(schema: dict[str, Any]) -> list[str]:
     walk(schema)
     for template in schema_templates(normalize_template_schema(schema)):
         prefix = f'@template.{template["name"]}'
+        paths.append(prefix)
         walk(template, prefix)
     return paths
 
@@ -1688,7 +1690,7 @@ class DataPathPickerDialog(QDialog):
             item = QTreeWidgetItem([str(template.get('name', '')), tr('テンプレート'), path])
             item.setData(
                 0, Qt.ItemDataRole.UserRole,
-                path if allowed_types is not None and 'object' in allowed_types else None,
+                path if allowed_types is None or 'object' in allowed_types else None,
             )
             item.setData(0, Qt.ItemDataRole.UserRole + 1, path)
             self.tree.addTopLevelItem(item)

@@ -2735,6 +2735,9 @@ class QtShellTests(unittest.TestCase):
         template_picker = DataPathPickerDialog(editor, template_schema)
         template_item = template_picker.tree.topLevelItem(0)
         self.assertEqual(template_item.text(2), '@template.仮想商材')
+        self.assertEqual(
+            template_item.data(0, Qt.ItemDataRole.UserRole), '@template.仮想商材',
+        )
         self.assertEqual(template_item.child(0).text(2), '@template.仮想商材.電話番号')
         template_picker.close()
         editor.close()

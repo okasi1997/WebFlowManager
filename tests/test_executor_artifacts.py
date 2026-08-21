@@ -1,3 +1,4 @@
+import json
 import unittest
 from datetime import datetime
 
@@ -5,6 +6,25 @@ from core.executor import WorkflowExecutor
 
 
 class ExecutorArtifactNameTests(unittest.TestCase):
+    def test_multi_path_event_log_detail_does_not_repeat_selector_json(self) -> None:
+        selector = {
+            'version': 1,
+            'steps': [
+                {'kind': 'scope', 'value': 'service'},
+                {'kind': 'target', 'value': 'quantity'},
+            ],
+            'resolved': {'selector_type': 'xpath', 'selector': '//input'},
+            'parameters': {'1': {'resolved_value': 'very long value'}},
+        }
+
+        detail = WorkflowExecutor._event_log_detail({
+            'action': 'fill', 'selector_type': 'path',
+            'selector': json.dumps(selector), 'value': '2',
+        }, {})
+
+        self.assertEqual(detail, 'fill path=multi-path(2 steps) value="2"')
+        self.assertNotIn('resolved', detail)
+
     def test_single_event_context_uses_first_item_of_each_parent_group(self) -> None:
         first_service = {
             'instance_id': 'service-1', 'template_id': 'microsoft365',

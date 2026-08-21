@@ -238,6 +238,7 @@ class WorkflowExecutor:
     def __init__(
         self, project_dir: Path, logger: Callable[[str], None],
         action_stable_ms: int=DEFAULT_ACTION_STABLE_MS,
+        close_source_tabs: bool=False,
     ) -> None:
         self.project_dir = project_dir
         self.logger = lambda message: logger(tr(message))
@@ -247,6 +248,7 @@ class WorkflowExecutor:
         self._active_event_prefix = ''
         self._session_log_prefix = '[S1] | '
         self.action_stable_ms = max(0, int(action_stable_ms))
+        self.close_source_tabs = bool(close_source_tabs)
 
     def run_batch(self, steps: list[dict[str, Any]], variables: dict[str, str], on_step_start: Callable[[dict[str, Any]], Any] | None=None, on_step_success: Callable[[dict[str, Any], Any], None] | None=None, on_step_failure: Callable[[dict[str, Any], Any, Exception], None] | None=None, on_event_start: Callable[[dict[str, Any], dict[str, Any]], None] | None=None, stop_requested: Callable[[], bool] | None=None, browser_visible: bool=True, session_name: str='batch', storage_state_path: Path | None | bool=False) -> None:
         """計画済みの全ステップを、一つの browser/context/page で実行する。"""
@@ -695,7 +697,19 @@ class WorkflowExecutor:
 
         parts = [action]
         if selector_type != 'none' and selector:
-            parts.append(f'selector[{selector_type}]="{clean(selector)}"')
+            if selector_type == 'path':
+                try:
+                    path_data = json.loads(selector)
+                    steps = path_data.get('steps', []) if isinstance(path_data, dict) else []
+                    step_count = len([step for step in steps if isinstance(step, dict)])
+                except (TypeError, ValueError):
+                    step_count = 0
+                parts.append(
+                    f'path=multi-path({step_count} steps)'
+                    if step_count else 'path=multi-path'
+                )
+            else:
+                parts.append(f'selector[{selector_type}]="{clean(selector)}"')
         if action == 'goto':
             parts.append(f'url="{clean(value)}"')
         elif action == 'fill':
@@ -796,7 +810,8 @@ class WorkflowExecutor:
         if top_level:
             return top_level[0]
         # list 内に追加された場合だけ、ループ用の一覧として返す。
-        return cls._matching_template_data(root_data, template_key)
+        matches = cls._matching_template_data(root_data, template_key)
+        return matches if matches else None
 
     @staticmethod
     def _resolve_child_data(
@@ -1524,7 +1539,12 @@ class WorkflowExecutor:
             locator.click()
             if not self._click_was_received(click_handle, click_token):
                 raise RuntimeError('Click event was not received by the target element')
-            settle_new_page(page, previous_pages, timeout)
+            new_page = settle_new_page(page, previous_pages, timeout)
+            if (
+                self.close_source_tabs and new_page is not page
+                and not page.is_closed()
+            ):
+                page.close()
             self._wait_for_event_success(page, event, variables, timeout)
         elif action == 'fill':
             locator = self._fast_event_locator(
