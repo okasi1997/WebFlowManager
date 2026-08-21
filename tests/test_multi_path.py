@@ -58,6 +58,32 @@ class MultiPathLocatorTests(unittest.TestCase):
         build_locator(context, 'path', json.dumps(selector))
         locator.nth.assert_called_with(2)
 
+    def test_occurrence_preview_uses_the_edited_one_based_rule(self) -> None:
+        selector = {
+            'steps': [{'value': 'target'}],
+            'occurrence': {'position': 'first', 'index': 1, 'count': 3},
+            'resolved': {
+                'selector_type': 'xpath',
+                'selector': '(//input[@name="price"])[1]',
+            },
+        }
+
+        selector['occurrence_rule'] = 'first'
+        self.assertEqual(
+            selector_preview('path', json.dumps(selector)),
+            '(//input[@name="price"])[1]',
+        )
+        selector['occurrence_rule'] = '3'
+        self.assertEqual(
+            selector_preview('path', json.dumps(selector)),
+            '(//input[@name="price"])[3]',
+        )
+        selector['occurrence_rule'] = 'LAST'
+        self.assertEqual(
+            selector_preview('path', json.dumps(selector)),
+            '(//input[@name="price"])[last()]',
+        )
+
     def test_build_locator_renders_edited_step_values(self) -> None:
         context = MagicMock()
         selector = json.dumps({
@@ -251,6 +277,7 @@ class MultiPathLocatorTests(unittest.TestCase):
         self.assertIn('const enterSelectionMode = (keyName) =>', script)
         self.assertIn('const leaveSelectionMode = () =>', script)
         self.assertIn("enterSelectionMode('F1')", script)
+        self.assertIn('const allowF1 = true', script)
         self.assertIn("enterSelectionMode('F2')", script)
         self.assertIn("selectionKey === 'F1'", script)
         self.assertIn("document.addEventListener('click', choose, true)", script)
@@ -263,6 +290,22 @@ class MultiPathLocatorTests(unittest.TestCase):
         self.assertIn('const siblingScopeXPath = (anchors, target) =>', script)
         self.assertIn('const commonAnchorXPath = (anchors, target) =>', script)
         self.assertIn('sourceRows.sort((left, right)', script)
+
+        screenshot_script = picker_script(
+            'run', 'wait', 'active', allow_f1=False,
+        )
+        self.assertIn('const allowF1 = false', screenshot_script)
+        self.assertIn("if (allowF1 || screenshotMode) enterSelectionMode('F1')", screenshot_script)
+
+        screenshot_session_script = picker_script(
+            'run', 'wait', 'active', allow_f1=False, screenshot_mode=True,
+        )
+        self.assertIn('const screenshotMode = true', screenshot_session_script)
+        self.assertIn('finishScreenshot()', screenshot_session_script)
+        self.assertIn('recordScreenshotElement(hovered)', screenshot_session_script)
+        self.assertIn("screenshotHistory.pop()", screenshot_session_script)
+        self.assertIn('__sf-flow-capture-area', screenshot_session_script)
+        self.assertIn('__sf-flow-scroll-area', screenshot_session_script)
         self.assertIn('commonAnchorXPath(sourceAnchors, sourceRow)', script)
         self.assertIn("target_row_mode: rowCount(targetRow) === 1", script)
         self.assertIn("['button', 'a'].includes(tag)", script)

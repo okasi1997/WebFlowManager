@@ -101,6 +101,21 @@ def _apply_occurrence_rule(locator: Any, rule: str) -> Any:
     raise ValueError('Multi-path occurrence must be first, last, or a positive number')
 
 
+def _occurrence_xpath_preview(selector: str, occurrence: Any, rule: str) -> str:
+    """Return the effective 1-based XPath shown in diagnostics."""
+    normalized = str(rule).strip().lower()
+    if not normalized:
+        return selector
+    base = _base_occurrence_xpath(selector, occurrence)
+    if normalized == 'last':
+        return f'({base})[last()]'
+    if normalized == 'first':
+        return f'({base})[1]'
+    if normalized.isdigit() and int(normalized) >= 1:
+        return f'({base})[{int(normalized)}]'
+    return selector
+
+
 def selector_preview(selector_type: str, selector: str) -> str:
     """ログ用に、パラメーター展開後の実際の検出パスを返す。"""
     if selector_type != 'path':
@@ -109,14 +124,26 @@ def selector_preview(selector_type: str, selector: str) -> str:
     rendered = _render_path_values(data) if isinstance(data, dict) else {}
     resolved = rendered.get('resolved', {}) if isinstance(rendered, dict) else {}
     if isinstance(resolved, dict) and resolved.get('selector'):
-        return str(resolved['selector'])
+        resolved_selector = str(resolved['selector'])
+        if str(resolved.get('selector_type', '')) == 'xpath':
+            return _occurrence_xpath_preview(
+                resolved_selector, rendered.get('occurrence'),
+                str(rendered.get('occurrence_rule', '')),
+            )
+        return resolved_selector
     mapping = rendered.get('row_mapping', {}) if isinstance(rendered, dict) else {}
     if isinstance(mapping, dict) and mapping:
         source = mapping.get('source', {})
         target_table = mapping.get('target_table', {})
         target = mapping.get('target', {})
+        source_selector = str(source.get('selector', ''))
+        if str(source.get('selector_type', '')) == 'xpath':
+            source_selector = _occurrence_xpath_preview(
+                source_selector, rendered.get('occurrence'),
+                str(rendered.get('occurrence_rule', '')),
+            )
         return (
-            f'source={source.get("selector", "")} -> '
+            f'source={source_selector} -> '
             f'target_table={target_table.get("selector", "")} -> '
             f'target={target.get("selector", "")} (same_row_index)'
         )

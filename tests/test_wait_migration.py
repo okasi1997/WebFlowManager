@@ -98,6 +98,26 @@ class WaitMigrationTests(unittest.TestCase):
         self.assertEqual(event['action'], 'wait')
         self.assertEqual(event['value'], 'operable')
 
+    def test_get_text_regex_is_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            database = Database(Path(folder) / 'test.db')
+            workflow_id = database.add_workflow('test')
+            event_id = database.add_event(workflow_id, {
+                'name': 'estimate id', 'action': 'get_text',
+                'selector_type': 'css', 'selector': '#estimate-id',
+                'value': 'estimate_id', 'data_path': '',
+                'text_extract_regex': r'(?m)^EST.*$',
+                'timeout_ms': 1000, 'enabled': 1, 'continue_on_error': 0,
+            })
+            event = dict(database.list_events(workflow_id)[0])
+            self.assertEqual(event['text_extract_regex'], r'(?m)^EST.*$')
+
+            database.update_event(event_id, event | {'text_extract_regex': r'EST\d+'})
+            updated = dict(database.list_events(workflow_id)[0])
+            database.close()
+
+        self.assertEqual(updated['text_extract_regex'], r'EST\d+')
+
     def test_success_condition_migration_does_not_depend_on_scroll_column(self) -> None:
         """scroll_json が既存でも、success_json 追加時の旧データ移行を実行する。"""
         with tempfile.TemporaryDirectory() as folder:

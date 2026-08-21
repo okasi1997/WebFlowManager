@@ -90,6 +90,10 @@ class Database:
                     )
         if 'scroll_json' not in event_columns:
             self.connection.execute("ALTER TABLE events ADD COLUMN scroll_json TEXT NOT NULL DEFAULT ''")
+        if 'text_extract_regex' not in event_columns:
+            self.connection.execute(
+                "ALTER TABLE events ADD COLUMN text_extract_regex TEXT NOT NULL DEFAULT ''"
+            )
         # 旧待機操作を統合後の形式へ移行し、画面と保存形式を一つにそろえる。
         self.connection.execute("UPDATE events SET action='wait', value='hidden' WHERE action='wait_hidden'")
         self.connection.execute(
@@ -496,12 +500,20 @@ class Database:
         position = self.connection.execute('SELECT COALESCE(MAX(position), 0) + 1 FROM events WHERE workflow_id=?', (workflow_id,)).fetchone()[0]
         guard_json = json.dumps(decode_guard(data.get('guard', data.get('guard_json', ''))), ensure_ascii=False)
         cursor = self.connection.execute('INSERT INTO events\n               (workflow_id, position, name, action, selector_type, selector,\n                fallback_selector_type, fallback_selector, selector_parameters_json, iframe_path, value,\n                timeout_ms, enabled, continue_on_error, refresh_on_retry, failure_action, failure_target, data_path, guard_json, retry_count, retry_interval_ms, success_json, scroll_json)\n               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (workflow_id, position, data['name'], data['action'], data['selector_type'], data['selector'], data.get('fallback_selector_type', 'none'), data.get('fallback_selector', ''), data.get('selector_parameters_json', ''), data.get('iframe_path', ''), data['value'], data['timeout_ms'], data['enabled'], data['continue_on_error'], 0, data.get('failure_action', 'none'), data.get('failure_target', ''), data.get('data_path', ''), guard_json, data.get('retry_count', 0), data.get('retry_interval_ms', 0), data.get('success_json', ''), data.get('scroll_json', '')))
+        self.connection.execute(
+            'UPDATE events SET text_extract_regex=? WHERE id=?',
+            (data.get('text_extract_regex', ''), cursor.lastrowid),
+        )
         self.connection.commit()
         return int(cursor.lastrowid)
 
     def update_event(self, event_id: int, data: dict[str, Any]) -> None:
         guard_json = json.dumps(decode_guard(data.get('guard', data.get('guard_json', ''))), ensure_ascii=False)
         self.connection.execute('UPDATE events SET name=?, action=?, selector_type=?, selector=?,\n               fallback_selector_type=?, fallback_selector=?, selector_parameters_json=?, iframe_path=?, value=?,\n               timeout_ms=?, enabled=?, continue_on_error=?, refresh_on_retry=0, failure_action=?, failure_target=?, data_path=?, guard_json=?, retry_count=?, retry_interval_ms=?, success_json=?, scroll_json=? WHERE id=?', (data['name'], data['action'], data['selector_type'], data['selector'], data.get('fallback_selector_type', 'none'), data.get('fallback_selector', ''), data.get('selector_parameters_json', ''), data.get('iframe_path', ''), data['value'], data['timeout_ms'], data['enabled'], data['continue_on_error'], data.get('failure_action', 'none'), data.get('failure_target', ''), data.get('data_path', ''), guard_json, data.get('retry_count', 0), data.get('retry_interval_ms', 0), data.get('success_json', ''), data.get('scroll_json', ''), event_id))
+        self.connection.execute(
+            'UPDATE events SET text_extract_regex=? WHERE id=?',
+            (data.get('text_extract_regex', ''), event_id),
+        )
         self.connection.commit()
 
     def set_event_enabled(self, event_id: int, enabled: bool) -> None:
@@ -721,7 +733,7 @@ class Database:
                         f'{tr("flow.name_quote_prefix")}{name}{tr("validation.item_ordinal_infix")}'
                         f'{event_index}{tr("event.retry_values_invalid")}'
                     ) from error
-                checked_events.append({'name': event['name'], 'action': event['action'], 'selector_type': event['selector_type'], 'selector': event['selector'], 'fallback_selector_type': str(event.get('fallback_selector_type', 'none')), 'fallback_selector': str(event.get('fallback_selector', '')), 'selector_parameters_json': str(event.get('selector_parameters_json', '')), 'iframe_path': str(event.get('iframe_path', '')), 'value': event['value'], 'success_json': str(event.get('success_json', '')), 'scroll_json': str(event.get('scroll_json', '')), 'timeout_ms': timeout, 'enabled': int(bool(event.get('enabled', 1))), 'continue_on_error': int(bool(event.get('continue_on_error', 0))), 'refresh_on_retry': 0, 'failure_action': failure_action, 'failure_target': str(event.get('failure_target', '')), 'data_path': str(event.get('data_path', '')), 'retry_count': retry_count, 'retry_interval_ms': retry_interval_ms, 'guard': decode_guard(event.get('guard'))})
+                checked_events.append({'name': event['name'], 'action': event['action'], 'selector_type': event['selector_type'], 'selector': event['selector'], 'fallback_selector_type': str(event.get('fallback_selector_type', 'none')), 'fallback_selector': str(event.get('fallback_selector', '')), 'selector_parameters_json': str(event.get('selector_parameters_json', '')), 'iframe_path': str(event.get('iframe_path', '')), 'value': event['value'], 'success_json': str(event.get('success_json', '')), 'scroll_json': str(event.get('scroll_json', '')), 'text_extract_regex': str(event.get('text_extract_regex', '')), 'timeout_ms': timeout, 'enabled': int(bool(event.get('enabled', 1))), 'continue_on_error': int(bool(event.get('continue_on_error', 0))), 'refresh_on_retry': 0, 'failure_action': failure_action, 'failure_target': str(event.get('failure_target', '')), 'data_path': str(event.get('data_path', '')), 'retry_count': retry_count, 'retry_interval_ms': retry_interval_ms, 'guard': decode_guard(event.get('guard'))})
             normalized.append({'key': workflow_key, 'name': name, 'description': str(workflow.get('description', '')), 'enabled': int(bool(workflow.get('enabled', 1))), 'events': checked_events, 'pcl_loop_start': int(bool(workflow.get('pcl_loop_start', 0))), 'guard': decode_guard(workflow.get('guard'))})
         # Flow名は同じ親ノードに直接配置されるものだけを重複不可とする。
         parent_by_workflow = {
@@ -753,6 +765,10 @@ class Database:
                 for event_position, event in enumerate(workflow['events'], 1):
                     event_cursor = self.connection.execute('INSERT INTO events\n                           (workflow_id, position, name, action, selector_type, selector,\n                            fallback_selector_type, fallback_selector, iframe_path, value,\n                            timeout_ms, enabled, continue_on_error, refresh_on_retry, data_path, guard_json)\n                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (workflow_id, event_position, event['name'], event['action'], event['selector_type'], event['selector'], event['fallback_selector_type'], event['fallback_selector'], event['iframe_path'], event['value'], event['timeout_ms'], event['enabled'], event['continue_on_error'], 0, event['data_path'], json.dumps(event['guard'], ensure_ascii=False)))
                     self.connection.execute('UPDATE events SET failure_action=?, failure_target=?, retry_count=?, retry_interval_ms=?, success_json=?, scroll_json=?, selector_parameters_json=? WHERE id=?', (event['failure_action'], event['failure_target'], event['retry_count'], event['retry_interval_ms'], event['success_json'], event['scroll_json'], event['selector_parameters_json'], event_cursor.lastrowid))
+                    self.connection.execute(
+                        'UPDATE events SET text_extract_regex=? WHERE id=?',
+                        (event['text_extract_regex'], event_cursor.lastrowid),
+                    )
             # 新形式の JSON では管理用グループも復元する。旧形式は従来どおり平坦表示にする。
             if isinstance(outline_payload, list):
                 pending = [item for item in outline_payload if isinstance(item, dict)]

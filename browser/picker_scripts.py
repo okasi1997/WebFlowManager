@@ -28,6 +28,10 @@ _PICKER_SCRIPT = r"""
       pointer-events: none; }
     .__sf-flow-path-anchor { outline: 3px solid #00a3ff !important;
       outline-offset: -3px !important; }
+    .__sf-flow-capture-area { outline: 4px solid #00a3ff !important;
+      outline-offset: -4px !important; }
+    .__sf-flow-scroll-area { outline: 4px solid #ff9f1a !important;
+      outline-offset: -4px !important; }
     #__sf-flow-element-info { position: fixed; z-index: 2147483647;
       max-width: min(520px, calc(100vw - 32px)); padding: 10px 14px;
       background: rgba(23, 43, 77, .96); color: white; border-radius: 6px;
@@ -55,6 +59,11 @@ _PICKER_SCRIPT = r"""
   const pathAnchors = [];
   let pointerX = 0;
   let pointerY = 0;
+  const allowF1 = __ALLOW_F1__;
+  const screenshotMode = __SCREENSHOT_MODE__;
+  let captureElement = null;
+  let scrollElement = null;
+  const screenshotHistory = [];
   const actionableSelector = [
     'button', 'a[href]', 'input', 'select', 'textarea', 'summary',
     '[role="button"]', '[role="link"]', '[role="checkbox"]',
@@ -114,6 +123,8 @@ _PICKER_SCRIPT = r"""
   const clean = () => {
     if (hovered) hovered.classList.remove('__sf-flow-hover');
     pathAnchors.forEach(element => element.classList.remove('__sf-flow-path-anchor'));
+    if (captureElement) captureElement.classList.remove('__sf-flow-capture-area');
+    if (scrollElement) scrollElement.classList.remove('__sf-flow-scroll-area');
     document.removeEventListener('mouseover', over, true);
     document.removeEventListener('click', choose, true);
     document.removeEventListener('keydown', key, true);
@@ -138,6 +149,20 @@ _PICKER_SCRIPT = r"""
       updateFeedback();
     }
   };
+  const recordScreenshotElement = (element) => {
+    if (selectionKey === 'F1') {
+      if (captureElement) captureElement.classList.remove('__sf-flow-capture-area');
+      captureElement = element;
+      captureElement.classList.add('__sf-flow-capture-area');
+      screenshotHistory.push('capture');
+    } else if (selectionKey === 'F2') {
+      if (scrollElement) scrollElement.classList.remove('__sf-flow-scroll-area');
+      scrollElement = element;
+      scrollElement.classList.add('__sf-flow-scroll-area');
+      screenshotHistory.push('scroll');
+    }
+    leaveSelectionMode();
+  };
   const choose = (event) => {
     if (!selecting) return;
     const element = eventElement(event);
@@ -145,6 +170,10 @@ _PICKER_SCRIPT = r"""
     event.preventDefault();
     event.stopPropagation();
     hovered = element;
+    if (screenshotMode) {
+      recordScreenshotElement(element);
+      return;
+    }
     if (selectionKey === 'F1') {
       if (!pathAnchors.includes(element)) {
         pathAnchors.push(element);
@@ -697,6 +726,14 @@ _PICKER_SCRIPT = r"""
     ].join('\n');
   };
   const updateWaitingBanner = () => {
+    if (screenshotMode) {
+      banner.textContent = [
+        __WAITING_TEXT__,
+        `スクリーンショット範囲（青）: ${captureElement ? displayName(captureElement) : '未選択'}`,
+        `スクロール領域（オレンジ）: ${scrollElement ? displayName(scrollElement) : '指定なし'}`,
+      ].join('\n');
+      return;
+    }
     const lines = pathAnchors.map(
       (element, index) => `${index + 1}. ${displayName(element)}`
     );
@@ -712,7 +749,13 @@ _PICKER_SCRIPT = r"""
       hovered.classList.add('__sf-flow-hover');
       updateFeedback();
     }
-    updatePathBanner();
+    if (screenshotMode) {
+      banner.textContent = keyName === 'F1'
+        ? 'F1：スクリーンショット範囲をクリックまたは Enter で選択してください（青）'
+        : 'F2：スクロール領域をクリックまたは Enter で選択してください（オレンジ）';
+    } else {
+      updatePathBanner();
+    }
   };
   const leaveSelectionMode = () => {
     selecting = false;
@@ -744,6 +787,26 @@ _PICKER_SCRIPT = r"""
     window.__sfFlowPicked = result;
     clean();
   };
+  const finishScreenshot = () => {
+    if (!captureElement) return;
+    window.__sfFlowPicked = {
+      screenshot_selection: true,
+      capture: elementResult(captureElement),
+      scroll: scrollElement ? elementResult(scrollElement) : null
+    };
+    clean();
+  };
+  const undoScreenshot = () => {
+    const last = screenshotHistory.pop();
+    if (last === 'scroll' && scrollElement) {
+      scrollElement.classList.remove('__sf-flow-scroll-area');
+      scrollElement = null;
+    } else if (last === 'capture' && captureElement) {
+      captureElement.classList.remove('__sf-flow-capture-area');
+      captureElement = null;
+    }
+    leaveSelectionMode();
+  };
   const key = (event) => {
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -753,17 +816,29 @@ _PICKER_SCRIPT = r"""
     } else if (event.key === 'F1') {
       event.preventDefault();
       event.stopPropagation();
-      enterSelectionMode('F1');
+      if (allowF1 || screenshotMode) enterSelectionMode('F1');
     } else if (event.key === 'F2') {
       event.preventDefault();
       event.stopPropagation();
       enterSelectionMode('F2');
+    } else if (event.key === 'Backspace' && screenshotMode) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (screenshotHistory.length) undoScreenshot();
     } else if (event.key === 'Backspace' && pathAnchors.length) {
       event.preventDefault();
       event.stopPropagation();
       pathAnchors.pop().classList.remove('__sf-flow-path-anchor');
       if (selecting) updatePathBanner();
       else updateWaitingBanner();
+    } else if (event.key === 'Enter' && screenshotMode && selecting && hovered) {
+      event.preventDefault();
+      event.stopPropagation();
+      recordScreenshotElement(hovered);
+    } else if (event.key === 'Enter' && screenshotMode) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (captureElement) finishScreenshot();
     } else if (event.key === 'Enter' && selecting && hovered) {
       event.preventDefault();
       event.stopPropagation();
@@ -782,7 +857,8 @@ _PICKER_SCRIPT = r"""
 
 
 def picker_script(
-    run_id: str, waiting_text: str, active_text: str,
+    run_id: str, waiting_text: str, active_text: str, *, allow_f1: bool=True,
+    screenshot_mode: bool=False,
 ) -> str:
     """表示言語の案内文を安全に埋め込んだ選択スクリプトを返す。"""
     return (
@@ -790,4 +866,6 @@ def picker_script(
         .replace('__RUN_ID__', json.dumps(run_id))
         .replace('__WAITING_TEXT__', json.dumps(waiting_text, ensure_ascii=False))
         .replace('__ACTIVE_TEXT__', json.dumps(active_text, ensure_ascii=False))
+        .replace('__ALLOW_F1__', json.dumps(bool(allow_f1)))
+        .replace('__SCREENSHOT_MODE__', json.dumps(bool(screenshot_mode)))
     )

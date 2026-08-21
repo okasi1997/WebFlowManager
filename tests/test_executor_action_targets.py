@@ -90,6 +90,31 @@ class ExecutorActionTargetTests(unittest.TestCase):
         locator.fill.assert_called_once_with('text')
         locator.press.assert_called_once_with('Enter')
 
+    def test_get_text_can_extract_only_the_regex_match(self) -> None:
+        page = Mock()
+        page.is_closed.return_value = False
+        locator = Mock()
+        locator.text_content.return_value = '試算ID\nEST20260821000000605\n期限日'
+        event = {
+            'action': 'get_text', 'value': 'estimate_id',
+            'selector_type': 'css', 'selector': '#estimate-id',
+            'fallback_selector_type': 'none', 'fallback_selector': '',
+            'timeout_ms': 1000, 'success_json': '',
+            'text_extract_regex': r'(?m)^EST.*$',
+        }
+        variables: dict[str, str] = {}
+
+        with (
+            patch('core.executor.active_page', return_value=page),
+            patch.object(self.executor, '_fast_event_locator', return_value=locator),
+        ):
+            captured = self.executor._execute_event(
+                page, event, variables, Path(self.temporary_dir.name),
+            )
+
+        self.assertEqual(captured, 'EST20260821000000605')
+        self.assertEqual(variables['estimate_id'], captured)
+
     def test_screenshot_locator_searches_only_the_saved_main_frame(self) -> None:
         """iframe パスが空なら、同じ selector を持つ iframe を検索対象に含めない。"""
         page = Mock()

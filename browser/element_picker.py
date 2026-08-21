@@ -597,12 +597,24 @@ class DebugBrowserSession:
             bring_page_to_front(page)
             picker = ElementPicker()
             run_id = uuid.uuid4().hex
-            waiting_text = tr('スクロール領域を選択する画面を開き、F2 を押してください') if require_scroll else tr('待機中：F1 または F2 で選択モードに入り、対象をクリックします')
+            if require_scroll:
+                waiting_text = tr('スクロール領域を選択する画面を開き、F2 を押してください')
+            elif action == 'screenshot':
+                waiting_text = tr(
+                    'F1：スクリーンショット範囲 / F2：スクロール領域 / '
+                    'Enter：確定 / Backspace：直前をクリア / Esc：全選択をクリアして終了'
+                )
+            else:
+                waiting_text = tr('待機中：F1 または F2 で選択モードに入り、対象をクリックします')
             active_text = (
                 tr('スクロール領域を選択してください（Enter で確定、Esc で省略）')
                 if require_scroll else tr(selection_hint or '選択中：対象をクリックしてください（Esc: キャンセル）')
             )
-            script = picker_script(run_id, waiting_text, active_text)
+            script = picker_script(
+                run_id, waiting_text, active_text,
+                allow_f1=action != 'screenshot',
+                screenshot_mode=action == 'screenshot' and not require_scroll,
+            )
             while True:
                 if self._cancel_requested.is_set():
                     raise RuntimeError('event.element_selection_cancelled')
@@ -621,6 +633,23 @@ class DebugBrowserSession:
                     if result:
                         if result.get('cancelled'):
                             raise RuntimeError('event.element_selection_cancelled')
+                        if result.get('screenshot_selection'):
+                            capture = picker._choose_unique_locator(
+                                page, result['capture'], frame, 'screenshot'
+                            )
+                            scroll_info = result.get('scroll')
+                            scroll = (
+                                picker._choose_unique_locator(
+                                    page, scroll_info, frame, 'screenshot'
+                                ) if scroll_info else None
+                            )
+                            capture['scroll'] = scroll or {}
+                            if scroll:
+                                capture['display'] = (
+                                    f'{capture.get("display", capture["selector"])}'
+                                    f' / スクロール: {scroll["display"]}'
+                                )
+                            return capture
                         picked = picker._choose_unique_locator(page, result, frame, action)
                         if require_scroll:
                             target = picker._locator(frame, picked['selector_type'], picked['selector']).nth(0)

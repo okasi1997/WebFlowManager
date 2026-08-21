@@ -1508,6 +1508,17 @@ class QtShellTests(unittest.TestCase):
         self.assertEqual(result['selector'], '#capture')
         actionable.assert_not_called()
 
+    def test_get_text_regex_field_is_visible_and_saved(self) -> None:
+        editor = EventEditorDialog(self.window.pages['design'], {
+            'action': 'get_text', 'text_extract_regex': r'(?m)^EST.*$',
+        })
+        self.assertTrue(editor.text_extract_regex.isVisibleTo(editor))
+        self.assertEqual(editor.text_extract_regex.text(), r'(?m)^EST.*$')
+        self.assertEqual(editor.result_data()['text_extract_regex'], r'(?m)^EST.*$')
+        editor.action.setCurrentIndex(editor.action.findData('click'))
+        self.assertFalse(editor.text_extract_regex.isVisible())
+        editor.close()
+
     def test_screenshot_picker_saves_explicit_scroll_target(self) -> None:
         """スクリーンショット選択ではキャプチャー範囲とスクロール要素を別々に保存する。"""
         editor = EventEditorDialog(self.window.pages['design'])
@@ -1523,14 +1534,15 @@ class QtShellTests(unittest.TestCase):
             'fallback_selector_type': 'none', 'fallback_selector': '',
             'iframe_path': '["iframe"]', 'display': 'Scroller',
         }
+        target['scroll'] = scroll
         with patch.object(
             editor._service_host.debug_browser, 'pick',
-            side_effect=[target, scroll],
+            return_value=target,
         ) as pick:
             editor.pick_element()
 
-        self.assertEqual(pick.call_count, 2)
-        self.assertTrue(pick.call_args_list[1].kwargs['require_scroll'])
+        self.assertEqual(pick.call_count, 1)
+        self.assertNotIn('require_scroll', pick.call_args.kwargs)
         saved = json.loads(editor.result_data()['scroll_json'])
         self.assertEqual(saved['selector'], '.scroller')
         editor.close()
@@ -1544,10 +1556,11 @@ class QtShellTests(unittest.TestCase):
             'selector_type': 'css', 'selector': '#capture',
             'fallback_selector_type': 'none', 'fallback_selector': '',
             'iframe_path': '', 'display': 'Capture',
+            'scroll': {},
         }
         with patch.object(
             editor._service_host.debug_browser, 'pick',
-            side_effect=[target, RuntimeError('event.element_selection_cancelled')],
+            return_value=target,
         ):
             editor.pick_element()
 

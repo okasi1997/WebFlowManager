@@ -546,6 +546,16 @@ class EventEditorDialog(QDialog):
         self.fallback_selector_host = require(self, QWidget, 'fallbackSelectorHost')
         self.value_host = require(self, QWidget, 'valueHost')
         self.path_host = require(self, QWidget, 'pathHost')
+        self.text_extract_regex = QLineEdit(self)
+        self.text_extract_regex.setObjectName('textExtractRegexEdit')
+        self.text_extract_regex.setPlaceholderText(tr(r'例: EST[^\r\n]*'))
+        self.text_extract_regex.setText(str(event.get('text_extract_regex', '')))
+        self.text_extract_regex_label = QLabel(tr('抽出正規表現'), self)
+        self.text_extract_regex_label.setObjectName('textExtractRegexLabel')
+        self.text_extract_regex_label.setContentsMargins(0, 2, 0, 0)
+        require(self, QFormLayout, 'eventFormBasic').addRow(
+            self.text_extract_regex_label, self.text_extract_regex,
+        )
         self.guard_host = require(self, QWidget, 'guardHost')
         self.failure_target_host = require(self, QWidget, 'failureTargetHost')
 
@@ -1008,6 +1018,12 @@ class EventEditorDialog(QDialog):
         if action == 'get_text' and not (self.value.text().strip() or self.data_path.currentText().strip()):
             show_warning(self, '入力エラー', '取得結果の保存先を指定してください。')
             return
+        if action == 'get_text' and self.text_extract_regex.text().strip():
+            try:
+                re.compile(self.text_extract_regex.text().strip())
+            except re.error as error:
+                show_warning(self, tr('入力エラー'), f'{tr("正規表現が無効です")}: {error}')
+                return
         if self.failure_action.currentData() == 'goto' and not self.failure_target.text().strip().startswith(('http://', 'https://')):
             show_warning(self, '入力エラー', '移動先 URL は http:// または https:// から入力してください。')
             return
@@ -1095,6 +1111,8 @@ class EventEditorDialog(QDialog):
         data_path_enabled = action in {'fill', 'select', 'get_text', 'upload_file'}
         self.path_host.setVisible(data_path_enabled)
         require(self, QLabel, 'dataPathLabel').setVisible(data_path_enabled)
+        self.text_extract_regex_label.setVisible(action == 'get_text')
+        self.text_extract_regex.setVisible(action == 'get_text')
         failure_target_visible = self.failure_action.currentData() == 'goto'
         show_row(execution_form, self.failure_target_host, failure_target_visible)
         click_success_visible = action in SUCCESS_CONFIRM_ACTIONS
@@ -1273,24 +1291,7 @@ class EventEditorDialog(QDialog):
             if action == 'screenshot':
                 result = self._service_host.debug_browser.pick(
                     self.target_url.text().strip(), action,
-                    selection_hint='スクリーンショット範囲の要素を選択してください',
                 )
-                try:
-                    scroll = self._service_host.debug_browser.pick(
-                        self.target_url.text().strip(), action,
-                        require_scroll=True,
-                    )
-                except RuntimeError as error:
-                    if str(error) != 'event.element_selection_cancelled':
-                        raise
-                    scroll = None
-                # 新規保存では余分な階層を作らず、スクロール要素情報を直接保持する。
-                result['scroll'] = dict(scroll) if scroll else {}
-                if scroll:
-                    result['display'] = (
-                        f'{result.get("display", result["selector"])}'
-                        f'{tr(" / スクロール: ")}{scroll["display"]}'
-                    )
                 return result
             result = self._service_host.debug_browser.pick(
                 self.target_url.text().strip(), action,
@@ -1474,6 +1475,9 @@ class EventEditorDialog(QDialog):
             'failure_action': failure_choice if failure_choice in {'refresh', 'goto'} else 'none',
             'failure_target': self.failure_target.text().strip() if failure_choice == 'goto' else '',
             'data_path': self.data_path.currentText().strip(),
+            'text_extract_regex': (
+                self.text_extract_regex.text().strip() if action == 'get_text' else ''
+            ),
             'guard': self.guard_data,
             'retry_count': self.retry_count.value(),
             'retry_interval_ms': self.retry_interval.value(),

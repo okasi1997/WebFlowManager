@@ -1592,6 +1592,15 @@ class WorkflowExecutor:
                 page, event, selector, fallback_selector, timeout,
             )
             captured = (locator.text_content() or '').strip()
+            extract_pattern = str(event.get('text_extract_regex', '')).strip()
+            if extract_pattern:
+                try:
+                    match = re.search(extract_pattern, captured)
+                except re.error as error:
+                    raise ValueError(f'{tr("正規表現が無効です")}: {error}') from error
+                if match is None:
+                    raise ValueError(tr('正規表現に一致する文字がありません'))
+                captured = match.group(0)
             if variable_name:
                 variables[variable_name] = captured
             return captured
