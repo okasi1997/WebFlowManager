@@ -34,6 +34,50 @@ class WaitMigrationTests(unittest.TestCase):
 
         self.assertEqual(schema, {'name': 'Data', 'type': 'object', 'children': []})
 
+    def test_saving_schema_materializes_new_fields_in_existing_records(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            database = Database(Path(folder) / 'test.db')
+            record_id = database.add_data_record(0, 'existing', {})
+
+            database.save_data_schema(0, {
+                'name': 'Data', 'type': 'object', 'children': [{
+                    'name': 'output', 'type': 'object', 'children': [{
+                        'name': 'estimate_id', 'type': 'text',
+                    }],
+                }],
+            })
+
+            record = next(
+                item for item in database.list_data_records()
+                if item['id'] == record_id
+            )
+            database.close()
+
+        self.assertEqual(record['data'], {'output': {'estimate_id': ''}})
+
+    def test_opening_database_repairs_records_missing_current_schema_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'test.db'
+            database = Database(path)
+            database.save_data_schema(0, {
+                'name': 'Data', 'type': 'object', 'children': [{
+                    'name': 'output', 'type': 'object', 'children': [{
+                        'name': 'estimate_id', 'type': 'text',
+                    }],
+                }],
+            })
+            record_id = database.add_data_record(0, 'legacy', {})
+            database.close()
+
+            database = Database(path)
+            record = next(
+                item for item in database.list_data_records()
+                if item['id'] == record_id
+            )
+            database.close()
+
+        self.assertEqual(record['data'], {'output': {'estimate_id': ''}})
+
     def test_existing_wait_hidden_event_is_migrated_when_database_opens(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'test.db'

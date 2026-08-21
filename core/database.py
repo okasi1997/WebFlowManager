@@ -117,6 +117,7 @@ class Database:
         self._initialize_workflow_positions()
         self._initialize_workflow_outline()
         self._migrate_global_data()
+        self._sync_global_records_to_schema()
         self._migrate_combined_event_groups()
         self.connection.commit()
 
@@ -227,6 +228,29 @@ class Database:
             elif name not in result:
                 result[name] = 0 if kind == 'number' else False if kind == 'boolean' else ''
         return result
+
+    def _sync_global_records_to_schema(self, schema: dict[str, Any] | None=None) -> None:
+        """Materialize fields added to the schema in every persisted record."""
+        if schema is None:
+            schema_row = self.connection.execute(
+                'SELECT schema_json FROM global_data_schema WHERE id=1'
+            ).fetchone()
+            if schema_row is None:
+                return
+            schema = json.loads(schema_row['schema_json'])
+        rows = self.connection.execute(
+            'SELECT id, data_json FROM global_data_records'
+        ).fetchall()
+        for row in rows:
+            data = json.loads(row['data_json'])
+            if not isinstance(data, dict):
+                data = {}
+            normalized = self._normalize_for_schema(schema, data)
+            if normalized != data:
+                self.connection.execute(
+                    'UPDATE global_data_records SET data_json=? WHERE id=?',
+                    (json.dumps(normalized, ensure_ascii=False), row['id']),
+                )
 
     def _migrate_global_data(self) -> None:
         migrated = self.connection.execute("SELECT value FROM app_meta WHERE key='global_data_migrated_v1'").fetchone()
@@ -995,8 +1019,13 @@ class Database:
         from core.data_templates import validate_unique_template_names
         validate_unique_template_names(schema)
         payload = json.dumps(schema, ensure_ascii=False)
-        self.connection.execute('INSERT INTO global_data_schema(id, schema_json) VALUES (1, ?)\n               ON CONFLICT(id) DO UPDATE SET schema_json=excluded.schema_json', (payload,))
-        self.connection.commit()
+        with self._lock, self.connection:
+            self.connection.execute('INSERT INTO global_data_schema(id, schema_json) VALUES (1, ?)\n               ON CONFLICT(id) DO UPDATE SET schema_json=excluded.schema_json', (payload,))
+            # The Data page renders missing fields from the latest schema, but
+            # execution reads the persisted record JSON directly.  Materialize
+            # newly added ordinary fields in every existing record so a path
+            # selected from the schema is immediately writable by get_text.
+            self._sync_global_records_to_schema(schema)
 
     def list_data_records(self, _workflow_id: int=0, enabled_only: bool=False) -> list[dict[str, Any]]:
         where = ' WHERE enabled=1' if enabled_only else ''
