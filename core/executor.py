@@ -838,6 +838,24 @@ class WorkflowExecutor:
         return cls._resolve_child_data(root_data, parts, [], loop_context)
 
     @classmethod
+    def first_item_loop_context(
+        cls, root_data: dict[str, Any] | None, data_paths: list[str],
+    ) -> dict[str, Any]:
+        """単体試行用に、親データグループを先頭要素で具体化する。"""
+        context: dict[str, Any] = {}
+        for raw_path in data_paths:
+            path = str(raw_path).strip()
+            if not path or path in context:
+                continue
+            values = cls._resolve_data(root_data, path, context)
+            if not isinstance(values, list):
+                raise ValueError(f'グループのデータ項目はリストではありません: {path}')
+            if not values:
+                raise ValueError(f'グループのデータ項目が空です: {path}')
+            context[path] = values[0]
+        return context
+
+    @classmethod
     def _resolve_guard_data(cls, root_data: dict[str, Any] | None, path: str, loop_context: dict[str, Any]) -> Any:
         try:
             return cls._resolve_data(root_data, path, loop_context)

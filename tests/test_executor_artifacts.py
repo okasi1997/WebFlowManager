@@ -5,6 +5,39 @@ from core.executor import WorkflowExecutor
 
 
 class ExecutorArtifactNameTests(unittest.TestCase):
+    def test_single_event_context_uses_first_item_of_each_parent_group(self) -> None:
+        first_service = {
+            'instance_id': 'service-1', 'template_id': 'microsoft365',
+            'data': {'plans': [{'name': 'Basic'}, {'name': 'Premium'}]},
+        }
+        data = {
+            'services': [first_service, {
+                'instance_id': 'service-2', 'template_id': 'microsoft365',
+                'data': {'plans': [{'name': 'Enterprise'}]},
+            }],
+        }
+
+        context = WorkflowExecutor.first_item_loop_context(
+            data, ['services', '@template.microsoft365.plans'],
+        )
+
+        self.assertIs(context['services'], first_service)
+        self.assertEqual(
+            context['@template.microsoft365.plans'], {'name': 'Basic'},
+        )
+        self.assertEqual(
+            WorkflowExecutor._resolve_data(
+                data, '@template.microsoft365.plans.name', context,
+            ),
+            'Basic',
+        )
+
+    def test_single_event_context_rejects_empty_parent_group(self) -> None:
+        with self.assertRaisesRegex(ValueError, '空'):
+            WorkflowExecutor.first_item_loop_context(
+                {'services': []}, ['services'],
+            )
+
     def test_top_level_template_is_resolved_as_an_object(self) -> None:
         data = {'_template_instances': [
             {'template_id': 'product', 'data': {'name': 'A'}},

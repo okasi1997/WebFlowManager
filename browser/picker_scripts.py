@@ -177,10 +177,14 @@ _PICKER_SCRIPT = r"""
   const xpathCount = (xpath) => document.evaluate(
     xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
   ).snapshotLength;
+  const mutableValueControl = (element) => [
+    'input', 'textarea', 'select', 'option'
+  ].includes(element.tagName.toLowerCase());
   const elementTextCandidates = (element) => [...new Set([
     element.innerText || '',
     element.textContent || '',
-    element.value || ''
+    // 入力値は実行のたびに変わるため locator の識別情報にしない。
+    mutableValueControl(element) ? '' : (element.value || '')
   ].map(value => String(value).trim().replace(/\s+/g, ' '))
     .filter(value => value && value.length <= 120))];
   const xpathCandidate = (element, allowText = true) => {
@@ -364,7 +368,9 @@ _PICKER_SCRIPT = r"""
       const labelElement = document.querySelector(`label[for="${esc(element.id)}"]`);
       if (labelElement) label = labelElement.innerText.trim();
     }
-    const text = (element.innerText || element.value || '')
+    const text = (
+      element.innerText || (mutableValueControl(element) ? '' : element.value) || ''
+    )
       .trim().replace(/\s+/g, ' ').slice(0, 120);
     const name = aria || label || text || element.getAttribute('title') || '';
     return {
@@ -387,12 +393,17 @@ _PICKER_SCRIPT = r"""
     'tr, li, section, article, fieldset, form, table'
   ) || element;
   const pathText = (element) => String(
-    element.innerText || element.textContent || element.value || ''
+    element.innerText || element.textContent
+      || (mutableValueControl(element) ? '' : element.value) || ''
   ).trim().replace(/\s+/g, ' ').slice(0, 120);
+  // XPath 1.0 の normalize-space は NBSP/全角空白を空白として扱わない。
+  // 画面表示側と同じ文字列に揃えてから比較し、&nbsp; を多用する見出しも拾う。
+  const normalizedXPathText = (node = '.') =>
+    `normalize-space(translate(${node}, ${xpathLiteral('\u00a0\u3000')}, '  '))`;
   const pathFragment = (element, textSource = element) => {
     const tag = element.tagName.toLowerCase();
     const text = pathText(textSource);
-    if (text) return `${tag}[contains(normalize-space(.),${xpathLiteral(text)})]`;
+    if (text) return `${tag}[contains(${normalizedXPathText()},${xpathLiteral(text)})]`;
     const id = element.getAttribute('id');
     if (id && !/\d{4,}/.test(id)) return `${tag}[@id=${xpathLiteral(id)}]`;
     for (const name of ['data-testid', 'data-id', 'name', 'aria-label', 'role']) {
@@ -403,7 +414,7 @@ _PICKER_SCRIPT = r"""
   };
   const pathCondition = (element) => {
     const text = pathText(element);
-    if (text) return `contains(normalize-space(.),${xpathLiteral(text)})`;
+    if (text) return `contains(${normalizedXPathText()},${xpathLiteral(text)})`;
     const id = element.getAttribute('id');
     if (id && !/\d{4,}/.test(id)) return `@id=${xpathLiteral(id)}`;
     for (const name of ['data-testid', 'data-id', 'name', 'aria-label', 'role']) {
@@ -423,7 +434,7 @@ _PICKER_SCRIPT = r"""
     if (id && !/\d{4,}/.test(id)) return `${tag}[@id=${xpathLiteral(id)}]`;
     for (const name of [
       'data-target-selection-name', 'data-testid', 'data-id', 'name',
-      'aria-label', 'placeholder', 'role'
+      'aria-label', 'placeholder', 'title', 'role'
     ]) {
       const value = element.getAttribute(name);
       if (value) return `${tag}[@${name}=${xpathLiteral(value)}]`;
@@ -431,18 +442,18 @@ _PICKER_SCRIPT = r"""
     const text = pathText(element);
     // button/a の type は同じ行の操作ボタン間で重複しやすいため、表示文字を優先する。
     if (text && ['button', 'a'].includes(tag)) {
-      return `${tag}[contains(normalize-space(.),${xpathLiteral(text)})]`;
+      return `${tag}[contains(${normalizedXPathText()},${xpathLiteral(text)})]`;
     }
     const type = element.getAttribute('type');
     if (type) return `${tag}[@type=${xpathLiteral(type)}]`;
-    return text ? `${tag}[contains(normalize-space(.),${xpathLiteral(text)})]` : tag;
+    return text ? `${tag}[contains(${normalizedXPathText()},${xpathLiteral(text)})]` : tag;
   };
   const targetValue = (element) => {
     const id = element.getAttribute('id');
     if (id && !/\d{4,}/.test(id)) return id;
     for (const name of [
       'data-target-selection-name', 'data-testid', 'data-id', 'name',
-      'aria-label', 'placeholder', 'role'
+      'aria-label', 'placeholder', 'title', 'role'
     ]) {
       const value = element.getAttribute(name);
       if (value) return value;
@@ -530,7 +541,7 @@ _PICKER_SCRIPT = r"""
     if (id === value) return {method: 'attribute_equals', attribute: 'id', value};
     for (const name of [
       'data-target-selection-name', 'data-testid', 'data-id', 'name',
-      'aria-label', 'placeholder', 'type', 'role'
+      'aria-label', 'placeholder', 'title', 'type', 'role'
     ]) {
       if (element.getAttribute(name) === value) {
         return {method: 'attribute_equals', attribute: name, value};

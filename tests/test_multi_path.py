@@ -242,6 +242,11 @@ class MultiPathLocatorTests(unittest.TestCase):
         self.assertIn('matches.snapshotLength === 1', script)
         self.assertIn('const sourceAnchors = anchors.slice(sourceStart)', script)
         self.assertIn('sourceRow.contains(targetTable)', script)
+        self.assertIn('normalize-space(translate(', script)
+        self.assertIn("xpathLiteral('\\u00a0\\u3000')", script)
+        self.assertIn('const mutableValueControl = (element)', script)
+        self.assertIn("mutableValueControl(element) ? '' : (element.value || '')", script)
+        self.assertIn("'aria-label', 'placeholder', 'title', 'role'", script)
         self.assertNotIn('const siblingStep', script)
 
     def test_path_is_supported_for_json_import(self) -> None:

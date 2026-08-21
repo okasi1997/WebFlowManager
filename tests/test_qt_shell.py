@@ -2953,9 +2953,9 @@ class QtShellTests(unittest.TestCase):
         )
         self.assertEqual(
             dialog.table.horizontalHeader().sectionResizeMode(2),
-            QHeaderView.ResizeMode.Interactive,
+            QHeaderView.ResizeMode.Stretch,
         )
-        self.assertEqual(dialog.table.horizontalHeader().maximumSectionSize(), 320)
+        self.assertFalse(dialog.table.wordWrap())
         self.assertTrue(dialog.findChild(QFrame, 'parameterCard').property('card'))
         self.assertTrue(dialog.findChild(QFrame, 'detailCard').property('card'))
         self.assertEqual((dialog.width(), dialog.height()), (860, 480))
@@ -2969,12 +2969,12 @@ class QtShellTests(unittest.TestCase):
         self.app.processEvents()
         self.assertFalse(dialog.table.verticalHeader().isVisible())
         self.assertEqual(dialog.table.textElideMode(), Qt.TextElideMode.ElideNone)
-        self.assertGreater(
-            sum(dialog.table.columnWidth(column) for column in range(3)),
-            dialog.table.viewport().width(),
+        self.assertGreaterEqual(dialog.table.columnWidth(2), 200)
+        self.assertLessEqual(
+            abs(sum(dialog.table.columnWidth(column) for column in range(3))
+                - dialog.table.viewport().width()),
+            2,
         )
-        dialog.table.setColumnWidth(2, 999)
-        self.assertEqual(dialog.table.columnWidth(2), 320)
         dialog.table.selectRow(0)
         dialog._delete()
         dialog._add()

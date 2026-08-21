@@ -182,7 +182,9 @@ class MultiPathParameterDialog(QDialog):
         parameter_header = self.table.horizontalHeader()
         parameter_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         parameter_header.setMinimumSectionSize(90)
-        parameter_header.setMaximumSectionSize(320)
+        # 設定値は残り幅をすべて使い、短い先頭データでも表の右側を空けない。
+        parameter_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.setWordWrap(False)
         self.table.setTextElideMode(Qt.TextElideMode.ElideNone)
         # Designer 読込直後は viewport が未確定のため、表示レイアウト確定後に再調整する。
         QTimer.singleShot(0, self._fit_parameter_columns_to_contents)
@@ -204,11 +206,12 @@ class MultiPathParameterDialog(QDialog):
     def _fit_parameter_columns_to_contents(self) -> None:
         """各列を内容に合わせて広げ、上限を超えた分は横スクロールで表示する。"""
         header = self.table.horizontalHeader()
-        for column in range(self.table.columnCount()):
+        # 最後の「設定値」列は Stretch に任せ、識別用の2列だけ内容幅に合わせる。
+        for column in range(max(0, self.table.columnCount() - 1)):
             self.table.resizeColumnToContents(column)
             width = max(
                 header.minimumSectionSize(),
-                min(header.maximumSectionSize(), self.table.columnWidth(column)),
+                min(220, self.table.columnWidth(column)),
             )
             self.table.setColumnWidth(column, width)
 
@@ -347,6 +350,31 @@ class EventEditorDialog(QDialog):
         # 新規イベントでも「直前まで実行」できるよう、追加予定位置を保持する。
         self.insert_at = insert_at
         self._load_designer_form(event, group)
+
+    def _parent_group_data_paths(self) -> list[str]:
+        """編集中イベントを囲むデータグループのパスを外側から返す。"""
+        workflow_id = self._service_host.current_workflow_id
+        if workflow_id is None:
+            return []
+        rows = [dict(row) for row in self._service_host.db.list_events(workflow_id)]
+        stack: list[dict[str, Any]] = []
+        for index, row in enumerate(rows):
+            is_target = (
+                (self.event_id and int(row.get('id', 0)) == self.event_id)
+                or (not self.event_id and self.insert_at is not None and index >= self.insert_at)
+            )
+            if is_target:
+                return [
+                    str(group.get('data_path', '')).strip()
+                    for group in stack
+                    if str(group.get('data_path', '')).strip()
+                ]
+            action = str(row.get('action', ''))
+            if action in {'group_start', 'loop_start', 'retry_start'}:
+                stack.append(row)
+            elif action in {'group_end', 'loop_end', 'retry_end'} and stack:
+                stack.pop()
+        return []
 
     def _load_designer_form(self, event: dict[str, Any], group: bool) -> None:
         load_ui_into(self, 'event_editor.ui')
@@ -1104,7 +1132,8 @@ class EventEditorDialog(QDialog):
             parameters = json.loads(str(event.get('selector_parameters_json', '') or '{}'))
         except (TypeError, ValueError):
             parameters = {}
-        needs_pcl = bool(event.get('data_path')) or '${data:' in ' '.join(
+        parent_group_data_paths = self._parent_group_data_paths()
+        needs_pcl = bool(parent_group_data_paths) or bool(event.get('data_path')) or '${data:' in ' '.join(
             str(event.get(field, ''))
             for field in ('selector', 'fallback_selector', 'value', 'failure_target')
         ) or any(
@@ -1120,6 +1149,14 @@ class EventEditorDialog(QDialog):
             )
             return
         root_data = records[0]['data'] if records else None
+        from core.executor import WorkflowExecutor
+        try:
+            loop_context = WorkflowExecutor.first_item_loop_context(
+                root_data, parent_group_data_paths,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            show_warning(self, tr('イベント試行'), str(exc))
+            return
         execution_logs: queue.Queue[str] = queue.Queue()
 
         def append_execution_log(message: str) -> None:
@@ -1133,6 +1170,7 @@ class EventEditorDialog(QDialog):
             lambda: self._service_host.debug_browser.execute_event(
                 event, self.target_url.text().strip(),
                 variables=variables, root_data=root_data,
+                loop_context=loop_context,
                 logger=append_execution_log,
             ),
             'イベントを実行しました',

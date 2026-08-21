@@ -617,6 +617,7 @@ class DebugBrowserSession:
         self, event: dict[str, Any], target_url: str='', *,
         variables: dict[str, str] | None = None,
         root_data: dict[str, Any] | None = None,
+        loop_context: dict[str, Any] | None = None,
         logger: Callable[[str], None] | None = None,
     ) -> None:
         """現在のページで編集中のイベントを一度だけ実行する。"""
@@ -631,7 +632,7 @@ class DebugBrowserSession:
                 logger or (lambda message: self._log_sink(message, 'WorkflowExecutor')),
                 self.action_stable_ms_getter(),
             )
-            prepared = executor.prepare_event_data(event, root_data)
+            prepared = executor.prepare_event_data(event, root_data, loop_context)
             executor._execute_event(page, prepared, variables or {}, artifact_dir)
         self._submit(task)
 
