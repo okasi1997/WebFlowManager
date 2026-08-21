@@ -133,6 +133,28 @@ class MultiPathLocatorTests(unittest.TestCase):
             '(//input[@name="price"])[2]',
         )
 
+    def test_occurrence_rule_replaces_xpath_suffix_without_metadata(self) -> None:
+        context = MagicMock()
+        locator = context.locator.return_value
+        locator.count.return_value = 3
+        selector = {
+            'steps': [{'value': 'price'}],
+            'occurrence_rule': '2',
+            'resolved': {
+                'selector_type': 'xpath',
+                'selector': '(//input[@name="price"])[1]',
+            },
+        }
+
+        build_locator(context, 'path', json.dumps(selector))
+
+        context.locator.assert_called_once_with('xpath=//input[@name="price"]')
+        locator.nth.assert_called_once_with(1)
+        self.assertEqual(
+            selector_preview('path', json.dumps(selector)),
+            '(//input[@name="price"])[2]',
+        )
+
     def test_xpath_diagnostic_is_directly_pasteable_in_chrome_console(self) -> None:
         xpath = "//div[contains(., '\u00a0\u3000') and @title=\"price\"]"
 

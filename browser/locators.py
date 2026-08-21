@@ -72,17 +72,14 @@ def _render_path_values(data: dict[str, Any]) -> dict[str, Any]:
 
 def _base_occurrence_xpath(selector: str, occurrence: Any) -> str:
     """Remove the picker-era fixed suffix before applying an editable rule."""
-    if not isinstance(occurrence, dict):
-        return selector
-    # `occurrence` is only stored when the picker itself appended the outer
-    # positional predicate.  The editable occurrence rule replaces that
-    # predicate, even if legacy metadata no longer agrees with its value.
+    # The editable rule replaces an outer positional predicate.  The resolved
+    # XPath can contain that predicate even when optional occurrence metadata
+    # is absent, so use the XPath shape itself as the source of truth.
     # Older saved paths can contain the suffix more than once after repeated
     # edits, for example ``((//input)[1])[1]``.  Removing only the outer suffix
     # would leave ``(//input)[1]`` and a new rule of ``2`` would effectively
-    # become ``((//input)[1])[2]``, which can never match.  Occurrence metadata
-    # identifies these outer positional wrappers as picker-generated, so peel
-    # all consecutive wrappers before applying the current editable rule.
+    # become ``((//input)[1])[2]``, which can never match.  Peel all consecutive
+    # outer wrappers before applying the current editable rule.
     base = selector
     while True:
         match = re.fullmatch(r'\((.*)\)\[([^\]]+)\]', base, flags=re.DOTALL)
