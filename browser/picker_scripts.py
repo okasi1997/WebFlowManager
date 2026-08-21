@@ -423,12 +423,18 @@ _PICKER_SCRIPT = r"""
     if (id && !/\d{4,}/.test(id)) return `${tag}[@id=${xpathLiteral(id)}]`;
     for (const name of [
       'data-target-selection-name', 'data-testid', 'data-id', 'name',
-      'aria-label', 'placeholder', 'type', 'role'
+      'aria-label', 'placeholder', 'role'
     ]) {
       const value = element.getAttribute(name);
       if (value) return `${tag}[@${name}=${xpathLiteral(value)}]`;
     }
     const text = pathText(element);
+    // button/a の type は同じ行の操作ボタン間で重複しやすいため、表示文字を優先する。
+    if (text && ['button', 'a'].includes(tag)) {
+      return `${tag}[contains(normalize-space(.),${xpathLiteral(text)})]`;
+    }
+    const type = element.getAttribute('type');
+    if (type) return `${tag}[@type=${xpathLiteral(type)}]`;
     return text ? `${tag}[contains(normalize-space(.),${xpathLiteral(text)})]` : tag;
   };
   const targetValue = (element) => {
@@ -436,12 +442,14 @@ _PICKER_SCRIPT = r"""
     if (id && !/\d{4,}/.test(id)) return id;
     for (const name of [
       'data-target-selection-name', 'data-testid', 'data-id', 'name',
-      'aria-label', 'placeholder', 'type', 'role'
+      'aria-label', 'placeholder', 'role'
     ]) {
       const value = element.getAttribute(name);
       if (value) return value;
     }
-    return pathText(element);
+    const text = pathText(element);
+    if (text && ['button', 'a'].includes(element.tagName.toLowerCase())) return text;
+    return element.getAttribute('type') || text;
   };
   const commonAnchorXPath = (anchors, target) => {
     if (!anchors.length) return '';

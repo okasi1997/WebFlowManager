@@ -1000,6 +1000,8 @@ class EventEditorDialog(QDialog):
         # ブラウザー側へフォーカスが移る前に、選択結果の反映先を確定する。
         pick_success_target = self.pick_button.property('pickDestination') == 'click_success'
         def picked(result: dict[str, Any]) -> str:
+            diagnostics = str(result.get('path_diagnostics', '')).strip()
+            diagnostic_suffix = f'\n{diagnostics}' if diagnostics else ''
             if pick_success_target:
                 index = self.click_success_selector_type.findData(result['selector_type'])
                 self.click_success_selector_type.setCurrentIndex(max(0, index))
@@ -1007,7 +1009,7 @@ class EventEditorDialog(QDialog):
                 self.click_success_iframe_path.setText(
                     _iframe_path_text(result.get('iframe_path', ''))
                 )
-                return f'成功確認要素を選択しました: {result.get("display", result["selector"])}'
+                return f'成功確認要素を選択しました: {result.get("display", result["selector"])}{diagnostic_suffix}'
             index = self.selector_type.findData(result['selector_type'])
             self.selector_type.setCurrentIndex(max(0, index))
             self.selector.setText(result['selector'])
@@ -1020,7 +1022,7 @@ class EventEditorDialog(QDialog):
             suggested = result.get('suggested_action', '')
             if not self.action.currentData() and suggested and self.action.findData(suggested) >= 0:
                 self.action.setCurrentIndex(self.action.findData(suggested))
-            return f'要素を選択しました: {result.get("display", result["selector"])}'
+            return f'要素を選択しました: {result.get("display", result["selector"])}{diagnostic_suffix}'
         def select_target() -> dict[str, Any]:
             if action == 'screenshot':
                 result = self._service_host.debug_browser.pick(

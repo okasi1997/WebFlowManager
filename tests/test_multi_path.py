@@ -144,6 +144,9 @@ class MultiPathLocatorTests(unittest.TestCase):
             'scope', 'scope', 'target',
         ])
         self.assertEqual(saved['resolved']['selector_type'], 'xpath')
+        self.assertIn('Path diagnostics:', result['path_diagnostics'])
+        self.assertIn('resolved:', result['path_diagnostics'])
+        self.assertIn('match_count: 1', result['path_diagnostics'])
 
     def test_picker_saves_last_f1_as_cross_table_source_row(self) -> None:
         picker = ElementPicker()
@@ -232,6 +235,8 @@ class MultiPathLocatorTests(unittest.TestCase):
         self.assertIn('sourceRows.sort((left, right)', script)
         self.assertIn('commonAnchorXPath(sourceAnchors, sourceRow)', script)
         self.assertIn("target_row_mode: rowCount(targetRow) === 1", script)
+        self.assertIn("['button', 'a'].includes(tag)", script)
+        self.assertIn("const type = element.getAttribute('type')", script)
         self.assertIn("uniqueConditions.join(' and ')", script)
         self.assertIn('sharedOuterRow?.contains(target)', script)
         self.assertIn('matches.snapshotLength === 1', script)

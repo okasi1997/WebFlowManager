@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 from browser.page_runtime import active_page, bring_page_to_front, close_browser_context, launch_persistent_chrome, page_frames, restore_storage_state
-from browser.locators import actionable_matches, actionable_matches_across_frames, build_locator, matches_across_frames, visible_matches, xpath_literal
+from browser.locators import actionable_matches, actionable_matches_across_frames, build_locator, matches_across_frames, selector_preview, visible_matches, xpath_literal
 from browser.picker_scripts import picker_script
 from browser.profile_runtime import acquire_profile_lease, persistent_profile_dir, profile_lock_error
 from i18n import tr
@@ -89,6 +89,7 @@ class ElementPicker:
             if info.get('xpath'):
                 candidates.append(('xpath', info['xpath']))
         valid_candidates: list[tuple[str, str]] = []
+        candidate_diagnostics: list[str] = ['Path diagnostics:']
         for selector_type, selector in dict.fromkeys(candidates):
             # 可視性は現在のスクロール位置に左右される。現在操作可能な一致が一件でも、
             # label／text が画面外の複数要素を指す場合があるため、DOM 全体で一意な
@@ -99,12 +100,16 @@ class ElementPicker:
                 else self._matches_in_page(page, selector_type, selector)
             )
             if len(matches) != 1:
+                candidate_diagnostics.append(
+                    f'  [{selector_type}] {selector} -> dom_matches: {len(matches)}'
+                )
                 continue
             if action == 'screenshot':
                 # キャプチャー範囲やスクロール要素は子要素に覆われる大きなコンテナーも対象になる。
                 # クリック操作用の hit-test は行わず、一意かつ可視であれば採用する。
                 visible = [match for match in matches if match.is_visible()]
                 usable = len(visible) == 1
+                usable_count = len(visible)
             else:
                 actionable = (
                     self._actionable_matches_in_context(picked_frame, selector_type, selector)
@@ -112,10 +117,18 @@ class ElementPicker:
                     else self._actionable_matches_in_page(page, selector_type, selector)
                 )
                 usable = len(actionable) == 1
+                usable_count = len(actionable)
+            candidate_diagnostics.append(
+                f'  [{selector_type}] {selector} -> dom_matches: {len(matches)}, '
+                f'usable_matches: {usable_count}'
+            )
             if usable:
                 valid_candidates.append((selector_type, selector))
         if not valid_candidates:
-            raise RuntimeError('error.element_unique_locator_unavailable')
+            raise RuntimeError(
+                f'{tr("error.element_unique_locator_unavailable")}\n'
+                + '\n'.join(candidate_diagnostics)
+            )
         selector_type, selector = valid_candidates[0]
         fallback_candidates = valid_candidates[1:]
         fallback = next(
@@ -131,6 +144,11 @@ class ElementPicker:
             'display': display,
             'suggested_action': suggested_action,
             'match_count': '1',
+            'path_diagnostics': '\n'.join([
+                *candidate_diagnostics,
+                f'  selected: [{selector_type}] {selector}',
+                'match_count: 1',
+            ]),
         }
 
     def _choose_multi_path(
@@ -142,7 +160,10 @@ class ElementPicker:
         resolved_xpath = str(info.get('path_xpath', '')).strip()
         row_mapping = info.get('row_mapping')
         if len(raw_steps) < 2 or (not resolved_xpath and not isinstance(row_mapping, dict)):
-            raise RuntimeError('error.element_unique_locator_unavailable')
+            diagnostics = self._multi_path_diagnostics(info)
+            raise RuntimeError(
+                f'{tr("error.element_unique_locator_unavailable")}\n{diagnostics}'
+            )
         steps = []
         source_step_count = (
             int(row_mapping.get('source_step_count', 1))
@@ -188,9 +209,20 @@ class ElementPicker:
                     path_data, xpath_literal(value), f'__WFM_STEP_{index}__'
                 )
         selector = json.dumps(path_data, ensure_ascii=False, separators=(',', ':'))
-        locator = self._locator(picked_frame or page, 'path', selector)
-        if locator.count() != 1:
-            raise RuntimeError('error.element_unique_locator_unavailable')
+        diagnostics = self._multi_path_diagnostics(info, selector)
+        try:
+            locator = self._locator(picked_frame or page, 'path', selector)
+            match_count = locator.count()
+        except Exception as error:
+            raise RuntimeError(
+                f'{tr("error.element_unique_locator_unavailable")}\n'
+                f'{diagnostics}\nlocator_error: {error}'
+            ) from error
+        diagnostics = f'{diagnostics}\nmatch_count: {match_count}'
+        if match_count != 1:
+            raise RuntimeError(
+                f'{tr("error.element_unique_locator_unavailable")}\n{diagnostics}'
+            )
         target_info = dict(raw_steps[-1])
         display = ' → '.join(step['display'] for step in steps)
         return {
@@ -201,7 +233,33 @@ class ElementPicker:
             'display': display,
             'suggested_action': self._suggest_action(target_info),
             'match_count': '1',
+            'path_diagnostics': diagnostics,
         }
+
+    @staticmethod
+    def _multi_path_diagnostics(
+            info: dict[str, Any], selector: str = '',
+    ) -> str:
+        """成功・失敗の両方で、生成した多段 Path の判断材料を画面へ返す。"""
+        lines = ['Path diagnostics:']
+        for index, step in enumerate(info.get('path_steps', []), 1):
+            if not isinstance(step, dict):
+                continue
+            display = step.get('label') or step.get('name') or step.get('text') or step.get('tag')
+            lines.append(f'  step_{index}: {display}')
+        if selector:
+            try:
+                lines.append(f'  resolved: {selector_preview("path", selector)}')
+            except Exception as error:
+                lines.append(f'  resolved_error: {error}')
+        else:
+            lines.append(f'  path_xpath: {info.get("path_xpath") or "<empty>"}')
+            mapping = info.get('row_mapping')
+            lines.append(
+                '  row_mapping: '
+                + (json.dumps(mapping, ensure_ascii=False) if isinstance(mapping, dict) else '<empty>')
+            )
+        return '\n'.join(lines)
 
     @staticmethod
     def _iframe_path(frame: Any | None) -> str:
