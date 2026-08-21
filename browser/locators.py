@@ -77,10 +77,18 @@ def _base_occurrence_xpath(selector: str, occurrence: Any) -> str:
     # `occurrence` is only stored when the picker itself appended the outer
     # positional predicate.  The editable occurrence rule replaces that
     # predicate, even if legacy metadata no longer agrees with its value.
-    match = re.fullmatch(r'\((.*)\)\[([^\]]+)\]', selector, flags=re.DOTALL)
-    if match:
-        return match.group(1)
-    return selector
+    # Older saved paths can contain the suffix more than once after repeated
+    # edits, for example ``((//input)[1])[1]``.  Removing only the outer suffix
+    # would leave ``(//input)[1]`` and a new rule of ``2`` would effectively
+    # become ``((//input)[1])[2]``, which can never match.  Occurrence metadata
+    # identifies these outer positional wrappers as picker-generated, so peel
+    # all consecutive wrappers before applying the current editable rule.
+    base = selector
+    while True:
+        match = re.fullmatch(r'\((.*)\)\[([^\]]+)\]', base, flags=re.DOTALL)
+        if not match:
+            return base
+        base = match.group(1)
 
 
 def _apply_occurrence_rule(locator: Any, rule: str) -> Any:
