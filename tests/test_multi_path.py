@@ -90,6 +90,33 @@ class MultiPathLocatorTests(unittest.TestCase):
         rows.nth.assert_called_once_with(2)
         target_row.locator.assert_called_once_with('xpath=.//input')
 
+    def test_build_locator_uses_the_only_target_row_regardless_of_source_index(self) -> None:
+        context = MagicMock()
+        source = MagicMock()
+        source.count.return_value = 1
+        source.nth.return_value.evaluate.return_value = 4
+        table = MagicMock()
+        table.count.return_value = 1
+        rows = MagicMock()
+        rows.count.return_value = 1
+        target_row = MagicMock()
+        rows.nth.return_value = target_row
+        table.nth.return_value.locator.return_value = rows
+        context.locator.side_effect = [source, table]
+        selector = json.dumps({
+            'row_mapping': {
+                'operation': 'same_row_index', 'target_row_mode': 'only_row',
+                'source': {'selector_type': 'xpath', 'selector': '//table[1]//tr[5]'},
+                'target_table': {'selector_type': 'xpath', 'selector': '//table[2]'},
+                'target': {'selector_type': 'xpath', 'selector': ".//button[contains(.,'OP')]"},
+            },
+        })
+
+        result = build_locator(context, 'path', selector)
+
+        self.assertIs(result, target_row.locator.return_value)
+        rows.nth.assert_called_once_with(0)
+
     def test_picker_converts_f1_steps_and_f2_target(self) -> None:
         picker = ElementPicker()
         locator = MagicMock()
@@ -201,6 +228,10 @@ class MultiPathLocatorTests(unittest.TestCase):
         self.assertIn("operation: 'same_row_index'", script)
         self.assertIn("conditions.join(' and ')", script)
         self.assertIn('const siblingScopeXPath = (anchors, target) =>', script)
+        self.assertIn('const commonAnchorXPath = (anchors, target) =>', script)
+        self.assertIn('sourceRows.sort((left, right)', script)
+        self.assertIn('commonAnchorXPath(sourceAnchors, sourceRow)', script)
+        self.assertIn("target_row_mode: rowCount(targetRow) === 1", script)
         self.assertIn("uniqueConditions.join(' and ')", script)
         self.assertIn('sharedOuterRow?.contains(target)', script)
         self.assertIn('matches.snapshotLength === 1', script)

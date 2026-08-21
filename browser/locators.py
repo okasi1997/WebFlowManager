@@ -145,6 +145,10 @@ def _build_row_mapping_locator(context: Any, mapping: dict[str, Any]) -> Any:
     rows = table_locator.nth(0).locator(str(
         mapping.get('row_selector', ':scope > tbody > tr, :scope > tr')
     ))
+    if str(mapping.get('target_row_mode', 'same_index')) == 'only_row':
+        if rows.count() != 1:
+            raise ValueError('Mapped target table no longer has exactly one row')
+        row_index = 0
     if row_index >= rows.count():
         raise ValueError('Mapped row is out of range')
     target_row = rows.nth(row_index)

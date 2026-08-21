@@ -443,7 +443,7 @@ _PICKER_SCRIPT = r"""
     }
     return pathText(element);
   };
-  const siblingScopeXPath = (anchors, target) => {
+  const commonAnchorXPath = (anchors, target) => {
     if (!anchors.length) return '';
     const scopes = anchors.map(pathScope);
     const candidates = [];
@@ -469,6 +469,24 @@ _PICKER_SCRIPT = r"""
     const commonTag = common.tagName.toLowerCase();
     const commonFragment = uniqueConditions.length
       ? `${commonTag}[${uniqueConditions.join(' and ')}]` : commonTag;
+    return `//${commonFragment}`;
+  };
+  const siblingScopeXPath = (anchors, target) => {
+    const commonXPath = commonAnchorXPath(anchors, target);
+    if (!commonXPath) return '';
+    const scopes = anchors.map(pathScope);
+    const candidates = [];
+    let candidate = scopes[0];
+    while (candidate) {
+      if (candidate.matches?.('tr, li, section, article, fieldset, form, table')) {
+        candidates.push(candidate);
+      }
+      candidate = candidate.parentElement;
+    }
+    const common = candidates.find(scope =>
+      anchors.every(anchor => scope.contains(anchor)) && scope.contains(target)
+    );
+    if (!common) return '';
     const targetPart = targetFragment(target);
     const relativeXPath = `.//${targetPart}`;
     const matches = document.evaluate(
@@ -482,7 +500,7 @@ _PICKER_SCRIPT = r"""
       }
     }
     if (targetIndex < 0) return '';
-    const xpath = `//${commonFragment}//${targetPart}`;
+    const xpath = `${commonXPath}//${targetPart}`;
     return matches.snapshotLength === 1 ? xpath : `(${xpath})[${targetIndex + 1}]`;
   };
   const scopeMatch = (element) => {
@@ -543,6 +561,8 @@ _PICKER_SCRIPT = r"""
   };
   const rowIndex = (row) => [...row.parentElement.children]
     .filter(element => element.tagName === 'TR').indexOf(row);
+  const rowCount = (row) => [...row.parentElement.children]
+    .filter(element => element.tagName === 'TR').length;
   const tableXPathWithinRange = (rangeAnchors, table) => {
     if (!rangeAnchors.length) return xpathCandidate(table, false);
     const rangeElement = pathScope(rangeAnchors.at(-1));
@@ -557,14 +577,36 @@ _PICKER_SCRIPT = r"""
       ? rangeXPath : `(${rangeXPath}//table)[${index + 1}]`;
   };
   const rowMapping = (anchors, target) => {
-    const source = anchors.at(-1);
-    const sourceRow = source?.closest('tr');
     const targetRow = target.closest('tr');
-    const sourceTable = sourceRow?.closest('table');
     const targetTable = targetRow?.closest('table');
-    if (!sourceRow || !targetRow || !sourceTable || !targetTable || sourceTable === targetTable) {
+    if (!anchors.length || !targetRow || !targetTable) {
       return null;
     }
+    // 最後の F1 から外側へ候補行を調べ、末尾の F1 条件を最も多く包含し、
+    // 対象表と同じ行 index を持つ tr を基準行にする。内嵌 table の兄弟セルも
+    // 1つの外側業務行として AND 検索できる。
+    const sourceRows = [];
+    let candidateRow = anchors.at(-1).closest('tr');
+    while (candidateRow) {
+      const candidateTable = candidateRow.closest('table');
+      let sourceStart = anchors.length - 1;
+      while (sourceStart > 0 && candidateRow.contains(anchors[sourceStart - 1])) {
+        sourceStart -= 1;
+      }
+      if (
+        candidateTable && candidateTable !== targetTable
+        && rowIndex(candidateRow) >= 0
+        && (rowCount(targetRow) === 1 || rowIndex(candidateRow) === rowIndex(targetRow))
+      ) {
+        sourceRows.push({row: candidateRow, sourceStart});
+      }
+      candidateRow = candidateRow.parentElement?.closest('tr');
+    }
+    sourceRows.sort((left, right) => left.sourceStart - right.sourceStart);
+    const sourceChoice = sourceRows[0];
+    if (!sourceChoice) return null;
+    const sourceRow = sourceChoice.row;
+    const sourceTable = sourceRow.closest('table');
     // 内側 table 同士が同じ外側 tr にある場合は行番号マッピングではなく、
     // 共通行に兄弟条件を AND 結合した通常パスとして扱う。
     const sharedOuterRow = sourceRow.parentElement?.closest('tr');
@@ -574,22 +616,24 @@ _PICKER_SCRIPT = r"""
     if (sourceRow.contains(targetTable) || targetRow.contains(sourceTable)) return null;
     // 選択時に対応行であることを確認する。保存するのは行番号ではなく、
     // 実行時に基準行から番号を再計算するための検索情報だけとする。
-    if (rowIndex(sourceRow) < 0 || rowIndex(sourceRow) !== rowIndex(targetRow)) return null;
+    if (
+      rowIndex(sourceRow) < 0
+      || (rowCount(targetRow) !== 1 && rowIndex(sourceRow) !== rowIndex(targetRow))
+    ) return null;
     // 同じ基準行で選んだ複数の F1 は AND 条件としてまとめる。
     // これにより、共通の外側要素を選べない画面でも複数列で行を一意にできる。
-    let sourceStart = anchors.length - 1;
-    while (sourceStart > 0 && pathScope(anchors[sourceStart - 1]) === sourceRow) {
-      sourceStart -= 1;
-    }
+    const sourceStart = sourceChoice.sourceStart;
     const sourceAnchors = anchors.slice(sourceStart);
     const rangeAnchors = anchors.slice(0, sourceStart);
     if (rangeAnchors.some(anchor => !pathScope(anchor).contains(targetTable))) return null;
-    const sourceXPath = anchorXPath(anchors);
+    const sourceXPath = rangeAnchors.length
+      ? anchorXPath(anchors) : commonAnchorXPath(sourceAnchors, sourceRow);
     const targetTableXPath = tableXPathWithinRange(rangeAnchors, targetTable);
     if (!sourceXPath || xpathCount(sourceXPath) !== 1 ||
         !targetTableXPath || xpathCount(targetTableXPath) !== 1) return null;
     return {
       operation: 'same_row_index',
+      target_row_mode: rowCount(targetRow) === 1 ? 'only_row' : 'same_index',
       source_step_count: sourceAnchors.length,
       source: {selector_type: 'xpath', selector: sourceXPath},
       target_table: {selector_type: 'xpath', selector: targetTableXPath},
